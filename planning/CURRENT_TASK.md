@@ -21,6 +21,7 @@
   - [x] Clean up `.env` and `docker-compose.yml` (Placeholders for secrets)
   - [x] Verify full pipeline `npm run quality:security` (35 tests pass)
   - [x] Initialize Git repository and Push to `https://github.com/thaihuutham/ERP_GOIUUDAI.git`
+  - [x] Fix CI pipeline failure (missing Prisma Client generation)
 
 ## Completed Tasks
 ### Task ID: RETAIL-CRM-002

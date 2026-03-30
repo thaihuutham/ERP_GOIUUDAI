@@ -1,15 +1,17 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-03-30 09:12 +07
+- Time: 2026-03-30 09:44 +07
 - By: Antigravity
-- Session Log: `.agent/sessions/2026-03-30_0910_antigravity.md`
+- Session Log: `.agent/sessions/2026-03-30_0944_antigravity.md`
 
 ## Current State
 - **Repository Initialized and Pushed**:
   - `https://github.com/thaihuutham/ERP_GOIUUDAI.git`
   - Branch: `main`
   - `.gitignore` verified to exclude sensitive data.
+- **CI/CD Pipeline Fixed**:
+  - Added `npm run prisma:generate` to `ci.yml` after `npm ci` to ensure Prisma Client types are populated.
 - **Security Hardened (Tenant Isolation & Auth)**:
   - `resolveTenantIdFromRequest` prioritizes verified JWT over headers.
   - `JwtAuthGuard` synchronizes `TENANT_CONTEXT_KEY` ('tenantId') into CLS.
