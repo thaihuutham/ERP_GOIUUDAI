@@ -1,0 +1,478 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: customers
+    //   - name: string (required)
+    //   - email: string (required, email format)
+    //   - phone: string
+    //   - status: string (active, inactive, blocked)
+    //   - totalSpent: number
+    //   - lastOrderDate: timestamp
+    //   - createdAt: timestamp
+    //   - companyId: string
+    //   - branchId: string
+    //   - departmentId: string
+    //   - teamId: string
+    //   - employeeId: string
+    //
+    // Collection: products
+    //   - name: string (required)
+    //   - type: string (digital_product, service)
+    //   - price: number
+    //   - description: string
+    //   - status: string (available, discontinued)
+    //   - companyId: string
+    //
+    // Collection: orders
+    //   - customerId: string (required)
+    //   - customerName: string
+    //   - items: list of maps (productId, productName, quantity, price)
+    //   - totalAmount: number
+    //   - status: string (completed, pending, cancelled)
+    //   - createdAt: timestamp
+    //   - companyId: string
+    //   - branchId: string
+    //   - departmentId: string
+    //   - teamId: string
+    //   - employeeId: string
+    //
+    // Collection: employees
+    //   - name: string (required)
+    //   - email: string (required)
+    //   - role: string (admin, manager, staff)
+    //   - roleLevel: number (1: Company, 2: Branch, 3: Dept, 4: Team, 5: Employee)
+    //   - companyId: string
+    //   - branchId: string
+    //   - departmentId: string
+    //   - teamId: string
+    //   - baseSalary: number
+    //   - joinDate: string
+    //   - leaveBalance: number
+    //   - status: string
+    //
+    // Collection: attendance
+    //   - employeeId: string
+    //   - employeeName: string
+    //   - date: string
+    //   - checkIn: timestamp
+    //   - checkOut: timestamp
+    //   - status: string (present, late, absent, on_leave)
+    //   - companyId: string
+    //   - branchId: string
+    //   - departmentId: string
+    //
+    // Collection: leave_requests
+    //   - employeeId: string
+    //   - employeeName: string
+    //   - type: string (annual, sick, unpaid, other)
+    //   - startDate: string
+    //   - endDate: string
+    //   - reason: string
+    //   - status: string (pending, approved, rejected)
+    //   - approvedBy: string
+    //   - companyId: string
+    //   - branchId: string
+    //   - departmentId: string
+    //   - createdAt: timestamp
+    //
+    // Collection: payrolls
+    //   - employeeId: string
+    //   - employeeName: string
+    //   - month: number
+    //   - year: number
+    //   - baseSalary: number
+    //   - allowances: number
+    //   - deductions: number
+    //   - netSalary: number
+    //   - status: string (draft, paid)
+    //   - paidAt: timestamp
+    //   - companyId: string
+    //   - branchId: string
+    //   - departmentId: string
+    //
+    // Collection: vendors
+    //   - name: string
+    //   - status: string
+    //   - companyId: string
+    //
+    // Collection: accounts
+    //   - code: string
+    //   - name: string
+    //   - type: string
+    //   - balance: number
+    //   - companyId: string
+    //
+    // Collection: journal_entries
+    //   - date: string
+    //   - items: list of maps (accountId, debit, credit)
+    //   - status: string
+    //   - companyId: string
+    //
+    // Collection: invoices
+    //   - type: string (receivable, payable)
+    //   - partnerId: string
+    //   - amount: number
+    //   - totalAmount: number
+    //   - status: string
+    //   - companyId: string
+    //
+    // Collection: budget_plans
+    //   - category: string
+    //   - period: string
+    //   - plannedAmount: number
+    //   - actualAmount: number
+    //   - companyId: string
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      let doc = get(/databases/$(database)/documents/employees/$(request.auth.uid));
+      return doc != null ? doc.data : null;
+    }
+
+    function isAdmin() {
+      let user = getUserData();
+      return isAuthenticated() && (
+        (user != null && user.role == 'admin') ||
+        (request.auth.token.email == "mrtaotham@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isManager() {
+      let user = getUserData();
+      return isAuthenticated() && (
+        (user != null && user.role == 'manager') ||
+        isAdmin()
+      );
+    }
+
+    function isStaff() {
+      let user = getUserData();
+      return isAuthenticated() && (
+        user != null && user.role in ['admin', 'manager', 'staff']
+      );
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Hierarchy Access Control
+    function canAccessData(resourceData) {
+      let user = getUserData();
+      return isAdmin() || (user != null && (
+             (user.roleLevel <= 1 && user.companyId == resourceData.companyId) ||
+             (user.roleLevel <= 2 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId) ||
+             (user.roleLevel <= 3 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId && user.departmentId == resourceData.departmentId) ||
+             (user.roleLevel <= 4 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId && user.departmentId == resourceData.departmentId && user.teamId == resourceData.teamId) ||
+             (user.roleLevel <= 5 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId && user.departmentId == resourceData.departmentId && user.teamId == resourceData.teamId && request.auth.uid == resourceData.employeeId)
+      ));
+    }
+
+    function canAccessEmployee(employeeId, resourceData) {
+      let user = getUserData();
+      return isAdmin() || (user != null && (
+             (user.roleLevel <= 1 && user.companyId == resourceData.companyId) ||
+             (user.roleLevel <= 2 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId) ||
+             (user.roleLevel <= 3 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId && user.departmentId == resourceData.departmentId) ||
+             (user.roleLevel <= 4 && user.companyId == resourceData.companyId && user.branchId == resourceData.branchId && user.departmentId == resourceData.departmentId && user.teamId == resourceData.teamId)
+      )) || (request.auth.uid == employeeId);
+    }
+
+    function isCreatingOwnData(data) {
+      let user = getUserData();
+      return user != null && 
+             data.companyId == user.companyId && 
+             data.branchId == user.branchId && 
+             data.departmentId == user.departmentId && 
+             data.teamId == user.teamId && 
+             data.employeeId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Employees collection
+    match /employees/{employeeId} {
+      allow get: if isAuthenticated() && (
+        request.auth.uid == employeeId ||
+        (request.auth.token.email == resource.data.email) || 
+        (isStaff() && canAccessEmployee(employeeId, resource.data))
+      );
+      allow list: if isAuthenticated() && (
+        isAdmin() ||
+        (request.auth.token.email == resource.data.email) || 
+        (isStaff() && getUserData() != null && getUserData().companyId == resource.data.companyId)
+      );
+      allow create: if isAuthenticated() && (isAdmin() || request.auth.uid == employeeId); // Allow self-creation on first login
+      allow update: if isAuthenticated() && (isAdmin() || request.auth.uid == employeeId);
+      allow delete: if isAdmin() || (isAuthenticated() && request.auth.token.email == resource.data.email); // Allow deleting old doc when linking
+    }
+
+    // Customers collection
+    match /customers/{customerId} {
+      allow read: if isStaff() && canAccessData(resource.data);
+      allow create: if isStaff() && isCreatingOwnData(request.resource.data);
+      allow update: if isStaff() && canAccessData(resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Products collection (Company-wide)
+    match /products/{productId} {
+      allow read: if isAdmin() || (isStaff() && getUserData().companyId == resource.data.companyId);
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Orders collection
+    match /orders/{orderId} {
+      allow read: if isStaff() && canAccessData(resource.data);
+      allow create: if isStaff() && isCreatingOwnData(request.resource.data);
+      allow update: if isStaff() && canAccessData(resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Assets collection
+    match /assets/{assetId} {
+      allow read: if isAdmin() || (isStaff() && getUserData().companyId == resource.data.companyId);
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Asset Allocations collection
+    match /asset_allocations/{allocationId} {
+      allow read: if isAdmin() || (isStaff() && getUserData().companyId == resource.data.companyId);
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      allow read: if isStaff() && (request.auth.uid == resource.data.employeeId || canAccessData(resource.data));
+      allow create: if isStaff() && (request.resource.data.employeeId == request.auth.uid || isManager());
+      allow update: if isStaff() && (request.auth.uid == resource.data.employeeId || isManager());
+      allow delete: if isAdmin();
+    }
+
+    // Leave Requests collection
+    match /leave_requests/{leaveRequestId} {
+      allow read: if isStaff() && (request.auth.uid == resource.data.employeeId || canAccessData(resource.data));
+      allow create: if isStaff() && (request.resource.data.employeeId == request.auth.uid);
+      allow update: if isStaff() && (request.auth.uid == resource.data.employeeId || isManager());
+      allow delete: if isAdmin();
+    }
+
+    // Payrolls collection
+    match /payrolls/{payrollId} {
+      allow read: if isStaff() && (request.auth.uid == resource.data.employeeId || canAccessData(resource.data));
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Vendors collection
+    match /vendors/{vendorId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Accounts collection
+    match /accounts/{accountId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Journal Entries collection
+    match /journal_entries/{entryId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Invoices collection
+    match /invoices/{invoiceId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Budget Plans collection
+    match /budget_plans/{planId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Workflow Management collection
+    match /workflow_definitions/{workflowId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    match /workflow_instances/{instanceId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create: if isStaff() && request.resource.data.companyId == getUserData().companyId;
+      allow update: if isStaff() && (
+        isAdmin() || 
+        (isManager() && resource.data.companyId == getUserData().companyId) ||
+        (request.auth.uid == resource.data.userId)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // HR Management collections
+    match /recruitment/{id} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    match /training/{id} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    match /performance/{id} {
+      allow read: if isStaff() && (isOwner(resource.data.employeeId) || isAdmin() || (isManager() && getUserData().companyId == resource.data.companyId));
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    match /benefits/{id} {
+      allow read: if isStaff() && (isOwner(resource.data.employeeId) || isAdmin() || (isManager() && getUserData().companyId == resource.data.companyId));
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Purchase Orders collection
+    match /purchase_orders/{orderId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Shipments collection
+    match /shipments/{shipmentId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Distributions collection
+    match /distributions/{distId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Demand Forecasts collection
+    match /demand_forecasts/{forecastId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Supply Chain Risks collection
+    match /supply_chain_risks/{riskId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isStaff() && request.auth.uid == resource.data.userId;
+      allow create: if isStaff();
+      allow update: if isStaff() && request.auth.uid == resource.data.userId;
+      allow delete: if isStaff() && request.auth.uid == resource.data.userId;
+    }
+
+    // Projects collection
+    match /projects/{projectId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Tasks collection
+    match /tasks/{taskId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create: if isStaff() && request.resource.data.companyId == getUserData().companyId;
+      allow update: if isStaff() && (
+        isAdmin() || 
+        (isManager() && resource.data.companyId == getUserData().companyId) ||
+        (request.auth.uid == resource.data.assignedTo)
+      );
+      allow delete: if isAdmin() || isManager();
+    }
+
+    // Project Resources collection
+    match /project_resources/{resourceId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin() || isManager();
+    }
+
+    // Project Budgets collection
+    match /project_budgets/{budgetId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin() || isManager();
+    }
+
+    // Time Entries collection
+    match /time_entries/{entryId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create: if isStaff() && request.resource.data.employeeId == request.auth.uid;
+      allow update: if isStaff() && resource.data.employeeId == request.auth.uid;
+      allow delete: if isStaff() && resource.data.employeeId == request.auth.uid;
+    }
+
+    // Reports collection
+    match /reports/{reportId} {
+      allow read: if isStaff() && getUserData().companyId == resource.data.companyId;
+      allow create, update: if isAdmin() || (isManager() && request.resource.data.companyId == getUserData().companyId);
+      allow delete: if isAdmin();
+    }
+
+    // Approvals collection
+    match /approvals/{approvalId} {
+      allow read: if isStaff() && (
+        request.auth.uid == resource.data.requesterId || 
+        request.auth.uid == resource.data.approverId || 
+        isAdmin()
+      );
+      allow create: if isStaff() && request.resource.data.requesterId == request.auth.uid;
+      allow update: if isStaff() && (
+        request.auth.uid == resource.data.approverId || 
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // System stats
+    match /system/stats {
+      allow read: if isStaff();
+      allow write: if isAdmin() || isManager();
+    }
+
+    // System config
+    match /system/config {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+  }
+}

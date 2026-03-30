@@ -1,0 +1,90 @@
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { GenericStatus } from '@prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { CrmService } from './crm.service';
+
+@Controller('crm')
+export class CrmController {
+  constructor(@Inject(CrmService) private readonly crmService: CrmService) {}
+
+  @Get('customers')
+  listCustomers(
+    @Query() query: PaginationQueryDto,
+    @Query('status') status?: GenericStatus | 'ALL',
+    @Query('stage') stage?: string,
+    @Query('tag') tag?: string
+  ) {
+    return this.crmService.listCustomers(query, { status, stage, tag });
+  }
+
+  @Post('customers')
+  createCustomer(@Body() body: Record<string, unknown>) {
+    return this.crmService.createCustomer(body);
+  }
+
+  @Patch('customers/:id')
+  updateCustomer(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.crmService.updateCustomer(id, body);
+  }
+
+  @Get('customer-360')
+  listCustomer360(
+    @Query() query: PaginationQueryDto,
+    @Query('status') status?: GenericStatus | 'ALL',
+    @Query('stage') stage?: string,
+    @Query('tag') tag?: string
+  ) {
+    return this.crmService.listCustomers(query, { status, stage, tag });
+  }
+
+  @Post('customer-360')
+  createCustomer360(@Body() body: Record<string, unknown>) {
+    return this.crmService.createCustomer(body);
+  }
+
+  @Patch('customer-360/:id')
+  updateCustomer360(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.crmService.updateCustomer(id, body);
+  }
+
+  @Get('interactions')
+  listInteractions(
+    @Query() query: PaginationQueryDto,
+    @Query('customerId') customerId?: string
+  ) {
+    return this.crmService.listInteractions(query, customerId);
+  }
+
+  @Post('interactions')
+  createInteraction(@Body() body: Record<string, unknown>) {
+    return this.crmService.createInteraction(body);
+  }
+
+  @Get('payment-requests')
+  listPaymentRequests(
+    @Query() query: PaginationQueryDto,
+    @Query('status') status?: string
+  ) {
+    return this.crmService.listPaymentRequests(query, status);
+  }
+
+  @Post('payment-requests')
+  createPaymentRequest(@Body() body: Record<string, unknown>) {
+    return this.crmService.createPaymentRequest(body);
+  }
+
+  @Post('payment-requests/:id/mark-paid')
+  markPaymentRequestPaid(@Param('id') id: string) {
+    return this.crmService.markPaymentRequestPaid(id);
+  }
+
+  @Get('dedup-candidates')
+  getDedupCandidates() {
+    return this.crmService.getDedupCandidates();
+  }
+
+  @Post('merge-customers')
+  mergeCustomers(@Body() body: Record<string, unknown>) {
+    return this.crmService.mergeCustomers(body);
+  }
+}

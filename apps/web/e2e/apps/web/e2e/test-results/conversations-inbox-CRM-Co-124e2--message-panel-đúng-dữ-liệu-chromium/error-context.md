@@ -1,0 +1,288 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary "Điều hướng các phân hệ" [ref=e3]:
+      - generic [ref=e4]:
+        - link "ERP Bán lẻ" [ref=e5] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e7]: ERP Bán lẻ
+        - button "Thu gọn menu" [ref=e8] [cursor=pointer]: «
+      - paragraph [ref=e9]: Sẵn sàng SaaS • Đồng bộ 1 chiều • Theo từng tenant
+      - navigation [ref=e10]:
+        - link "Tổng quan" [ref=e11] [cursor=pointer]:
+          - /url: /
+        - link "CRM" [ref=e12] [cursor=pointer]:
+          - /url: /modules/crm
+        - link "Bán hàng" [ref=e13] [cursor=pointer]:
+          - /url: /modules/sales
+        - link "Danh mục" [ref=e14] [cursor=pointer]:
+          - /url: /modules/catalog
+        - link "Nhân sự" [ref=e15] [cursor=pointer]:
+          - /url: /modules/hr
+        - link "Tài chính" [ref=e16] [cursor=pointer]:
+          - /url: /modules/finance
+        - link "Chuỗi cung ứng" [ref=e17] [cursor=pointer]:
+          - /url: /modules/scm
+        - link "Tài sản" [ref=e18] [cursor=pointer]:
+          - /url: /modules/assets
+        - link "Dự án" [ref=e19] [cursor=pointer]:
+          - /url: /modules/projects
+        - link "Quy trình" [ref=e20] [cursor=pointer]:
+          - /url: /modules/workflows
+        - link "Báo cáo" [ref=e21] [cursor=pointer]:
+          - /url: /modules/reports
+        - link "Thông báo" [ref=e22] [cursor=pointer]:
+          - /url: /modules/notifications
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e26]:
+          - heading "CRM" [level=1] [ref=e27]
+          - paragraph [ref=e28]: "Chế độ tenant: Lược đồ dùng chung (Shared Schema)"
+        - generic [ref=e29]:
+          - generic [ref=e30]:
+            - generic [ref=e31]: Vai trò UI
+            - combobox "Vai trò UI" [ref=e32]:
+              - option "STAFF"
+              - option "MANAGER" [selected]
+              - option "ADMIN"
+          - generic [ref=e33]: Shared schema • MANAGER
+      - main [ref=e34]:
+        - article [ref=e35]:
+          - generic [ref=e36]:
+            - generic [ref=e37]:
+              - heading "CRM Conversations Inbox" [level=1] [ref=e38]
+              - paragraph [ref=e39]: Hộp hội thoại Zalo tích hợp ERP, theo dõi thread/message và kết quả AI chấm điểm theo lịch.
+              - generic [ref=e40]:
+                - link "Quay lại CRM Operations" [ref=e41] [cursor=pointer]:
+                  - /url: /modules/crm
+                - button "Tải lại toàn bộ" [ref=e42] [cursor=pointer]
+            - list [ref=e43]:
+              - listitem [ref=e44]: Ưu tiên Zalo personal, vẫn theo dõi OA ingest.
+              - listitem [ref=e45]: Hiển thị QC verdict/score ngay trên từng hội thoại.
+              - listitem [ref=e46]: "Job batch AI: tạo lịch, chạy tay, xem lịch sử run."
+          - generic [ref=e47]:
+            - generic [ref=e48]:
+              - generic [ref=e49]:
+                - heading "Threads" [level=2] [ref=e50]
+                - generic [ref=e51]: "Total: 1"
+              - generic [ref=e52]:
+                - generic [ref=e53]:
+                  - generic [ref=e54]: Tìm kiếm hội thoại
+                  - textbox "Tìm kiếm hội thoại" [ref=e55]:
+                    - /placeholder: Tên khách, external thread...
+                - generic [ref=e56]:
+                  - generic [ref=e57]: Channel
+                  - combobox "Channel" [ref=e58]:
+                    - option "ALL" [selected]
+                    - option "ZALO_PERSONAL"
+                    - option "ZALO_OA"
+                    - option "FACEBOOK"
+                    - option "OTHER"
+                - generic [ref=e59]:
+                  - generic [ref=e60]: Zalo account
+                  - combobox "Zalo account" [ref=e61]:
+                    - option "ALL" [selected]
+                    - option "OA Retail"
+                - generic [ref=e62]:
+                  - generic [ref=e63]: Limit
+                  - combobox "Limit" [ref=e64]:
+                    - option "20"
+                    - option "50" [selected]
+                    - option "100"
+              - table [ref=e66]:
+                - rowgroup [ref=e67]:
+                  - row "Khách hàng Channel Unread QC Last message" [ref=e68]:
+                    - columnheader "Khách hàng" [ref=e69]
+                    - columnheader "Channel" [ref=e70]
+                    - columnheader "Unread" [ref=e71]
+                    - columnheader "QC" [ref=e72]
+                    - columnheader "Last message" [ref=e73]
+                - rowgroup [ref=e74]:
+                  - row "Khách test OA ZALO_OA 1 PASS (88) 11:45:00 29/3/2026" [ref=e75]:
+                    - cell "Khách test OA" [ref=e76]
+                    - cell "ZALO_OA" [ref=e77]:
+                      - generic [ref=e78]: ZALO_OA
+                    - cell "1" [ref=e79]
+                    - cell "PASS (88)" [ref=e80]:
+                      - generic [ref=e81]: PASS (88)
+                    - cell "11:45:00 29/3/2026" [ref=e82]
+            - generic [ref=e83]:
+              - generic [ref=e84]:
+                - heading "Messages & Evaluation" [level=2] [ref=e85]
+                - button "Tải lại" [ref=e86] [cursor=pointer]
+              - paragraph [ref=e87]: "Thread: oa_thread_001 • ZALO_OA"
+              - paragraph [ref=e88]: "Account: oa_account_1"
+              - generic [ref=e90]:
+                - generic [ref=e91]: Tìm kiếm message
+                - textbox "Tìm kiếm message" [ref=e92]:
+                  - /placeholder: Nội dung, sender...
+              - table [ref=e94]:
+                - rowgroup [ref=e95]:
+                  - row "Thời gian Sender Loại Nội dung" [ref=e96]:
+                    - columnheader "Thời gian" [ref=e97]
+                    - columnheader "Sender" [ref=e98]
+                    - columnheader "Loại" [ref=e99]
+                    - columnheader "Nội dung" [ref=e100]
+                - rowgroup [ref=e101]:
+                  - row "11:44:00 29/3/2026 Khách test OA TEXT Khách hỏi giá combo" [ref=e102]:
+                    - cell "11:44:00 29/3/2026" [ref=e103]
+                    - cell "Khách test OA" [ref=e104]
+                    - cell "TEXT" [ref=e105]
+                    - cell "Khách hỏi giá combo" [ref=e106]
+                  - row "11:45:00 29/3/2026 Staff TEXT Bên em gửi bảng giá ngay ạ" [ref=e107]:
+                    - cell "11:45:00 29/3/2026" [ref=e108]
+                    - cell "Staff" [ref=e109]
+                    - cell "TEXT" [ref=e110]
+                    - cell "Bên em gửi bảng giá ngay ạ" [ref=e111]
+              - generic [ref=e112]:
+                - heading "Gửi tin nhắn" [level=3] [ref=e113]
+                - paragraph [ref=e114]: "ZALO_PERSONAL: gửi thật qua zca-js. ZALO_OA: gửi qua OA official API khi tài khoản đã cấu hình token/url."
+                - generic [ref=e115]:
+                  - generic [ref=e116]: Nội dung
+                  - textbox "Nội dung" [ref=e117]:
+                    - /placeholder: Nhập nội dung phản hồi khách hàng...
+                - button "Gửi tin nhắn" [ref=e119] [cursor=pointer]
+              - generic [ref=e120]:
+                - generic [ref=e121]:
+                  - heading "Kết quả AI mới nhất" [level=3] [ref=e122]
+                  - generic [ref=e123]: PASS
+                - generic [ref=e124]:
+                  - generic [ref=e125]:
+                    - generic [ref=e126]: Score
+                    - strong [ref=e127]: "90"
+                  - generic [ref=e128]:
+                    - generic [ref=e129]: Model
+                    - strong [ref=e130]: gpt-4o-mini
+                  - generic [ref=e131]:
+                    - generic [ref=e132]: Provider
+                    - strong [ref=e133]: OPENAI_COMPATIBLE
+                  - generic [ref=e134]:
+                    - generic [ref=e135]: Evaluated at
+                    - strong [ref=e136]: 11:46:00 29/3/2026
+                - paragraph [ref=e137]: "Summary: Tư vấn đầy đủ và đúng ngữ cảnh."
+                - paragraph [ref=e138]: "Review: Nên hỏi thêm nhu cầu số lượng."
+            - generic [ref=e139]:
+              - generic [ref=e140]:
+                - heading "AI QC Jobs & Runs" [level=2] [ref=e141]
+                - generic [ref=e142]: SUCCESS
+              - generic [ref=e143]:
+                - heading "Tạo job chấm điểm" [level=3] [ref=e144]
+                - generic [ref=e145]:
+                  - generic [ref=e146]: Tên job
+                  - textbox "Tên job" [ref=e147]: QC Zalo định kỳ
+                - generic [ref=e148]:
+                  - generic [ref=e149]: Interval (phút)
+                  - spinbutton "Interval (phút)" [ref=e150]: "120"
+                - generic [ref=e151]:
+                  - generic [ref=e152]: Lookback (giờ)
+                  - spinbutton "Lookback (giờ)" [ref=e153]: "24"
+                - generic [ref=e154]:
+                  - generic [ref=e155]: Max threads/run
+                  - spinbutton "Max threads/run" [ref=e156]: "30"
+                - generic [ref=e157]:
+                  - generic [ref=e158]: Batch size
+                  - spinbutton "Batch size" [ref=e159]: "5"
+                - generic [ref=e160]:
+                  - generic [ref=e161]: AI model (optional)
+                  - textbox "AI model (optional)" [ref=e162]:
+                    - /placeholder: gpt-4o-mini hoặc model 9router
+                - generic [ref=e163]:
+                  - generic [ref=e164]: Channel filter
+                  - combobox "Channel filter" [ref=e165]:
+                    - option "ALL" [selected]
+                    - option "ZALO_PERSONAL"
+                    - option "ZALO_OA"
+                    - option "FACEBOOK"
+                    - option "OTHER"
+                - generic [ref=e166]:
+                  - generic [ref=e167]: Account IDs (comma, optional)
+                  - textbox "Account IDs (comma, optional)" [ref=e168]:
+                    - /placeholder: id_1,id_2
+                - generic [ref=e169]:
+                  - generic [ref=e170]: Rules content (optional)
+                  - textbox "Rules content (optional)" [ref=e171]:
+                    - /placeholder: Rule checklist cho AI QC...
+                - generic [ref=e172]:
+                  - generic [ref=e173]: Skip conditions (optional)
+                  - textbox "Skip conditions (optional)" [ref=e174]:
+                    - /placeholder: Điều kiện bỏ qua...
+                - button "Tạo job" [ref=e176] [cursor=pointer]
+              - generic [ref=e177]:
+                - generic [ref=e178]:
+                  - heading "Danh sách jobs" [level=3] [ref=e179]
+                  - button "Tải lại jobs" [ref=e180] [cursor=pointer]
+                - table [ref=e182]:
+                  - rowgroup [ref=e183]:
+                    - row "Job Interval Last status Next run Action" [ref=e184]:
+                      - columnheader "Job" [ref=e185]
+                      - columnheader "Interval" [ref=e186]
+                      - columnheader "Last status" [ref=e187]
+                      - columnheader "Next run" [ref=e188]
+                      - columnheader "Action" [ref=e189]
+                  - rowgroup [ref=e190]:
+                    - row "QC Zalo định kỳ 120 phút SUCCESS 13:00:00 29/3/2026 Run now" [ref=e191]:
+                      - cell "QC Zalo định kỳ" [ref=e192]
+                      - cell "120 phút" [ref=e193]
+                      - cell "SUCCESS" [ref=e194]:
+                        - generic [ref=e195]: SUCCESS
+                      - cell "13:00:00 29/3/2026" [ref=e196]
+                      - cell "Run now" [ref=e197]:
+                        - button "Run now" [ref=e198] [cursor=pointer]
+              - generic [ref=e199]:
+                - generic [ref=e200]:
+                  - heading "Runs (QC Zalo định kỳ)" [level=3] [ref=e201]
+                  - button "Tải lại runs" [ref=e202] [cursor=pointer]
+                - table [ref=e204]:
+                  - rowgroup [ref=e205]:
+                    - row "Started Status Evaluated Failed Violations" [ref=e206]:
+                      - columnheader "Started" [ref=e207]
+                      - columnheader "Status" [ref=e208]
+                      - columnheader "Evaluated" [ref=e209]
+                      - columnheader "Failed" [ref=e210]
+                      - columnheader "Violations" [ref=e211]
+                  - rowgroup [ref=e212]:
+                    - row "11:30:00 29/3/2026 SUCCESS 3 0 1" [ref=e213]:
+                      - cell "11:30:00 29/3/2026" [ref=e214]
+                      - cell "SUCCESS" [ref=e215]:
+                        - generic [ref=e216]: SUCCESS
+                      - cell "3" [ref=e217]
+                      - cell "0" [ref=e218]
+                      - cell "1" [ref=e219]
+                - generic [ref=e220]:
+                  - heading "Run detail" [level=3] [ref=e221]
+                  - generic [ref=e222]: SUCCESS
+                - paragraph [ref=e223]: "Started: 11:30:00 29/3/2026"
+                - paragraph [ref=e224]: "Finished: 11:31:00 29/3/2026"
+                - generic [ref=e225]:
+                  - generic [ref=e226]:
+                    - generic [ref=e227]: Total threads
+                    - strong [ref=e228]: "6"
+                  - generic [ref=e229]:
+                    - generic [ref=e230]: Evaluated
+                    - strong [ref=e231]: "3"
+                  - generic [ref=e232]:
+                    - generic [ref=e233]: Skipped
+                    - strong [ref=e234]: "0"
+                  - generic [ref=e235]:
+                    - generic [ref=e236]: Violations
+                    - strong [ref=e237]: "1"
+                - table [ref=e239]:
+                  - rowgroup [ref=e240]:
+                    - row "Thread Verdict Score Violations" [ref=e241]:
+                      - columnheader "Thread" [ref=e242]
+                      - columnheader "Verdict" [ref=e243]
+                      - columnheader "Score" [ref=e244]
+                      - columnheader "Violations" [ref=e245]
+                  - rowgroup [ref=e246]:
+                    - row "Khách test OA PASS 90 0" [ref=e247]:
+                      - cell "Khách test OA" [ref=e248]
+                      - cell "PASS" [ref=e249]:
+                        - generic [ref=e250]: PASS
+                      - cell "90" [ref=e251]
+                      - cell "0" [ref=e252]
+  - button "Open Next.js Dev Tools" [ref=e258] [cursor=pointer]:
+    - img [ref=e259]
+  - alert [ref=e262]
+```

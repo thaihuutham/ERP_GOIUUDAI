@@ -1,0 +1,730 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "Represents a retail customer for digital products and services.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the customer." },
+        "name": { "type": "string", "description": "Full name of the customer." },
+        "email": { "type": "string", "format": "email", "description": "Email address of the customer." },
+        "phone": { "type": "string", "description": "Phone number of the customer." },
+        "status": { "type": "string", "enum": ["active", "inactive", "blocked"], "description": "Current status of the customer account." },
+        "totalSpent": { "type": "number", "description": "Total amount spent by the customer." },
+        "lastOrderDate": { "type": "string", "format": "date-time", "description": "Timestamp of the last order." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the customer was added to the system." },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "teamId": { "type": "string" },
+        "employeeId": { "type": "string" }
+      },
+      "required": ["name", "email", "status", "companyId", "branchId", "departmentId", "teamId", "employeeId"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Represents a digital product or service offered by the business.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the product." },
+        "name": { "type": "string", "description": "Name of the product or service." },
+        "type": { "type": "string", "enum": ["digital_product", "service"], "description": "Category of the item." },
+        "price": { "type": "number", "description": "Unit price of the product." },
+        "description": { "type": "string", "description": "Detailed description of the product." },
+        "status": { "type": "string", "enum": ["available", "discontinued"], "description": "Availability status." },
+        "companyId": { "type": "string" }
+      },
+      "required": ["name", "type", "price", "status", "companyId"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Represents a sales transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the order." },
+        "customerId": { "type": "string", "description": "Reference to the customer who placed the order." },
+        "customerName": { "type": "string", "description": "Denormalized customer name for easier display." },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "productName": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" }
+            }
+          }
+        },
+        "totalAmount": { "type": "number", "description": "Total price of the order." },
+        "status": { "type": "string", "enum": ["completed", "pending", "cancelled", "pending_approval"], "description": "Current status of the order." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the order was created." },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "teamId": { "type": "string" },
+        "employeeId": { "type": "string" }
+      },
+      "required": ["customerId", "items", "totalAmount", "status", "createdAt", "companyId", "branchId", "departmentId", "teamId", "employeeId"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Represents an internal staff member.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier (UID) for the employee." },
+        "name": { "type": "string", "description": "Full name of the employee." },
+        "email": { "type": "string", "format": "email", "description": "Work email address." },
+        "role": { "type": "string", "enum": ["admin", "manager", "staff"], "description": "Access level within the ERP." },
+        "roleLevel": { "type": "number", "description": "1: Company Admin, 2: Branch Manager, 3: Dept Manager, 4: Team Leader, 5: Employee" },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "teamId": { "type": "string" },
+        "baseSalary": { "type": "number", "description": "Base monthly salary." },
+        "joinDate": { "type": "string", "format": "date", "description": "Date the employee joined the company." },
+        "leaveBalance": { "type": "number", "description": "Remaining annual leave days." },
+        "status": { "type": "string", "enum": ["active", "on_leave", "terminated"], "description": "Current employment status." }
+      },
+      "required": ["name", "email", "role", "roleLevel", "companyId", "branchId", "departmentId", "teamId"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Tracks employee daily attendance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "checkIn": { "type": "string", "format": "date-time" },
+        "checkOut": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["present", "late", "absent", "on_leave"] },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" }
+      },
+      "required": ["employeeId", "date", "status", "companyId"]
+    },
+    "LeaveRequest": {
+      "title": "LeaveRequest",
+      "description": "Employee requests for time off.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "type": { "type": "string", "enum": ["annual", "sick", "unpaid", "other"] },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "approvedBy": { "type": "string" },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["employeeId", "type", "startDate", "endDate", "status", "companyId"]
+    },
+    "Payroll": {
+      "title": "Payroll",
+      "description": "Monthly payroll record for an employee.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "month": { "type": "integer" },
+        "year": { "type": "integer" },
+        "baseSalary": { "type": "number" },
+        "allowances": { "type": "number" },
+        "deductions": { "type": "number" },
+        "netSalary": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "paid"] },
+        "paidAt": { "type": "string", "format": "date-time" },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" }
+      },
+      "required": ["employeeId", "month", "year", "baseSalary", "netSalary", "status", "companyId"]
+    },
+    "SystemStats": {
+      "title": "SystemStats",
+      "description": "Global system statistics",
+      "type": "object",
+      "properties": {
+        "totalRevenue": { "type": "number" },
+        "totalCustomers": { "type": "integer" },
+        "totalOrders": { "type": "integer" },
+        "totalProducts": { "type": "integer" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Asset": {
+      "title": "Asset",
+      "description": "Represents a physical or digital asset owned by the company.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "category": { "type": "string", "enum": ["computer", "furniture", "vehicle", "other"] },
+        "purchaseDate": { "type": "string", "format": "date-time" },
+        "purchasePrice": { "type": "number" },
+        "status": { "type": "string", "enum": ["available", "in_use", "maintenance", "retired"] },
+        "depreciationMethod": { "type": "string", "enum": ["linear", "declining_balance", "none"] },
+        "usefulLife": { "type": "number", "description": "Useful life in months." },
+        "salvageValue": { "type": "number" },
+        "accumulatedDepreciation": { "type": "number" },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "currentAssigneeId": { "type": "string" },
+        "currentAssigneeType": { "type": "string", "enum": ["employee", "department", "branch", ""] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "code", "category", "status", "companyId"]
+    },
+    "AssetAllocation": {
+      "title": "AssetAllocation",
+      "description": "Tracks the assignment of an asset to an entity.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "assetId": { "type": "string" },
+        "assigneeId": { "type": "string" },
+        "assigneeType": { "type": "string", "enum": ["employee", "department", "branch"] },
+        "assigneeName": { "type": "string" },
+        "allocatedDate": { "type": "string", "format": "date-time" },
+        "returnedDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["active", "returned"] },
+        "notes": { "type": "string" },
+        "allocatedBy": { "type": "string" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["assetId", "assigneeId", "assigneeType", "status", "allocatedBy", "companyId"]
+    },
+    "Vendor": {
+      "title": "Vendor",
+      "description": "Represents a supplier or vendor.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "status", "companyId"]
+    },
+    "ChartOfAccount": {
+      "title": "ChartOfAccount",
+      "description": "An account in the general ledger.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string", "description": "Account code (e.g., 1111 for Cash)." },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["asset", "liability", "equity", "revenue", "expense"] },
+        "balance": { "type": "number" },
+        "companyId": { "type": "string" }
+      },
+      "required": ["code", "name", "type", "companyId"]
+    },
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "A manual or automatic accounting entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "description": { "type": "string" },
+        "reference": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "accountId": { "type": "string" },
+              "accountName": { "type": "string" },
+              "debit": { "type": "number" },
+              "credit": { "type": "number" }
+            }
+          }
+        },
+        "status": { "type": "string", "enum": ["draft", "posted"] },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "items", "status", "companyId"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "A bill or invoice for AR/AP.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["receivable", "payable"] },
+        "partnerId": { "type": "string", "description": "Reference to Customer or Vendor." },
+        "partnerName": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "dueDate": { "type": "string", "format": "date" },
+        "amount": { "type": "number" },
+        "taxAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["unpaid", "partially_paid", "paid", "overdue"] },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "partnerId", "amount", "totalAmount", "status", "companyId"]
+    },
+    "BudgetPlan": {
+      "title": "BudgetPlan",
+      "description": "General company budget plan.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "period": { "type": "string", "description": "Format YYYY-MM" },
+        "plannedAmount": { "type": "number" },
+        "actualAmount": { "type": "number" },
+        "companyId": { "type": "string" }
+      },
+      "required": ["category", "period", "plannedAmount", "companyId"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Represents a company project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["planning", "active", "completed", "on_hold"] },
+        "managerId": { "type": "string" },
+        "managerName": { "type": "string" },
+        "budget": { "type": "number" },
+        "actualCost": { "type": "number" },
+        "progress": { "type": "number" },
+        "companyId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "status", "managerId", "companyId"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A specific task within a project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "assignedToName": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["todo", "in_progress", "review", "completed"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "estimatedHours": { "type": "number" },
+        "actualHours": { "type": "number" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "name", "status", "companyId"]
+    },
+    "ProjectResource": {
+      "title": "ProjectResource",
+      "description": "An employee allocated to a project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "role": { "type": "string" },
+        "allocationPercentage": { "type": "number" },
+        "companyId": { "type": "string" }
+      },
+      "required": ["projectId", "employeeId", "companyId"]
+    },
+    "ProjectBudget": {
+      "title": "ProjectBudget",
+      "description": "Budget allocation for a project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "category": { "type": "string" },
+        "plannedAmount": { "type": "number" },
+        "actualAmount": { "type": "number" },
+        "description": { "type": "string" },
+        "companyId": { "type": "string" }
+      },
+      "required": ["projectId", "category", "plannedAmount", "companyId"]
+    },
+    "WorkflowDefinition": {
+      "title": "WorkflowDefinition",
+      "description": "Defines a sequence of steps for a specific business process.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "targetEntity": { "type": "string", "description": "e.g., PurchaseOrder, Invoice, LeaveRequest" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order": { "type": "number" },
+              "label": { "type": "string" },
+              "approverRole": { "type": "string", "enum": ["admin", "manager", "staff"] },
+              "condition": { "type": "string", "description": "Optional logic or threshold" }
+            }
+          }
+        },
+        "isActive": { "type": "boolean" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "targetEntity", "steps", "isActive", "companyId"]
+    },
+    "WorkflowInstance": {
+      "title": "WorkflowInstance",
+      "description": "Tracks the progress of a specific document through a workflow.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workflowId": { "type": "string" },
+        "entityId": { "type": "string" },
+        "currentStepOrder": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "in_progress"] },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stepOrder": { "type": "number" },
+              "action": { "type": "string" },
+              "userId": { "type": "string" },
+              "userName": { "type": "string" },
+              "comment": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["workflowId", "entityId", "currentStepOrder", "status", "companyId"]
+    },
+    "Recruitment": {
+      "title": "Recruitment",
+      "description": "Manages job postings and candidate applications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "closed", "on_hold"] },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "email": { "type": "string" },
+              "status": { "type": "string", "enum": ["applied", "interviewing", "offered", "rejected", "hired"] },
+              "resumeUrl": { "type": "string" }
+            }
+          }
+        },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["jobTitle", "status", "companyId"]
+    },
+    "Training": {
+      "title": "Training",
+      "description": "Tracks employee training programs and certifications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "participants": {
+          "type": "array",
+          "items": { "type": "string", "description": "Employee IDs" }
+        },
+        "status": { "type": "string", "enum": ["planned", "in_progress", "completed"] },
+        "companyId": { "type": "string" }
+      },
+      "required": ["title", "status", "companyId"]
+    },
+    "Performance": {
+      "title": "Performance",
+      "description": "Manages employee performance reviews and KPIs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "period": { "type": "string", "description": "e.g., Q1 2024" },
+        "kpis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "target": { "type": "number" },
+              "actual": { "type": "number" },
+              "weight": { "type": "number" }
+            }
+          }
+        },
+        "score": { "type": "number" },
+        "feedback": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "submitted", "reviewed"] },
+        "companyId": { "type": "string" }
+      },
+      "required": ["employeeId", "period", "status", "companyId"]
+    },
+    "Benefit": {
+      "title": "Benefit",
+      "description": "Manages employee benefits and insurance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "type": { "type": "string", "enum": ["health_insurance", "social_insurance", "bonus", "allowance"] },
+        "amount": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "companyId": { "type": "string" }
+      },
+      "required": ["employeeId", "type", "status", "companyId"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Represents a request to a vendor for products or services.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "productName": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" }
+            }
+          }
+        },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "ordered", "received", "cancelled"] },
+        "orderDate": { "type": "string", "format": "date" },
+        "expectedDeliveryDate": { "type": "string", "format": "date" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vendorId", "items", "totalAmount", "status", "orderDate", "companyId"]
+    },
+    "Shipment": {
+      "title": "Shipment",
+      "description": "Tracks the transportation of goods.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string", "description": "Reference to PurchaseOrder or SalesOrder." },
+        "trackingNumber": { "type": "string" },
+        "carrier": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "in_transit", "delivered", "delayed"] },
+        "origin": { "type": "string" },
+        "destination": { "type": "string" },
+        "estimatedArrival": { "type": "string", "format": "date-time" },
+        "actualArrival": { "type": "string", "format": "date-time" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["status", "origin", "destination", "companyId"]
+    },
+    "Distribution": {
+      "title": "Distribution",
+      "description": "Manages product distribution to sales channels.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "fromLocation": { "type": "string" },
+        "toLocation": { "type": "string" },
+        "quantity": { "type": "number" },
+        "status": { "type": "string", "enum": ["planned", "in_progress", "completed"] },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "quantity", "status", "companyId"]
+    },
+    "DemandForecast": {
+      "title": "DemandForecast",
+      "description": "Predicts future product demand.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "period": { "type": "string", "description": "Format YYYY-MM" },
+        "forecastedQuantity": { "type": "number" },
+        "confidenceLevel": { "type": "number", "description": "Percentage 0-100" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "period", "forecastedQuantity", "companyId"]
+    },
+    "SupplyChainRisk": {
+      "title": "SupplyChainRisk",
+      "description": "Identifies and tracks risks in the supply chain.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "status": { "type": "string", "enum": ["identified", "mitigated", "occurred"] },
+        "mitigationPlan": { "type": "string" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "severity", "status", "companyId"]
+    },
+    "TimeEntry": {
+      "title": "TimeEntry",
+      "description": "Working time recorded for a task.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "hours": { "type": "number" },
+        "description": { "type": "string" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "taskId", "employeeId", "date", "hours", "companyId"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "A saved report configuration or generated report metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "module": { "type": "string", "enum": ["crm", "sales", "hr", "finance", "scm", "projects", "assets"] },
+        "type": { "type": "string", "enum": ["summary", "detailed", "chart"] },
+        "config": { "type": "object", "description": "JSON configuration for filters, columns, etc." },
+        "createdBy": { "type": "string" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "module", "type", "companyId", "createdBy"]
+    },
+    "ApprovalRequest": {
+      "title": "ApprovalRequest",
+      "description": "A request for a manager to approve an action.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["order_edit", "leave_request", "expense"] },
+        "targetId": { "type": "string", "description": "ID of the document being approved." },
+        "targetCollection": { "type": "string" },
+        "requesterId": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "approverId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "data": { "type": "object", "description": "The proposed changes." },
+        "reason": { "type": "string" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "targetId", "requesterId", "approverId", "status", "companyId"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Global system configuration settings.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyName": { "type": "string" },
+        "taxCode": { "type": "string" },
+        "address": { "type": "string" },
+        "currency": { "type": "string" },
+        "dateFormat": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "enabledModules": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "customFields": {
+          "type": "object",
+          "description": "Map of entity names to their custom field definitions."
+        },
+        "orderSettings": {
+          "type": "object",
+          "properties": {
+            "allowIncreaseWithoutApproval": { "type": "boolean" },
+            "requireApprovalForDecrease": { "type": "boolean" },
+            "approverId": { "type": "string", "description": "UID of the default manager for approvals." }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyName"]
+    }
+  },
+  "firestore": {
+    "/customers/{customerId}": { "schema": "Customer", "description": "Collection of customer profiles." },
+    "/products/{productId}": { "schema": "Product", "description": "Collection of digital products and services." },
+    "/orders/{orderId}": { "schema": "Order", "description": "Collection of sales orders." },
+    "/employees/{employeeId}": { "schema": "Employee", "description": "Collection of internal staff profiles." },
+    "/attendance/{attendanceId}": { "schema": "Attendance", "description": "Collection of employee attendance records." },
+    "/leave_requests/{leaveRequestId}": { "schema": "LeaveRequest", "description": "Collection of employee leave requests." },
+    "/payrolls/{payrollId}": { "schema": "Payroll", "description": "Collection of monthly payroll records." },
+    "/vendors/{vendorId}": { "schema": "Vendor", "description": "Collection of suppliers and vendors." },
+    "/accounts/{accountId}": { "schema": "ChartOfAccount", "description": "Collection of general ledger accounts." },
+    "/journal_entries/{entryId}": { "schema": "JournalEntry", "description": "Collection of accounting journal entries." },
+    "/invoices/{invoiceId}": { "schema": "Invoice", "description": "Collection of AR/AP invoices." },
+    "/budget_plans/{planId}": { "schema": "BudgetPlan", "description": "Collection of company budget plans." },
+    "/assets/{assetId}": { "schema": "Asset", "description": "Collection of company assets." },
+    "/asset_allocations/{allocationId}": { "schema": "AssetAllocation", "description": "Collection of asset allocation history." },
+    "/projects/{projectId}": { "schema": "Project", "description": "Collection of company projects." },
+    "/tasks/{taskId}": { "schema": "Task", "description": "Collection of project tasks." },
+    "/project_resources/{resourceId}": { "schema": "ProjectResource", "description": "Collection of project resource allocations." },
+    "/project_budgets/{budgetId}": { "schema": "ProjectBudget", "description": "Collection of project budget items." },
+    "/time_entries/{entryId}": { "schema": "TimeEntry", "description": "Collection of time tracking entries." },
+    "/reports/{reportId}": { "schema": "Report", "description": "Collection of saved reports." },
+    "/approvals/{approvalId}": { "schema": "ApprovalRequest", "description": "Collection of approval requests." },
+    "/system/config": { "schema": "SystemConfig", "description": "Global system configuration." },
+    "/system/stats": { "schema": "SystemStats", "description": "Global statistics" }
+  }
+}

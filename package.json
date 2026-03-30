@@ -1,0 +1,30 @@
+{
+  "name": "retail-erp-saas-ready",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev:api",
+    "dev:api": "npm run dev --workspace @erp/api",
+    "dev:web": "npm run dev --workspace @erp/web",
+    "build": "npm run build --workspace @erp/shared && npm run build --workspace @erp/ui && npm run build --workspace @erp/api && npm run build --workspace @erp/web",
+    "lint": "npm run lint --workspace @erp/shared && npm run lint --workspace @erp/ui && npm run lint --workspace @erp/api && npm run lint --workspace @erp/web",
+    "quality:security": "scripts/quality/run-quality-security.sh",
+    "test:e2e:web": "playwright test --config=apps/web/e2e/playwright.config.ts",
+    "test:e2e:web:ui": "playwright test --config=apps/web/e2e/playwright.config.ts --ui",
+    "prisma:generate": "npm run prisma:generate --workspace @erp/api",
+    "prisma:migrate": "npm run prisma:migrate --workspace @erp/api"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  },
+  "overrides": {
+    "path-to-regexp": "8.4.0",
+    "@prisma/config@6.19.2": {
+      "effect": "3.20.0"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+name: deploy-vm
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, vm-prod]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy on VM runner
+        env:
+          DEPLOY_WORKDIR: /opt/erp-retail
+          DEPLOY_ENV_FILE: /opt/erp-retail/.deploy.env
+          AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'true' }}
+          DEFAULT_TENANT_ID: ${{ vars.DEFAULT_TENANT_ID || 'tenant_demo_company' }}
+          API_PORT: ${{ vars.API_PORT || '3001' }}
+          WEB_PORT: ${{ vars.WEB_PORT || '3000' }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL || 'http://api:3001/api/v1' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || vars.DATABASE_URL }}
+          REDIS_URL: ${{ vars.REDIS_URL || 'redis://redis:6379' }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AI_OPENAI_COMPAT_BASE_URL: ${{ vars.AI_OPENAI_COMPAT_BASE_URL }}
+          AI_OPENAI_COMPAT_API_KEY: ${{ secrets.AI_OPENAI_COMPAT_API_KEY }}
+          AI_OPENAI_COMPAT_MODEL: ${{ vars.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini' }}
+          AI_OPENAI_COMPAT_TIMEOUT_MS: ${{ vars.AI_OPENAI_COMPAT_TIMEOUT_MS || '45000' }}
+          ZALO_OA_WEBHOOK_SECRET: ${{ secrets.ZALO_OA_WEBHOOK_SECRET }}
+          ZALO_OA_OUTBOUND_URL: ${{ vars.ZALO_OA_OUTBOUND_URL }}
+          ZALO_OA_ACCESS_TOKEN: ${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+          ZALO_OA_API_BASE_URL: ${{ vars.ZALO_OA_API_BASE_URL || 'https://openapi.zalo.me/v3.0/oa' }}
+          ZALO_OA_OUTBOUND_TIMEOUT_MS: ${{ vars.ZALO_OA_OUTBOUND_TIMEOUT_MS || '20000' }}
+        run: |
+          chmod +x scripts/deploy/deploy-from-runner.sh
+          scripts/deploy/deploy-from-runner.sh

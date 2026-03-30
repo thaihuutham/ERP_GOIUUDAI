@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+!config/.env.example
+.deploy.env
+apps/**/.env
+apps/**/.env.*
+legacy/**/node_modules/
+playwright-report/
+apps/web/e2e/test-results/

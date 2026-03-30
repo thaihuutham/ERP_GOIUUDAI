@@ -1,0 +1,394 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConversationChannel, ConversationSenderType, Prisma } from '@prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { PrismaService } from '../../prisma/prisma.service';
+
+type ThreadFilters = {
+  channel?: ConversationChannel | 'ALL';
+  channelAccountId?: string;
+  customerId?: string;
+};
+
+type IngestExternalMessagePayload = {
+  channel: ConversationChannel;
+  channelAccountId?: string;
+  externalThreadId: string;
+  externalMessageId?: string;
+  senderType: ConversationSenderType;
+  senderExternalId?: string;
+  senderName?: string;
+  content?: string;
+  contentType?: string;
+  sentAt?: Date;
+  customerId?: string;
+  customerDisplayName?: string;
+  metadataJson?: Prisma.InputJsonValue;
+  attachmentsJson?: Prisma.InputJsonValue;
+};
+
+@Injectable()
+export class ConversationsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async listThreads(query: PaginationQueryDto, filters: ThreadFilters = {}) {
+    const take = Math.min(Math.max(query.limit ?? 30, 1), 200);
+    const keyword = query.q?.trim();
+
+    const where: Prisma.ConversationThreadWhereInput = {};
+
+    if (filters.channel && filters.channel !== 'ALL') {
+      where.channel = filters.channel;
+    }
+
+    if (filters.channelAccountId) {
+      where.channelAccountId = filters.channelAccountId;
+    }
+
+    if (filters.customerId) {
+      where.customerId = filters.customerId;
+    }
+
+    if (keyword) {
+      where.OR = [
+        { customerDisplayName: { contains: keyword, mode: 'insensitive' } },
+        { externalThreadId: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.conversationThread.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true
+          }
+        },
+        channelAccount: {
+          select: {
+            id: true,
+            accountType: true,
+            displayName: true,
+            zaloUid: true,
+            status: true
+          }
+        },
+        evaluations: {
+          orderBy: { evaluatedAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            verdict: true,
+            score: true,
+            summary: true,
+            evaluatedAt: true
+          }
+        }
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+
+    return {
+      items,
+      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
+      limit: take
+    };
+  }
+
+  async createThread(payload: Record<string, unknown>) {
+    const channel = this.parseChannel(payload.channel, ConversationChannel.ZALO_PERSONAL);
+    const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
+
+    const created = await this.prisma.client.conversationThread.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        channel,
+        channelAccountId: this.optionalString(payload.channelAccountId) ?? null,
+        externalThreadId,
+        customerId: this.optionalString(payload.customerId) ?? null,
+        customerDisplayName: this.optionalString(payload.customerDisplayName) ?? null,
+        metadataJson: (payload.metadataJson as Prisma.InputJsonValue | undefined) ?? undefined,
+        lastMessageAt: payload.lastMessageAt ? this.parseDate(payload.lastMessageAt, 'lastMessageAt') : undefined,
+        unreadCount: this.parseInt(payload.unreadCount, 0),
+        isReplied: this.parseBoolean(payload.isReplied, true)
+      }
+    });
+
+    return created;
+  }
+
+  async listMessages(threadId: string, query: PaginationQueryDto) {
+    const thread = await this.prisma.client.conversationThread.findFirst({ where: { id: threadId } });
+    if (!thread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    const take = Math.min(Math.max(query.limit ?? 50, 1), 500);
+    const keyword = query.q?.trim();
+
+    const where: Prisma.ConversationMessageWhereInput = {
+      threadId
+    };
+
+    if (keyword) {
+      where.OR = [
+        { content: { contains: keyword, mode: 'insensitive' } },
+        { senderName: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.conversationMessage.findMany({
+      where,
+      orderBy: { sentAt: 'desc' },
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+
+    return {
+      items,
+      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
+      limit: take
+    };
+  }
+
+  async appendMessage(threadId: string, payload: Record<string, unknown>) {
+    const thread = await this.prisma.client.conversationThread.findFirst({ where: { id: threadId } });
+    if (!thread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    const senderType = this.parseSenderType(payload.senderType, ConversationSenderType.AGENT);
+
+    const message = await this.createOrReuseMessage({
+      channel: thread.channel,
+      channelAccountId: thread.channelAccountId ?? undefined,
+      externalThreadId: thread.externalThreadId,
+      externalMessageId: this.optionalString(payload.externalMessageId) ?? undefined,
+      senderType,
+      senderExternalId: this.optionalString(payload.senderExternalId) ?? undefined,
+      senderName: this.optionalString(payload.senderName) ?? undefined,
+      content: this.optionalString(payload.content) ?? '',
+      contentType: this.optionalString(payload.contentType) ?? 'TEXT',
+      sentAt: payload.sentAt ? this.parseDate(payload.sentAt, 'sentAt') : new Date(),
+      attachmentsJson: (payload.attachmentsJson as Prisma.InputJsonValue | undefined) ?? undefined,
+      customerDisplayName: thread.customerDisplayName ?? undefined,
+      customerId: thread.customerId ?? undefined,
+      metadataJson: (payload.metadataJson as Prisma.InputJsonValue | undefined) ?? undefined
+    }, thread);
+
+    return message;
+  }
+
+  async ingestExternalMessage(payload: IngestExternalMessagePayload) {
+    const thread = await this.resolveThreadForIngestion(payload);
+    return this.createOrReuseMessage(payload, thread);
+  }
+
+  async getLatestEvaluation(threadId: string) {
+    const thread = await this.prisma.client.conversationThread.findFirst({ where: { id: threadId } });
+    if (!thread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    const evaluation = await this.prisma.client.conversationEvaluation.findFirst({
+      where: { threadId },
+      orderBy: { evaluatedAt: 'desc' },
+      include: {
+        violations: {
+          orderBy: { createdAt: 'asc' }
+        }
+      }
+    });
+
+    return {
+      thread,
+      evaluation
+    };
+  }
+
+  private async resolveThreadForIngestion(payload: IngestExternalMessagePayload) {
+    const existing = await this.prisma.client.conversationThread.findFirst({
+      where: {
+        channel: payload.channel,
+        channelAccountId: payload.channelAccountId ?? null,
+        externalThreadId: payload.externalThreadId
+      }
+    });
+
+    if (existing) {
+      if (!existing.customerId && payload.customerId) {
+        await this.prisma.client.conversationThread.updateMany({
+          where: { id: existing.id },
+          data: {
+            customerId: payload.customerId,
+            customerDisplayName: payload.customerDisplayName ?? existing.customerDisplayName
+          }
+        });
+      }
+      return this.prisma.client.conversationThread.findFirstOrThrow({ where: { id: existing.id } });
+    }
+
+    return this.prisma.client.conversationThread.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        channel: payload.channel,
+        channelAccountId: payload.channelAccountId ?? null,
+        externalThreadId: payload.externalThreadId,
+        customerId: payload.customerId ?? null,
+        customerDisplayName: payload.customerDisplayName ?? null,
+        metadataJson: payload.metadataJson ?? undefined,
+        lastMessageAt: payload.sentAt ?? new Date(),
+        unreadCount: payload.senderType === ConversationSenderType.CUSTOMER ? 1 : 0,
+        isReplied: payload.senderType !== ConversationSenderType.CUSTOMER
+      }
+    });
+  }
+
+  private async createOrReuseMessage(payload: IngestExternalMessagePayload, thread: { id: string; unreadCount: number; isReplied: boolean; }) {
+    const sentAt = payload.sentAt ?? new Date();
+    const contentType = payload.contentType?.trim().toUpperCase() || 'TEXT';
+
+    if (payload.externalMessageId) {
+      const duplicated = await this.prisma.client.conversationMessage.findFirst({
+        where: {
+          threadId: thread.id,
+          externalMessageId: payload.externalMessageId
+        }
+      });
+
+      if (duplicated) {
+        return duplicated;
+      }
+    }
+
+    const message = await this.prisma.client.conversationMessage.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        threadId: thread.id,
+        externalMessageId: payload.externalMessageId ?? null,
+        senderType: payload.senderType,
+        senderExternalId: payload.senderExternalId ?? null,
+        senderName: payload.senderName ?? null,
+        content: payload.content ?? null,
+        contentType,
+        attachmentsJson: payload.attachmentsJson ?? undefined,
+        sentAt
+      }
+    });
+
+    await this.touchThreadAfterMessage(thread.id, payload.senderType, sentAt);
+
+    return message;
+  }
+
+  private async touchThreadAfterMessage(threadId: string, senderType: ConversationSenderType, sentAt: Date) {
+    if (senderType === ConversationSenderType.CUSTOMER) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id: threadId },
+        data: {
+          lastMessageAt: sentAt,
+          unreadCount: { increment: 1 },
+          isReplied: false
+        }
+      });
+      return;
+    }
+
+    if (senderType === ConversationSenderType.AGENT) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id: threadId },
+        data: {
+          lastMessageAt: sentAt,
+          unreadCount: 0,
+          isReplied: true
+        }
+      });
+      return;
+    }
+
+    await this.prisma.client.conversationThread.updateMany({
+      where: { id: threadId },
+      data: {
+        lastMessageAt: sentAt
+      }
+    });
+  }
+
+  private parseChannel(input: unknown, fallback: ConversationChannel): ConversationChannel {
+    const candidate = String(input ?? '').trim().toUpperCase();
+    if ((Object.values(ConversationChannel) as string[]).includes(candidate)) {
+      return candidate as ConversationChannel;
+    }
+    return fallback;
+  }
+
+  private parseSenderType(input: unknown, fallback: ConversationSenderType): ConversationSenderType {
+    const candidate = String(input ?? '').trim().toUpperCase();
+    if ((Object.values(ConversationSenderType) as string[]).includes(candidate)) {
+      return candidate as ConversationSenderType;
+    }
+    return fallback;
+  }
+
+  private requiredString(input: unknown, message: string) {
+    const value = this.optionalString(input);
+    if (!value) {
+      throw new BadRequestException(message);
+    }
+    return value;
+  }
+
+  private optionalString(input: unknown) {
+    if (input === null || input === undefined) {
+      return undefined;
+    }
+    const value = String(input).trim();
+    return value || undefined;
+  }
+
+  private parseDate(input: unknown, fieldName: string) {
+    const parsed = new Date(String(input));
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${fieldName} không hợp lệ.`);
+    }
+    return parsed;
+  }
+
+  private parseInt(input: unknown, fallback: number) {
+    if (input === null || input === undefined || input === '') {
+      return fallback;
+    }
+    const value = Number(input);
+    if (!Number.isInteger(value) || value < 0) {
+      throw new BadRequestException('Giá trị số nguyên không hợp lệ.');
+    }
+    return value;
+  }
+
+  private parseBoolean(input: unknown, fallback: boolean) {
+    if (input === null || input === undefined) {
+      return fallback;
+    }
+    if (typeof input === 'boolean') {
+      return input;
+    }
+    const normalized = String(input).trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+      return false;
+    }
+    return fallback;
+  }
+}

@@ -1,0 +1,1267 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum GenericStatus {
+  ACTIVE
+  INACTIVE
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+}
+
+enum PayrollComponentType {
+  EARNING
+  DEDUCTION
+}
+
+enum PayrollFormulaType {
+  FIXED
+  PERCENT_BASE
+}
+
+enum ConversationChannel {
+  ZALO_PERSONAL
+  ZALO_OA
+  FACEBOOK
+  OTHER
+}
+
+enum ConversationSenderType {
+  AGENT
+  CUSTOMER
+  SYSTEM
+}
+
+enum ConversationEvaluationVerdict {
+  PASS
+  FAIL
+  SKIP
+  ERROR
+}
+
+model Tenant {
+  id         String   @id @default(cuid())
+  tenant_Id  String   @unique
+  code       String   @unique
+  name       String
+  status     GenericStatus @default(ACTIVE)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenant_Id    String
+  email        String
+  passwordHash String?
+  role         UserRole @default(STAFF)
+  employeeId   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenant_Id, email])
+  @@index([tenant_Id])
+}
+
+model Employee {
+  id           String   @id @default(cuid())
+  tenant_Id    String
+  code         String?
+  fullName     String
+  email        String?
+  phone        String?
+  dateOfBirth  DateTime?
+  gender       String?
+  nationalId   String?
+  address      String?
+  bankAccountNo String?
+  bankName     String?
+  taxCode      String?
+  department   String?
+  departmentId String?
+  position     String?
+  positionId   String?
+  managerId    String?
+  workShiftId  String?
+  joinDate     DateTime?
+  employmentType EmploymentType @default(FULL_TIME)
+  baseSalary   Decimal? @db.Decimal(18, 2)
+  status       GenericStatus @default(ACTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, departmentId])
+  @@index([tenant_Id, positionId])
+  @@index([tenant_Id, managerId])
+  @@index([tenant_Id, workShiftId])
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  tenant_Id      String
+  code           String?
+  name           String
+  managerEmployeeId String?
+  description    String?
+  status         GenericStatus @default(ACTIVE)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, name])
+}
+
+model Position {
+  id             String   @id @default(cuid())
+  tenant_Id      String
+  code           String?
+  title          String
+  departmentId   String?
+  level          String?
+  description    String?
+  status         GenericStatus @default(ACTIVE)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, departmentId])
+}
+
+model WorkShift {
+  id                      String   @id @default(cuid())
+  tenant_Id               String
+  code                    String?
+  name                    String
+  startTime               String
+  endTime                 String
+  breakMinutes            Int      @default(60)
+  overtimeThresholdMinutes Int     @default(30)
+  status                  GenericStatus @default(ACTIVE)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+}
+
+model LeavePolicy {
+  id                    String   @id @default(cuid())
+  tenant_Id             String
+  code                  String?
+  name                  String
+  leaveType             String
+  isPaid                Boolean  @default(true)
+  annualQuotaDays       Decimal? @db.Decimal(6, 2)
+  carryOverLimitDays    Decimal? @db.Decimal(6, 2)
+  maxConsecutiveDays    Int?
+  requiresAttachment    Boolean  @default(false)
+  status                GenericStatus @default(ACTIVE)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, leaveType])
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  code          String?
+  fullName      String
+  email         String?
+  emailNormalized String?
+  phone         String?
+  phoneNormalized String?
+  tags          String[] @default([])
+  customerStage String? @default("MOI")
+  ownerStaffId  String?
+  consentStatus String?
+  segment       String?
+  source        String?
+  totalOrders   Int      @default(0)
+  totalSpent    Decimal? @db.Decimal(18, 2)
+  lastOrderAt   DateTime?
+  lastContactAt DateTime?
+  status        GenericStatus @default(ACTIVE)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orders        Order[]
+  interactions  CustomerInteraction[]
+  paymentRequests PaymentRequest[]
+  primaryMergeLogs CustomerMergeLog[] @relation("primaryCustomer")
+  mergedFromLogs   CustomerMergeLog[] @relation("mergedCustomer")
+  conversationThreads ConversationThread[]
+
+  @@unique([tenant_Id, code])
+  @@unique([tenant_Id, phoneNormalized])
+  @@unique([tenant_Id, emailNormalized])
+  @@index([tenant_Id])
+  @@index([tenant_Id, phone])
+  @@index([tenant_Id, email])
+}
+
+model CustomerInteraction {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  customerId      String
+  interactionType String
+  channel         String
+  content         String
+  resultTag       String?
+  staffName       String?
+  staffCode       String?
+  interactionAt   DateTime @default(now())
+  nextActionAt    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  customer        Customer @relation(fields: [customerId], references: [id])
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId])
+  @@index([tenant_Id, interactionAt])
+}
+
+model PaymentRequest {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  customerId    String?
+  invoiceId     String?
+  invoiceNo     String?
+  orderNo       String?
+  channel       String
+  recipient     String?
+  qrCodeUrl     String?
+  amount        Decimal? @db.Decimal(18, 2)
+  status        String   @default("DA_GUI")
+  sentAt        DateTime?
+  paidAt        DateTime?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer      Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId])
+  @@index([tenant_Id, invoiceNo])
+  @@index([tenant_Id, status])
+}
+
+model CustomerMergeLog {
+  id                String   @id @default(cuid())
+  tenant_Id         String
+  primaryCustomerId String
+  mergedCustomerId  String
+  mergedBy          String?
+  note              String?
+  mergedAt          DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  primaryCustomer   Customer @relation("primaryCustomer", fields: [primaryCustomerId], references: [id])
+  mergedCustomer    Customer @relation("mergedCustomer", fields: [mergedCustomerId], references: [id])
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, primaryCustomerId])
+  @@index([tenant_Id, mergedCustomerId])
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  sku           String?
+  name          String
+  productType   String
+  categoryPath  String?
+  attributesJson Json?
+  variantOfProductId String?
+  pricePolicyCode String?
+  unitPrice     Decimal  @db.Decimal(18, 2)
+  status        GenericStatus @default(ACTIVE)
+  archivedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  variantOf     Product? @relation("ProductVariants", fields: [variantOfProductId], references: [id], onDelete: SetNull)
+  variants      Product[] @relation("ProductVariants")
+  orderItems    OrderItem[]
+
+  @@unique([tenant_Id, sku])
+  @@index([tenant_Id])
+  @@index([tenant_Id, variantOfProductId])
+  @@index([tenant_Id, categoryPath])
+  @@index([tenant_Id, pricePolicyCode])
+}
+
+model Order {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  orderNo       String?
+  customerId    String?
+  customerName  String?
+  totalAmount   Decimal? @db.Decimal(18, 2)
+  status        GenericStatus @default(PENDING)
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer      Customer? @relation(fields: [customerId], references: [id])
+  items         OrderItem[]
+
+  @@unique([tenant_Id, orderNo])
+  @@index([tenant_Id])
+  @@index([tenant_Id, createdAt])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  orderId     String
+  productId   String?
+  productName String?
+  quantity    Int      @default(1)
+  unitPrice   Decimal  @db.Decimal(18, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  order       Order    @relation(fields: [orderId], references: [id])
+  product     Product? @relation(fields: [productId], references: [id])
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, orderId])
+}
+
+model Attendance {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  employeeId  String
+  workDate    DateTime
+  workShiftId String?
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  scheduledStartAt DateTime?
+  scheduledEndAt DateTime?
+  lateMinutes Int      @default(0)
+  overtimeMinutes Int  @default(0)
+  note        String?
+  status      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId, workDate])
+  @@index([tenant_Id, workShiftId])
+}
+
+model LeaveRequest {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  employeeId  String
+  leavePolicyId String?
+  leaveType   String
+  startDate   DateTime
+  endDate     DateTime
+  durationDays Decimal? @db.Decimal(6, 2)
+  reason      String?
+  attachmentUrl String?
+  status      GenericStatus @default(PENDING)
+  approvedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId])
+  @@index([tenant_Id, leavePolicyId])
+  @@index([tenant_Id, leaveType])
+}
+
+model Payroll {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  employeeId  String
+  payMonth    Int
+  payYear     Int
+  periodStart DateTime?
+  periodEnd   DateTime?
+  workingDays Float?
+  paidLeaveDays Float?
+  unpaidLeaveDays Float?
+  overtimeHours Float?
+  grossSalary Decimal? @db.Decimal(18, 2)
+  deduction   Decimal? @db.Decimal(18, 2)
+  netSalary   Decimal? @db.Decimal(18, 2)
+  note        String?
+  status      GenericStatus @default(DRAFT)
+  paidAt      DateTime?
+  lockedAt    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, payYear, payMonth])
+  @@index([tenant_Id, employeeId, payYear, payMonth])
+}
+
+model EmployeeContract {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  employeeId    String
+  contractNo    String?
+  contractType  String
+  startDate     DateTime
+  endDate       DateTime?
+  baseSalary    Decimal? @db.Decimal(18, 2)
+  allowance     Decimal? @db.Decimal(18, 2)
+  insuranceSalary Decimal? @db.Decimal(18, 2)
+  status        GenericStatus @default(ACTIVE)
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenant_Id, contractNo])
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId, status])
+}
+
+model PayrollComponent {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  code          String?
+  name          String
+  componentType PayrollComponentType
+  formulaType   PayrollFormulaType @default(FIXED)
+  defaultValue  Decimal? @db.Decimal(18, 2)
+  isTaxable     Boolean  @default(false)
+  status        GenericStatus @default(ACTIVE)
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, componentType, status])
+}
+
+model PayrollLineItem {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  payrollId     String
+  employeeId    String
+  componentCode String?
+  componentName String
+  componentType PayrollComponentType
+  amount        Decimal  @db.Decimal(18, 2)
+  isTaxable     Boolean  @default(false)
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, payrollId])
+  @@index([tenant_Id, employeeId, createdAt])
+}
+
+model HrEvent {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  employeeId    String
+  eventType     String
+  effectiveAt   DateTime
+  payload       Json?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId, effectiveAt])
+}
+
+model Invoice {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  invoiceNo     String?
+  invoiceType   String
+  partnerName   String?
+  totalAmount   Decimal? @db.Decimal(18, 2)
+  paidAmount    Decimal? @default(0) @db.Decimal(18, 2)
+  dueAt         DateTime?
+  paidAt        DateTime?
+  closedAt      DateTime?
+  status        GenericStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  allocations   PaymentAllocation[]
+
+  @@unique([tenant_Id, invoiceNo])
+  @@index([tenant_Id])
+}
+
+model Account {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  accountCode String
+  name        String
+  accountType String
+  balance     Decimal? @db.Decimal(18, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenant_Id, accountCode])
+  @@index([tenant_Id])
+}
+
+model JournalEntry {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  entryNo     String?
+  entryDate   DateTime
+  description String?
+  status      GenericStatus @default(DRAFT)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lines       JournalEntryLine[]
+
+  @@index([tenant_Id])
+}
+
+model JournalEntryLine {
+  id             String   @id @default(cuid())
+  tenant_Id      String
+  journalEntryId String
+  accountCode    String
+  debit          Decimal? @db.Decimal(18, 2)
+  credit         Decimal? @db.Decimal(18, 2)
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, journalEntryId, createdAt])
+}
+
+model PaymentAllocation {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  invoiceId       String
+  paymentRef      String?
+  sourceInvoiceNo String?
+  allocatedAmount Decimal  @db.Decimal(18, 2)
+  allocatedAt     DateTime @default(now())
+  note            String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, invoiceId, allocatedAt])
+}
+
+model BudgetPlan {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  category      String
+  fiscalPeriod  String
+  plannedAmount Decimal? @db.Decimal(18, 2)
+  actualAmount  Decimal? @db.Decimal(18, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Vendor {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  code        String?
+  name        String
+  phone       String?
+  email       String?
+  status      GenericStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  purchaseOrders PurchaseOrder[]
+
+  @@index([tenant_Id])
+}
+
+model PurchaseOrder {
+  id                 String   @id @default(cuid())
+  tenant_Id          String
+  poNo               String?
+  vendorId           String?
+  relatedSalesOrderNo String?
+  totalAmount        Decimal? @db.Decimal(18, 2)
+  receivedAmount     Decimal? @default(0) @db.Decimal(18, 2)
+  lifecycleStatus    String   @default("DRAFT")
+  expectedReceiveAt  DateTime?
+  approvedAt         DateTime?
+  closedAt           DateTime?
+  notes              String?
+  status             GenericStatus @default(PENDING)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  vendor   Vendor?           @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  receipts PurchaseReceipt[]
+  shipments Shipment[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, vendorId])
+  @@index([tenant_Id, lifecycleStatus])
+}
+
+model Shipment {
+  id                 String   @id @default(cuid())
+  tenant_Id          String
+  shipmentNo         String?
+  orderRef           String?
+  purchaseOrderId    String?
+  carrier            String?
+  lifecycleStatus    String   @default("PENDING")
+  expectedDeliveryAt DateTime?
+  onTimeDelivery     Boolean?
+  damageReported     Boolean?
+  status             GenericStatus @default(PENDING)
+  shippedAt          DateTime?
+  deliveredAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, purchaseOrderId])
+  @@index([tenant_Id, lifecycleStatus])
+}
+
+model PurchaseReceipt {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  purchaseOrderId String
+  receiptNo       String?
+  invoiceNo       String?
+  receivedAmount  Decimal? @db.Decimal(18, 2)
+  receivedQty     Int?
+  acceptedQty     Int?
+  rejectedQty     Int?
+  note            String?
+  receivedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, purchaseOrderId, receivedAt])
+}
+
+model Distribution {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  distributionNo String?
+  destination String?
+  status      GenericStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model DemandForecast {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  sku         String?
+  period      String
+  predictedQty Int?
+  confidence  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model SupplyChainRisk {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  title       String
+  severity    String
+  mitigation  String?
+  status      GenericStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Asset {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  assetCode   String?
+  name        String
+  category    String?
+  lifecycleStatus String @default("PROCURE")
+  purchaseAt  DateTime?
+  value       Decimal? @db.Decimal(18, 2)
+  usefulLifeMonths Int?
+  depreciationMethod String @default("STRAIGHT_LINE")
+  salvageValue Decimal? @db.Decimal(18, 2)
+  depreciationStartAt DateTime?
+  retiredAt   DateTime?
+  status      GenericStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  allocations AssetAllocation[]
+  maintenanceSchedules AssetMaintenanceSchedule[]
+  depreciationEntries AssetDepreciationEntry[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, lifecycleStatus])
+}
+
+model AssetAllocation {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  assetId     String
+  employeeId  String?
+  allocatedAt DateTime @default(now())
+  returnedAt  DateTime?
+  note        String?
+  status      GenericStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  asset       Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, assetId, status])
+}
+
+model AssetMaintenanceSchedule {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  assetId       String
+  title         String
+  frequencyDays Int?
+  nextDueAt     DateTime
+  lastDoneAt    DateTime?
+  note          String?
+  status        GenericStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, assetId, nextDueAt])
+}
+
+model AssetDepreciationEntry {
+  id         String   @id @default(cuid())
+  tenant_Id  String
+  assetId    String
+  period     String
+  amount     Decimal  @db.Decimal(18, 2)
+  bookValue  Decimal? @db.Decimal(18, 2)
+  postedAt   DateTime @default(now())
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, assetId, postedAt])
+}
+
+model Recruitment {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  jobTitle    String
+  candidateName String?
+  stage       String?
+  status      GenericStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Training {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  title       String
+  employeeId  String?
+  completedAt DateTime?
+  status      GenericStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Performance {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  employeeId  String
+  period      String
+  score       Float?
+  reviewerId  String?
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Benefit {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  employeeId  String
+  benefitType String
+  amount      Decimal? @db.Decimal(18, 2)
+  status      GenericStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  code        String?
+  name        String
+  description String?
+  status      GenericStatus @default(PENDING)
+  startAt     DateTime?
+  endAt       DateTime?
+  baselineStartAt DateTime?
+  baselineEndAt DateTime?
+  plannedBudget Decimal? @db.Decimal(18, 2)
+  actualBudget  Decimal? @db.Decimal(18, 2)
+  forecastPercent Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       ProjectTask[]
+  resources   ProjectResource[]
+  budgets     ProjectBudget[]
+  timeEntries TimeEntry[]
+
+  @@index([tenant_Id])
+}
+
+model ProjectTask {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  projectId   String
+  title       String
+  assignedTo  String?
+  weight      Int      @default(1)
+  status      GenericStatus @default(PENDING)
+  actualStartAt DateTime?
+  completedAt DateTime?
+  dueAt       DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, projectId, status])
+}
+
+model ProjectResource {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  projectId   String
+  resourceType String
+  resourceRef String?
+  quantity    Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, projectId])
+}
+
+model ProjectBudget {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  projectId   String
+  budgetType  String
+  amount      Decimal? @db.Decimal(18, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, projectId])
+}
+
+model TimeEntry {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  projectId   String?
+  employeeId  String
+  workDate    DateTime
+  hours       Float
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, projectId, workDate])
+}
+
+model WorkflowDefinition {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  code        String?
+  name        String
+  module      String
+  version     Int      @default(1)
+  description String?
+  definitionJson Json?
+  status      GenericStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  instances   WorkflowInstance[]
+
+  @@index([tenant_Id])
+}
+
+model WorkflowInstance {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  definitionId  String
+  definition    WorkflowDefinition @relation(fields: [definitionId], references: [id])
+  targetType    String
+  targetId      String
+  currentStep   String?
+  status        GenericStatus @default(PENDING)
+  startedBy     String?
+  contextJson   Json?
+  submittedAt   DateTime?
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  approvals     Approval[]
+  actionLogs    WorkflowActionLog[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, definitionId])
+}
+
+model Approval {
+  id           String   @id @default(cuid())
+  tenant_Id    String
+  instanceId   String?
+  instance     WorkflowInstance? @relation(fields: [instanceId], references: [id])
+  targetType   String
+  targetId     String
+  requesterId  String
+  approverId   String?
+  stepKey      String?
+  contextJson  Json?
+  dueAt        DateTime?
+  escalatedAt  DateTime?
+  escalatedTo  String?
+  delegatedAt  DateTime?
+  delegatedTo  String?
+  decisionNote String?
+  status       GenericStatus @default(PENDING)
+  decidedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, instanceId])
+  @@index([tenant_Id, approverId])
+}
+
+model WorkflowActionLog {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  instanceId  String
+  instance    WorkflowInstance @relation(fields: [instanceId], references: [id])
+  action      String
+  fromStep    String?
+  toStep      String?
+  actorId     String?
+  note        String?
+  metadataJson Json?
+  createdAt   DateTime @default(now())
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, instanceId])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  userId      String?
+  title       String
+  content     String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  reportType  String
+  name        String
+  moduleName  String?
+  templateCode String?
+  outputFormat String? @default("JSON")
+  scheduleRule String?
+  nextRunAt   DateTime?
+  lastRunAt   DateTime?
+  status      GenericStatus @default(ACTIVE)
+  configJson  Json?
+  generatedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  runs        ReportRun[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, moduleName])
+  @@index([tenant_Id, status])
+}
+
+model ReportRun {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  reportId    String
+  outputFormat String
+  outputPath  String?
+  summaryJson Json?
+  status      GenericStatus @default(PENDING)
+  generatedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  report      Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, reportId, createdAt])
+}
+
+model Setting {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  settingKey  String
+  settingValue Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenant_Id, settingKey])
+  @@index([tenant_Id])
+}
+
+model ZaloAccount {
+  id             String   @id @default(cuid())
+  tenant_Id      String
+  accountType    String   @default("PERSONAL")
+  displayName    String?
+  zaloUid        String?
+  phone          String?
+  status         String   @default("DISCONNECTED")
+  ownerUserId    String?
+  sessionData    Json?
+  accessTokenEnc String?
+  refreshTokenEnc String?
+  metadataJson   Json?
+  lastConnectedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  threads ConversationThread[]
+
+  @@unique([tenant_Id, zaloUid])
+  @@index([tenant_Id])
+  @@index([tenant_Id, accountType])
+  @@index([tenant_Id, status])
+}
+
+model ConversationThread {
+  id                String   @id @default(cuid())
+  tenant_Id         String
+  channel           ConversationChannel
+  channelAccountId  String?
+  externalThreadId  String
+  customerId        String?
+  customerDisplayName String?
+  unreadCount       Int      @default(0)
+  isReplied         Boolean  @default(true)
+  lastMessageAt     DateTime?
+  metadataJson      Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  channelAccount ZaloAccount? @relation(fields: [channelAccountId], references: [id], onDelete: SetNull)
+  customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  messages       ConversationMessage[]
+  evaluations    ConversationEvaluation[]
+
+  @@unique([tenant_Id, channel, channelAccountId, externalThreadId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, channel, lastMessageAt])
+  @@index([tenant_Id, customerId])
+}
+
+model ConversationMessage {
+  id                String   @id @default(cuid())
+  tenant_Id         String
+  threadId          String
+  externalMessageId String?
+  senderType        ConversationSenderType
+  senderExternalId  String?
+  senderName        String?
+  content           String?
+  contentType       String   @default("TEXT")
+  attachmentsJson   Json?
+  sentAt            DateTime
+  isDeleted         Boolean  @default(false)
+  deletedAt         DateTime?
+  aiProcessedAt     DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  thread ConversationThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, threadId, externalMessageId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, threadId, sentAt])
+}
+
+model ConversationEvaluationJob {
+  id                    String   @id @default(cuid())
+  tenant_Id             String
+  name                  String
+  description           String?
+  jobType               String   @default("QC_ANALYSIS")
+  isActive              Boolean  @default(true)
+  intervalMinutes       Int      @default(120)
+  nextRunAt             DateTime?
+  lastRunAt             DateTime?
+  lastRunStatus         String?
+  lookbackHours         Int      @default(24)
+  maxConversationsPerRun Int     @default(30)
+  batchSize             Int      @default(5)
+  aiProvider            String   @default("OPENAI_COMPATIBLE")
+  aiModel               String?
+  channelFilterJson     Json?
+  rulesContent          String?
+  skipConditions        String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  runs ConversationEvaluationRun[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, isActive, nextRunAt])
+}
+
+model ConversationEvaluationRun {
+  id             String   @id @default(cuid())
+  tenant_Id      String
+  jobId          String
+  startedAt      DateTime @default(now())
+  finishedAt     DateTime?
+  status         String   @default("RUNNING")
+  summaryJson    Json?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  job         ConversationEvaluationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  evaluations ConversationEvaluation[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, jobId, startedAt])
+}
+
+model ConversationEvaluation {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  threadId      String
+  runId         String?
+  verdict       ConversationEvaluationVerdict @default(ERROR)
+  score         Int?
+  review        String?
+  summary       String?
+  provider      String?
+  model         String?
+  rawResponseJson Json?
+  inputTokens   Int?
+  outputTokens  Int?
+  costUsd       Decimal? @db.Decimal(12, 6)
+  evaluatedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  thread     ConversationThread       @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  run        ConversationEvaluationRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  violations ConversationViolation[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, threadId, evaluatedAt])
+  @@index([tenant_Id, runId])
+}
+
+model ConversationViolation {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  evaluationId  String
+  severity      String
+  ruleName      String
+  evidence      String?
+  explanation   String?
+  suggestion    String?
+  confidence    Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  evaluation ConversationEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, evaluationId])
+}

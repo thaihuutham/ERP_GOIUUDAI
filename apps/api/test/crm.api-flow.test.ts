@@ -1,0 +1,199 @@
+import 'reflect-metadata';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { sign } from 'jsonwebtoken';
+import request from 'supertest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { AppModule } from '../src/app.module';
+import { CrmService } from '../src/modules/crm/crm.service';
+
+describe('CRM API flow integration', () => {
+  let app: INestApplication;
+  let crmService: CrmService;
+
+  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
+    sign(
+      {
+        sub: `test_${role.toLowerCase()}`,
+        userId: `test_${role.toLowerCase()}`,
+        email: `${role.toLowerCase()}@example.com`,
+        role,
+        tenantId: 'tenant_demo_company'
+      },
+      process.env.JWT_SECRET as string,
+      { algorithm: 'HS256', expiresIn: '1h' }
+    );
+
+  beforeAll(async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.AUTH_ENABLED = 'true';
+    process.env.JWT_SECRET = 'phase3-crm-flow-secret';
+    process.env.PRISMA_SKIP_CONNECT = 'true';
+
+    app = await NestFactory.create(AppModule, {
+      logger: false,
+      abortOnError: false
+    });
+
+    app.setGlobalPrefix('api/v1');
+    app.enableCors();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true
+      })
+    );
+
+    await app.init();
+    crmService = app.get(CrmService);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('executes CRM flow: customer -> interaction -> payment request -> mark paid', async () => {
+    const managerToken = makeToken('MANAGER');
+
+    const state = {
+      customer: {
+        id: 'cus_api_1',
+        fullName: 'Nguyen Van A',
+        phone: '0912345678',
+        email: 'a@example.com',
+        customerStage: 'MOI',
+        status: 'ACTIVE',
+        tags: ['moi']
+      },
+      paymentRequest: {
+        id: 'pay_api_1',
+        customerId: 'cus_api_1',
+        invoiceNo: 'INV-API-001',
+        amount: 1500000,
+        status: 'DA_GUI'
+      }
+    };
+
+    vi.spyOn(crmService, 'createCustomer').mockImplementation(async (body: any) => {
+      state.customer = {
+        ...state.customer,
+        ...body,
+        id: state.customer.id
+      };
+      return {
+        deduplicated: false,
+        message: 'Đã tạo khách hàng mới.',
+        customer: state.customer
+      } as any;
+    });
+
+    vi.spyOn(crmService, 'createInteraction').mockImplementation(async (body: any) => ({
+      id: 'interaction_api_1',
+      customerId: body.customerId ?? state.customer.id,
+      interactionType: body.interactionType ?? 'TU_VAN',
+      channel: body.channel ?? 'ZALO',
+      content: body.content,
+      resultTag: body.resultTag ?? null
+    }) as any);
+
+    vi.spyOn(crmService, 'createPaymentRequest').mockImplementation(async (body: any) => {
+      state.paymentRequest = {
+        ...state.paymentRequest,
+        ...body,
+        id: state.paymentRequest.id,
+        status: body.status ?? 'DA_GUI'
+      };
+      return state.paymentRequest as any;
+    });
+
+    vi.spyOn(crmService, 'markPaymentRequestPaid').mockImplementation(async (_id: string) => ({
+      ...state.paymentRequest,
+      status: 'DA_THANH_TOAN',
+      paidAt: new Date().toISOString()
+    }) as any);
+
+    const createCustomerRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/customers')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({
+        fullName: 'Nguyen Van A',
+        phone: '0912345678',
+        email: 'a@example.com',
+        customerStage: 'MOI',
+        tags: ['moi']
+      });
+
+    expect(createCustomerRes.status).toBe(201);
+    expect(createCustomerRes.body.customer.id).toBe('cus_api_1');
+
+    const createInteractionRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/interactions')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({
+        customerId: 'cus_api_1',
+        interactionType: 'TU_VAN',
+        channel: 'ZALO',
+        content: 'Khách quan tâm sản phẩm mới',
+        resultTag: 'quan_tam'
+      });
+
+    expect(createInteractionRes.status).toBe(201);
+    expect(createInteractionRes.body.customerId).toBe('cus_api_1');
+
+    const createPaymentRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/payment-requests')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({
+        customerId: 'cus_api_1',
+        invoiceNo: 'INV-API-001',
+        amount: 1500000,
+        status: 'DA_GUI'
+      });
+
+    expect(createPaymentRes.status).toBe(201);
+    expect(createPaymentRes.body.status).toBe('DA_GUI');
+
+    const markPaidRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/payment-requests/pay_api_1/mark-paid')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({});
+
+    expect(markPaidRes.status).toBe(201);
+    expect(markPaidRes.body.status).toBe('DA_THANH_TOAN');
+  });
+
+  it('executes customer merge flow', async () => {
+    const managerToken = makeToken('MANAGER');
+
+    vi.spyOn(crmService, 'mergeCustomers').mockImplementation(async (body: any) => ({
+      message: 'Đã gộp hồ sơ khách hàng thành công.',
+      customer: {
+        id: body.primaryCustomerId,
+        fullName: 'Primary Customer'
+      },
+      summary: {
+        movedOrders: 2,
+        movedInteractions: 3,
+        movedPaymentRequests: 1
+      }
+    }) as any);
+
+    const mergeRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/merge-customers')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({
+        primaryCustomerId: 'cus_primary',
+        mergedCustomerId: 'cus_secondary',
+        mergedBy: 'test_manager',
+        note: 'merge duplicate by phone'
+      });
+
+    expect(mergeRes.status).toBe(201);
+    expect(mergeRes.body.customer.id).toBe('cus_primary');
+    expect(mergeRes.body.summary.movedInteractions).toBe(3);
+  });
+});

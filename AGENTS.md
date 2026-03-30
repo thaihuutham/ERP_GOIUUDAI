@@ -1,0 +1,34 @@
+# AGENTS.md
+
+File này là entrypoint bắt buộc cho mọi AI agent (Codex, Claude Code, ChatGPT, session mới).
+
+## 1. Nguyên tắc làm việc
+- Stateless tuyệt đối: không dựa vào chat history, chỉ dựa vào file trong repo.
+- Không tự mở rộng scope khi không có yêu cầu.
+- Không đổi hành vi chức năng ERP khi đang làm việc tái cấu trúc.
+- Mọi quyết định kiến trúc mới phải ghi vào `docs/decisions/`.
+
+## 2. Trình tự đọc trước khi sửa code
+1. `planning/CURRENT_TASK.md`
+2. `.agent/memory/CONTEXT_SNAPSHOT.md`
+3. `docs/specs/PROJECT_OVERVIEW.md`
+4. `docs/specs/CONVENTIONS.md`
+5. `docs/architecture/SCALING_DESIGN.md`
+6. `docs/deployment/VM_AUTODEPLOY.md`
+
+## 3. Phạm vi ưu tiên hiện tại
+- Ổn định cấu trúc dự án theo template.
+- Vận hành cho mô hình công ty: 50 nhân viên nội bộ, khách lẻ không đăng nhập hệ thống.
+- Chuẩn hóa pipeline deploy VM tự động qua GitHub Actions.
+
+## 4. Tuyệt đối không làm
+- Không xóa business logic cũ nếu chưa có ADR + kế hoạch migration.
+- Không commit secrets thật.
+- Không chỉnh Firestore rules/schema production khi chưa có kế hoạch rollout.
+- Không chỉnh luồng deploy production trực tiếp trên VM bằng thao tác tay.
+
+## 5. Handoff bắt buộc cuối session
+- Cập nhật `.agent/memory/CONTEXT_SNAPSHOT.md`.
+- Ghi session mới trong `.agent/sessions/`.
+- Cập nhật `planning/CURRENT_TASK.md`.
+- Nếu có quyết định mới, tạo ADR mới trong `docs/decisions/`.
