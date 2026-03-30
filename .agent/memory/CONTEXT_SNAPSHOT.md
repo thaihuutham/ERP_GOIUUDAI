@@ -1,11 +1,15 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-03-30 08:45 +07
+- Time: 2026-03-30 09:12 +07
 - By: Antigravity
-- Session Log: `.agent/sessions/2026-03-30_0845_antigravity.md`
+- Session Log: `.agent/sessions/2026-03-30_0910_antigravity.md`
 
 ## Current State
+- **Repository Initialized and Pushed**:
+  - `https://github.com/thaihuutham/ERP_GOIUUDAI.git`
+  - Branch: `main`
+  - `.gitignore` verified to exclude sensitive data.
 - **Security Hardened (Tenant Isolation & Auth)**:
   - `resolveTenantIdFromRequest` prioritizes verified JWT over headers.
   - `JwtAuthGuard` synchronizes `TENANT_CONTEXT_KEY` ('tenantId') into CLS.
