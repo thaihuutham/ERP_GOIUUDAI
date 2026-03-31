@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateDemandForecastDto,
@@ -39,7 +40,10 @@ const SHIPMENT_LIFECYCLE = {
 
 @Injectable()
 export class ScmService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+  ) {}
 
   async listVendors(query: ScmListQueryDto) {
     return this.prisma.client.vendor.findMany({
@@ -118,6 +122,8 @@ export class ScmService {
     }
 
     const expectedReceiveAt = body.expectedReceiveAt ? this.parseDate(body.expectedReceiveAt, 'expectedReceiveAt') : null;
+    const policy = await this.runtimeSettings.getCatalogScmPolicyRuntime();
+    const warehouseCode = this.normalizeWarehouseCode(body.warehouseCode) ?? policy.warehouseDefault;
 
     return this.prisma.client.purchaseOrder.create({
       data: {
@@ -125,6 +131,7 @@ export class ScmService {
         poNo: body.poNo ?? null,
         vendorId: body.vendorId ?? null,
         relatedSalesOrderNo: body.relatedSalesOrderNo ?? null,
+        warehouseCode,
         totalAmount: body.totalAmount,
         receivedAmount: 0,
         lifecycleStatus: body.lifecycleStatus ?? PO_LIFECYCLE.DRAFT,
@@ -147,6 +154,8 @@ export class ScmService {
     if (body.relatedSalesOrderNo) {
       await this.ensureSalesOrderByNo(body.relatedSalesOrderNo);
     }
+    const policy = await this.runtimeSettings.getCatalogScmPolicyRuntime();
+    const warehouseCode = this.normalizeWarehouseCode(body.warehouseCode) ?? undefined;
 
     await this.prisma.client.purchaseOrder.updateMany({
       where: { id },
@@ -154,6 +163,7 @@ export class ScmService {
         poNo: body.poNo,
         vendorId: body.vendorId,
         relatedSalesOrderNo: body.relatedSalesOrderNo,
+        warehouseCode,
         totalAmount: body.totalAmount,
         expectedReceiveAt: body.expectedReceiveAt ? this.parseDate(body.expectedReceiveAt, 'expectedReceiveAt') : undefined,
         notes: body.notes,
@@ -267,6 +277,13 @@ export class ScmService {
     });
     const totalReceived = Number(sums._sum.receivedAmount ?? 0);
     const poTotal = Number(po.totalAmount ?? 0);
+    const policy = await this.runtimeSettings.getCatalogScmPolicyRuntime();
+    const overReceiveLimit = poTotal * (1 + Number(policy.receiving.allowOverReceivePercent ?? 0) / 100);
+    if (poTotal > 0 && totalReceived - overReceiveLimit > 0.005) {
+      throw new BadRequestException(
+        `Số lượng nhận vượt quá policy receiving.allowOverReceivePercent=${policy.receiving.allowOverReceivePercent}%.`
+      );
+    }
     const fullyReceived = poTotal > 0 && poTotal - totalReceived <= 0.005;
 
     await this.prisma.client.purchaseOrder.updateMany({
@@ -357,15 +374,19 @@ export class ScmService {
   }
 
   async createShipment(body: CreateShipmentDto) {
-    if (body.purchaseOrderId) {
-      await this.ensurePurchaseOrder(body.purchaseOrderId);
-    }
+    const policy = await this.runtimeSettings.getCatalogScmPolicyRuntime();
+    const linkedPo = body.purchaseOrderId ? await this.ensurePurchaseOrder(body.purchaseOrderId) : null;
+    const warehouseCode =
+      this.normalizeWarehouseCode(body.warehouseCode)
+      ?? linkedPo?.warehouseCode
+      ?? policy.warehouseDefault;
     return this.prisma.client.shipment.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
         shipmentNo: body.shipmentNo ?? null,
         orderRef: body.orderRef ?? null,
         purchaseOrderId: body.purchaseOrderId ?? null,
+        warehouseCode,
         carrier: body.carrier ?? null,
         lifecycleStatus: body.lifecycleStatus ?? SHIPMENT_LIFECYCLE.PENDING,
         expectedDeliveryAt: body.expectedDeliveryAt ? this.parseDate(body.expectedDeliveryAt, 'expectedDeliveryAt') : null,
@@ -382,12 +403,14 @@ export class ScmService {
     if (body.purchaseOrderId) {
       await this.ensurePurchaseOrder(body.purchaseOrderId);
     }
+    const warehouseCode = this.normalizeWarehouseCode(body.warehouseCode) ?? undefined;
     await this.prisma.client.shipment.updateMany({
       where: { id },
       data: {
         shipmentNo: body.shipmentNo,
         orderRef: body.orderRef,
         purchaseOrderId: body.purchaseOrderId,
+        warehouseCode,
         carrier: body.carrier,
         lifecycleStatus: body.lifecycleStatus,
         expectedDeliveryAt: body.expectedDeliveryAt ? this.parseDate(body.expectedDeliveryAt, 'expectedDeliveryAt') : undefined,
@@ -716,6 +739,11 @@ export class ScmService {
       throw new BadRequestException(`${fieldName} không hợp lệ.`);
     }
     return parsed;
+  }
+
+  private normalizeWarehouseCode(value: unknown) {
+    const normalized = String(value ?? '').trim().toUpperCase();
+    return normalized || undefined;
   }
 
   private take(limit?: number, max = 200) {

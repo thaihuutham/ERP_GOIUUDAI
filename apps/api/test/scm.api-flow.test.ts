@@ -1,34 +1,20 @@
 import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { sign } from 'jsonwebtoken';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
+import { RuntimeSettingsService } from '../src/common/settings/runtime-settings.service';
 import { ScmService } from '../src/modules/scm/scm.service';
+import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('SCM API flow integration', () => {
   let app: INestApplication;
   let scmService: ScmService;
-
-  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
-    sign(
-      {
-        sub: `test_${role.toLowerCase()}`,
-        userId: `test_${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@example.com`,
-        role,
-        tenantId: 'tenant_demo_company'
-      },
-      process.env.JWT_SECRET as string,
-      { algorithm: 'HS256', expiresIn: '1h' }
-    );
+  let runtimeSettings: RuntimeSettingsService;
 
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.AUTH_ENABLED = 'true';
-    process.env.JWT_SECRET = 'phase2-integration-test-secret';
-    process.env.PRISMA_SKIP_CONNECT = 'true';
+    setupSingleTenantAuthTestEnv('phase2-integration-test-secret');
 
     app = await NestFactory.create(AppModule, {
       logger: false,
@@ -46,6 +32,7 @@ describe('SCM API flow integration', () => {
 
     await app.init();
     scmService = app.get(ScmService);
+    runtimeSettings = app.get(RuntimeSettingsService);
   });
 
   afterEach(() => {
@@ -57,7 +44,8 @@ describe('SCM API flow integration', () => {
   });
 
   it('executes PO lifecycle flow: create -> submit -> approve -> receive -> close', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
+    vi.spyOn(runtimeSettings, 'isModuleEnabled').mockResolvedValue(true);
 
     const state = {
       po: {
@@ -162,7 +150,8 @@ describe('SCM API flow integration', () => {
   });
 
   it('executes shipment lifecycle flow: create -> ship -> deliver', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
+    vi.spyOn(runtimeSettings, 'isModuleEnabled').mockResolvedValue(true);
 
     const shipment = {
       id: 'ship_api_1',

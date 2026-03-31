@@ -1,31 +1,16 @@
 import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { sign } from 'jsonwebtoken';
 import request from 'supertest';
 import { describe, beforeAll, afterAll, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
+import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('API smoke', () => {
   let app: INestApplication;
-  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
-    sign(
-      {
-        sub: `test_${role.toLowerCase()}`,
-        userId: `test_${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@example.com`,
-        role,
-        tenantId: 'tenant_demo_company'
-      },
-      process.env.JWT_SECRET as string,
-      { algorithm: 'HS256', expiresIn: '1h' }
-    );
 
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.AUTH_ENABLED = 'true';
-    process.env.JWT_SECRET = 'phase0-test-secret';
-    process.env.PRISMA_SKIP_CONNECT = 'true';
+    setupSingleTenantAuthTestEnv('phase0-test-secret');
 
     app = await NestFactory.create(AppModule, {
       logger: false,
@@ -80,7 +65,7 @@ describe('API smoke', () => {
   });
 
   it('PUT /api/v1/settings/config should return 403 for STAFF role', async () => {
-    const staffToken = makeToken('STAFF');
+    const staffToken = makeAuthToken('STAFF');
     const res = await request(app.getHttpServer())
       .put('/api/v1/settings/config')
       .set('authorization', `Bearer ${staffToken}`)
@@ -106,6 +91,29 @@ describe('API smoke', () => {
 
   it('GET /api/v1/crm/customers should return 401 without token and keep error shape', async () => {
     const res = await request(app.getHttpServer()).get('/api/v1/crm/customers');
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({
+          code: 401
+        }),
+        meta: expect.objectContaining({
+          path: '/api/v1/crm/customers',
+          method: 'GET',
+          requestId: expect.any(String)
+        })
+      })
+    );
+  });
+
+  it('GET /api/v1/crm/customers should return 401 when token tenant mismatches single-tenant runtime', async () => {
+    const mismatchedTenantToken = makeAuthToken('MANAGER', { tenantId: 'tenant_demo_company' });
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/crm/customers')
+      .set('authorization', `Bearer ${mismatchedTenantToken}`);
 
     expect(res.status).toBe(401);
     expect(res.body).toEqual(

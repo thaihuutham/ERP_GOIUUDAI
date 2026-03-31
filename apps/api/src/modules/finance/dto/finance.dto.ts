@@ -71,6 +71,11 @@ export class CreateInvoiceDto {
   partnerName?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  orderId?: string;
+
+  @IsOptional()
   @Transform(({ value }) => Number(value))
   @IsNumber()
   totalAmount?: number;
@@ -253,6 +258,26 @@ export class UpdateBudgetPlanDto {
 }
 
 export class InvoiceTransitionDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+export class CreateInvoiceFromOrderDto {
+  @IsString()
+  @MaxLength(120)
+  orderId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  invoiceType?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dueAt?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(500)

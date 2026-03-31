@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
+import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { useUserRole } from './user-role-context';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
@@ -164,7 +165,7 @@ function toDateTime(value: string | null | undefined) {
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
-  return parsed.toLocaleString('vi-VN');
+  return formatRuntimeDateTime(parsed.toISOString());
 }
 
 function statusClass(status: string | null | undefined) {
@@ -679,12 +680,17 @@ export function CrmConversationsWorkbench() {
                   {threads.map((thread) => {
                     const latest = thread.evaluations?.[0];
                     return (
-                      <tr
-                        key={thread.id}
-                        className={selectedThreadId === thread.id ? 'table-row-selected' : ''}
-                        onClick={() => setSelectedThreadId(thread.id)}
-                      >
-                        <td>{thread.customerDisplayName || thread.customer?.fullName || thread.externalThreadId}</td>
+                      <tr key={thread.id} className={selectedThreadId === thread.id ? 'table-row-selected' : ''}>
+                        <td>
+                          <button
+                            type="button"
+                            className="record-link row-select-trigger"
+                            onClick={() => setSelectedThreadId(thread.id)}
+                          >
+                            {thread.customerDisplayName || thread.customer?.fullName || thread.externalThreadId}
+                            <span>Xem</span>
+                          </button>
+                        </td>
                         <td>
                           <span className={statusClass(thread.channel)}>
                             {thread.channel}
@@ -1003,12 +1009,17 @@ export function CrmConversationsWorkbench() {
                   </thead>
                   <tbody>
                     {jobs.map((job) => (
-                      <tr
-                        key={job.id}
-                        className={selectedJobId === job.id ? 'table-row-selected' : ''}
-                        onClick={() => setSelectedJobId(job.id)}
-                      >
-                        <td>{job.name}</td>
+                      <tr key={job.id} className={selectedJobId === job.id ? 'table-row-selected' : ''}>
+                        <td>
+                          <button
+                            type="button"
+                            className="record-link row-select-trigger"
+                            onClick={() => setSelectedJobId(job.id)}
+                          >
+                            {job.name}
+                            <span>Xem</span>
+                          </button>
+                        </td>
                         <td>{job.intervalMinutes ?? '--'} phút</td>
                         <td>
                           <span className={statusClass(job.lastRunStatus)}>
@@ -1062,12 +1073,17 @@ export function CrmConversationsWorkbench() {
                   </thead>
                   <tbody>
                     {runs.map((run) => (
-                      <tr
-                        key={run.id}
-                        className={selectedRunId === run.id ? 'table-row-selected' : ''}
-                        onClick={() => setSelectedRunId(run.id)}
-                      >
-                        <td>{toDateTime(run.startedAt)}</td>
+                      <tr key={run.id} className={selectedRunId === run.id ? 'table-row-selected' : ''}>
+                        <td>
+                          <button
+                            type="button"
+                            className="record-link row-select-trigger"
+                            onClick={() => setSelectedRunId(run.id)}
+                          >
+                            {toDateTime(run.startedAt)}
+                            <span>Xem</span>
+                          </button>
+                        </td>
                         <td>
                           <span className={statusClass(run.status)}>
                             {run.status || '--'}

@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
+import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { RecruitmentPipelineQueryDto } from './dto/recruitment-pipeline-query.dto';
 import { HrService } from './hr.service';
 
 @Controller('hr')
@@ -147,16 +149,19 @@ export class HrController {
   }
 
   @Post('leave-requests/:id/approve')
+  @AuditAction({ action: 'APPROVE_LEAVE_REQUEST', entityType: 'LeaveRequest', entityIdParam: 'id' })
   approveLeaveRequest(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.hrService.approveLeaveRequest(id, body.approverId ? String(body.approverId) : undefined);
   }
 
   @Post('leave-requests/:id/reject')
+  @AuditAction({ action: 'REJECT_LEAVE_REQUEST', entityType: 'LeaveRequest', entityIdParam: 'id' })
   rejectLeaveRequest(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.hrService.rejectLeaveRequest(id, body.approverId ? String(body.approverId) : undefined);
   }
 
   @Get('employees/:id/leave-balance')
+  @AuditRead({ action: 'READ_EMPLOYEE_LEAVE_BALANCE', entityType: 'Employee', entityIdParam: 'id' })
   getLeaveBalance(@Param('id') employeeId: string, @Query('year') year?: string) {
     return this.hrService.getLeaveBalance(employeeId, year ? Number(year) : undefined);
   }
@@ -182,13 +187,99 @@ export class HrController {
   }
 
   @Post('payrolls/:id/pay')
-  payPayroll(@Param('id') id: string) {
-    return this.hrService.payPayroll(id);
+  @AuditAction({ action: 'PAY_PAYROLL', entityType: 'Payroll', entityIdParam: 'id' })
+  payPayroll(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.payPayroll(id, body?.approverId ? String(body.approverId) : undefined);
   }
 
   @Get('recruitment')
   listRecruitment(@Query() query: PaginationQueryDto) {
     return this.hrService.listRecruitment(query);
+  }
+
+  @Get('recruitment/pipeline')
+  getRecruitmentPipeline(
+    @Query() query: RecruitmentPipelineQueryDto,
+    @Query('stage') stage?: string,
+    @Query('status') status?: string,
+    @Query('requisitionId') requisitionId?: string,
+    @Query('recruiterId') recruiterId?: string,
+    @Query('source') source?: string
+  ) {
+    return this.hrService.getRecruitmentPipeline(query, {
+      stage,
+      status,
+      requisitionId,
+      recruiterId,
+      source
+    });
+  }
+
+  @Get('recruitment/metrics')
+  getRecruitmentMetrics(
+    @Query('status') status?: string,
+    @Query('recruiterId') recruiterId?: string,
+    @Query('requisitionId') requisitionId?: string
+  ) {
+    return this.hrService.getRecruitmentMetrics({
+      status,
+      recruiterId,
+      requisitionId
+    });
+  }
+
+  @Get('recruitment/applications/:id')
+  getRecruitmentApplicationDetail(@Param('id') id: string) {
+    return this.hrService.getRecruitmentApplicationDetail(id);
+  }
+
+  @Post('recruitment/applications')
+  createRecruitmentApplication(@Body() body: Record<string, unknown>) {
+    return this.hrService.createRecruitmentApplication(body);
+  }
+
+  @Patch('recruitment/applications/:id/stage')
+  @AuditAction({ action: 'UPDATE_RECRUITMENT_STAGE', entityType: 'RecruitmentApplication', entityIdParam: 'id' })
+  updateRecruitmentApplicationStage(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateRecruitmentApplicationStage(id, body);
+  }
+
+  @Patch('recruitment/applications/:id/status')
+  @AuditAction({ action: 'UPDATE_RECRUITMENT_STATUS', entityType: 'RecruitmentApplication', entityIdParam: 'id' })
+  updateRecruitmentApplicationStatus(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateRecruitmentApplicationStatus(id, body);
+  }
+
+  @Post('recruitment/interviews')
+  createRecruitmentInterview(@Body() body: Record<string, unknown>) {
+    return this.hrService.createRecruitmentInterview(body);
+  }
+
+  @Patch('recruitment/interviews/:id')
+  updateRecruitmentInterview(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateRecruitmentInterview(id, body);
+  }
+
+  @Post('recruitment/offers')
+  createRecruitmentOffer(@Body() body: Record<string, unknown>) {
+    return this.hrService.createRecruitmentOffer(body);
+  }
+
+  @Patch('recruitment/offers/:id')
+  updateRecruitmentOffer(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateRecruitmentOffer(id, body);
+  }
+
+  @Post('recruitment/offers/:id/submit-approval')
+  @AuditAction({ action: 'SUBMIT_RECRUITMENT_OFFER_APPROVAL', entityType: 'RecruitmentOffer', entityIdParam: 'id' })
+  submitRecruitmentOfferApproval(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.submitRecruitmentOfferApproval(id, body);
+  }
+
+  @Post('recruitment/applications/:id/convert-to-employee')
+  @AuditAction({ action: 'CONVERT_RECRUITMENT_TO_EMPLOYEE', entityType: 'RecruitmentApplication', entityIdParam: 'id' })
+  convertRecruitmentApplicationToEmployee(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.convertRecruitmentApplicationToEmployee(id, body);
   }
 
   @Post('recruitment')
@@ -244,6 +335,153 @@ export class HrController {
   @Patch('benefits/:id')
   updateBenefit(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.hrService.updateBenefit(id, body);
+  }
+
+  @Get('personal-income-tax/profiles')
+  listPersonalIncomeTaxProfiles(
+    @Query() query: PaginationQueryDto,
+    @Query('employeeId') employeeId?: string
+  ) {
+    return this.hrService.listPersonalIncomeTaxProfiles(query, employeeId);
+  }
+
+  @Post('personal-income-tax/profiles')
+  createPersonalIncomeTaxProfile(@Body() body: Record<string, unknown>) {
+    return this.hrService.createPersonalIncomeTaxProfile(body);
+  }
+
+  @Patch('personal-income-tax/profiles/:id')
+  updatePersonalIncomeTaxProfile(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updatePersonalIncomeTaxProfile(id, body);
+  }
+
+  @Get('personal-income-tax/records')
+  listPersonalIncomeTaxRecords(
+    @Query() query: PaginationQueryDto,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('employeeId') employeeId?: string
+  ) {
+    return this.hrService.listPersonalIncomeTaxRecords(query, month, year, employeeId);
+  }
+
+  @Post('personal-income-tax/records')
+  createPersonalIncomeTaxRecord(@Body() body: Record<string, unknown>) {
+    return this.hrService.createPersonalIncomeTaxRecord(body);
+  }
+
+  @Patch('personal-income-tax/records/:id')
+  updatePersonalIncomeTaxRecord(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updatePersonalIncomeTaxRecord(id, body);
+  }
+
+  @Post('personal-income-tax/records/generate')
+  generatePersonalIncomeTaxRecords(@Body() body: Record<string, unknown>) {
+    return this.hrService.generatePersonalIncomeTaxRecords(body);
+  }
+
+  @Get('goals')
+  listGoals(
+    @Query() query: PaginationQueryDto,
+    @Query('employeeId') employeeId?: string,
+    @Query('period') period?: string,
+    @Query('status') status?: GenericStatus
+  ) {
+    return this.hrService.listGoals(query, employeeId, period, status);
+  }
+
+  @Get('goals/tracker')
+  getGoalsTracker(
+    @Query() query: PaginationQueryDto,
+    @Query('scope') scope?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('period') period?: string,
+    @Query('status') status?: GenericStatus,
+    @Query('trackingMode') trackingMode?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('orgUnitId') orgUnitId?: string
+  ) {
+    return this.hrService.getGoalsTracker(query, {
+      scope,
+      employeeId,
+      period,
+      status,
+      trackingMode,
+      departmentId,
+      orgUnitId
+    });
+  }
+
+  @Get('goals/overview')
+  getGoalsOverview(
+    @Query() query: PaginationQueryDto,
+    @Query('scope') scope?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('period') period?: string,
+    @Query('status') status?: GenericStatus,
+    @Query('trackingMode') trackingMode?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('orgUnitId') orgUnitId?: string
+  ) {
+    return this.hrService.getGoalsOverview(query, {
+      scope,
+      employeeId,
+      period,
+      status,
+      trackingMode,
+      departmentId,
+      orgUnitId
+    });
+  }
+
+  @Post('goals')
+  createGoal(@Body() body: Record<string, unknown>) {
+    return this.hrService.createGoal(body);
+  }
+
+  @Patch('goals/:id')
+  updateGoal(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateGoal(id, body);
+  }
+
+  @Patch('goals/:id/progress')
+  updateGoalProgress(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateGoalProgress(id, body);
+  }
+
+  @Get('goals/:id/timeline')
+  getGoalTimeline(@Param('id') id: string) {
+    return this.hrService.getGoalTimeline(id);
+  }
+
+  @Post('goals/:id/submit-approval')
+  submitGoalApproval(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.submitGoalApproval(id, body);
+  }
+
+  @Post('goals/:id/recompute-auto')
+  recomputeGoalAuto(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.recomputeGoalAuto(id, body);
+  }
+
+  @Post('goals/recompute-auto')
+  recomputeGoalsAuto(@Body() body: Record<string, unknown>) {
+    return this.hrService.recomputeGoalsAuto(body);
+  }
+
+  @Get('employee-info')
+  listEmployeeInfo(@Query() query: PaginationQueryDto) {
+    return this.hrService.listEmployeeInfo(query);
+  }
+
+  @Get('employee-info/:id')
+  getEmployeeInfo(@Param('id') id: string) {
+    return this.hrService.getEmployeeInfo(id);
+  }
+
+  @Patch('employee-info/:id')
+  updateEmployeeInfo(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.hrService.updateEmployeeInfo(id, body);
   }
 
   @Get('events')

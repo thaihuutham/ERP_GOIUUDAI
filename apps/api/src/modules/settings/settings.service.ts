@@ -1,6 +1,12 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditArchiveService } from '../audit/audit-archive.service';
+import { SearchService } from '../search/search.service';
+import { SearchReindexEntity } from '../search/search.types';
+import { SettingsPolicyService } from './settings-policy.service';
+import { RUNTIME_TOGGLABLE_ERP_MODULES } from './settings-policy.types';
 
 type OrderSettings = {
   allowIncreaseWithoutApproval: boolean;
@@ -12,6 +18,7 @@ type BhtotSyncConfig = {
   enabled: boolean;
   baseUrl: string;
   apiKey: string;
+  apiKeyRef: string;
   timeoutMs: number;
   ordersStateKey: string;
   usersStateKey: string;
@@ -42,6 +49,7 @@ const DEFAULT_BHTOT_SYNC_CONFIG: BhtotSyncConfig = {
   enabled: false,
   baseUrl: '',
   apiKey: '',
+  apiKeyRef: '',
   timeoutMs: 12000,
   ordersStateKey: 'bhtot_orders',
   usersStateKey: 'bhtot_users',
@@ -51,30 +59,42 @@ const DEFAULT_BHTOT_SYNC_CONFIG: BhtotSyncConfig = {
   lastSyncSummary: null
 };
 
+const RUNTIME_TOGGLABLE_MODULES = new Set<string>(RUNTIME_TOGGLABLE_ERP_MODULES);
+
 const DEFAULT_CONFIG: SystemConfig = {
   companyName: 'Digital Retail ERP Co.',
   taxCode: '',
   address: '',
   currency: 'VND',
   dateFormat: 'DD/MM/YYYY',
-  enabledModules: ['crm', 'sales', 'hr', 'finance', 'scm', 'projects', 'assets', 'workflows'],
+  enabledModules: [...RUNTIME_TOGGLABLE_MODULES],
   orderSettings: DEFAULT_ORDER_SETTINGS,
   bhtotSync: DEFAULT_BHTOT_SYNC_CONFIG
 };
 
+const SEARCH_REINDEX_LAST_RESULT_KEY = 'search_reindex_last_result';
+const SEARCH_REINDEX_ENTITIES: SearchReindexEntity[] = ['customers', 'orders', 'products', 'all'];
+
 @Injectable()
 export class SettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly search: SearchService,
+    private readonly settingsPolicy: SettingsPolicyService,
+    private readonly runtimeSettings: RuntimeSettingsService,
+    private readonly auditArchive: AuditArchiveService
+  ) {}
 
   async getConfig() {
     const tenantId = this.prisma.getTenantId();
-
-    const row = await this.prisma.client.setting.findFirst({
-      where: { settingKey: 'system_config' }
-    });
+    const row = await this.prisma.client.setting.findFirst({ where: { settingKey: 'system_config' } });
 
     if (!row) {
-      const createdConfig = this.normalizeSystemConfig(DEFAULT_CONFIG);
+      const fallbackFromDomains = await this.settingsPolicy.buildLegacySystemConfig();
+      const createdConfig = this.normalizeSystemConfig({
+        ...DEFAULT_CONFIG,
+        ...fallbackFromDomains
+      });
       const created = await this.prisma.client.setting.create({
         data: {
           tenant_Id: tenantId,
@@ -83,7 +103,11 @@ export class SettingsService {
         }
       });
       await this.syncOrderSettingsFromConfig(createdConfig.orderSettings);
-      return created;
+      await this.settingsPolicy.syncFromLegacySystemConfig(createdConfig);
+      return {
+        ...created,
+        settingValue: this.redactSystemConfig(createdConfig)
+      };
     }
 
     const normalized = this.normalizeSystemConfig(row.settingValue);
@@ -95,9 +119,10 @@ export class SettingsService {
     }
 
     await this.syncOrderSettingsFromConfig(normalized.orderSettings);
+    await this.settingsPolicy.syncFromLegacySystemConfig(normalized);
     return {
       ...row,
-      settingValue: normalized
+      settingValue: this.redactSystemConfig(normalized)
     };
   }
 
@@ -119,6 +144,7 @@ export class SettingsService {
 
     await this.saveSystemConfigObject(merged);
     await this.syncOrderSettingsFromConfig(merged.orderSettings);
+    await this.settingsPolicy.syncFromLegacySystemConfig(merged);
     return this.getConfig();
   }
 
@@ -160,14 +186,15 @@ export class SettingsService {
 
   async getBhtotSyncConfig() {
     const config = await this.getSystemConfigObject();
-    return config.bhtotSync;
+    return this.redactBhtotSyncConfig(config.bhtotSync);
   }
 
   async saveBhtotSyncConfig(payload: Record<string, unknown>) {
     const current = await this.getSystemConfigObject();
+    const input = this.ensureRecord(payload);
     const nextBhtotSync = this.normalizeBhtotSyncConfig({
       ...current.bhtotSync,
-      ...this.ensureRecord(payload)
+      ...input
     });
     const nextConfig = this.normalizeSystemConfig({
       ...current,
@@ -175,9 +202,16 @@ export class SettingsService {
     });
 
     await this.saveSystemConfigObject(nextConfig);
+    await this.settingsPolicy.syncFromLegacySystemConfig(nextConfig);
+
+    const legacyApiKeyInput = this.cleanString(input.apiKey);
+    const notice = legacyApiKeyInput
+      ? 'Giá trị apiKey thô không được lưu. Hệ thống đã dùng secretRef (apiKeyRef) và đọc secret từ env/secret store.'
+      : null;
     return {
       message: 'Đã lưu cấu hình đồng bộ BHTOT_CTV.',
-      config: nextConfig.bhtotSync
+      config: this.redactBhtotSyncConfig(nextConfig.bhtotSync),
+      notice
     };
   }
 
@@ -188,7 +222,7 @@ export class SettingsService {
     });
 
     return {
-      config: config.bhtotSync,
+      config: this.redactBhtotSyncConfig(config.bhtotSync),
       latestResult: latest?.settingValue ?? null
     };
   }
@@ -201,14 +235,16 @@ export class SettingsService {
     if (!sync.baseUrl) {
       throw new BadRequestException('Thiếu baseUrl trong cấu hình đồng bộ BHTOT_CTV.');
     }
-    if (!sync.apiKey) {
-      throw new BadRequestException('Thiếu apiKey trong cấu hình đồng bộ BHTOT_CTV.');
+
+    const resolvedApiKey = this.settingsPolicy.resolveSecretByRef(sync.apiKeyRef);
+    if (!resolvedApiKey) {
+      throw new BadRequestException('Thiếu secret hợp lệ cho BHTOT (apiKeyRef/env).');
     }
 
     try {
       const [ordersPayload, usersPayload] = await Promise.all([
-        this.fetchBhtotState(sync, sync.ordersStateKey),
-        this.fetchBhtotState(sync, sync.usersStateKey)
+        this.fetchBhtotState(sync, sync.ordersStateKey, resolvedApiKey),
+        this.fetchBhtotState(sync, sync.usersStateKey, resolvedApiKey)
       ]);
 
       const orderRows = this.normalizeArrayPayload(ordersPayload);
@@ -274,6 +310,268 @@ export class SettingsService {
     }
   }
 
+  async getSearchStatus() {
+    const [runtime, runtimePolicy, latestReindex] = await Promise.all([
+      this.search.getStatus(),
+      this.runtimeSettings.getSearchPerformanceRuntime(),
+      this.prisma.client.setting.findFirst({
+        where: { settingKey: SEARCH_REINDEX_LAST_RESULT_KEY }
+      })
+    ]);
+
+    return {
+      runtime,
+      runtimePolicy,
+      latestReindex: latestReindex?.settingValue ?? null
+    };
+  }
+
+  async runSearchReindex(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    const entity = this.parseSearchReindexEntity(body.entity);
+    const runtimePolicy = await this.runtimeSettings.getSearchPerformanceRuntime();
+    const allowedEntities = runtimePolicy.reindexPolicy.allowEntity.length > 0
+      ? runtimePolicy.reindexPolicy.allowEntity
+      : SEARCH_REINDEX_ENTITIES;
+    if (!allowedEntities.includes(entity)) {
+      throw new BadRequestException(
+        `Entity '${entity}' không được phép reindex theo settings.search_performance.reindexPolicy.allowEntity.`
+      );
+    }
+
+    const result = await this.search.reindex(entity);
+    const summary = {
+      ...result,
+      triggeredAt: new Date().toISOString(),
+      triggeredBy: this.cleanString(body.triggeredBy) || null,
+      policyEngine: runtimePolicy.engine
+    };
+
+    await this.upsertSettingByKey(SEARCH_REINDEX_LAST_RESULT_KEY, summary);
+
+    return {
+      message: 'Đã hoàn tất reindex Meilisearch.',
+      result: summary
+    };
+  }
+
+  async getSettingsCenter() {
+    return this.settingsPolicy.getCenter();
+  }
+
+  async getRuntimeSettings() {
+    return this.runtimeSettings.getWebRuntime();
+  }
+
+  async runDataGovernanceMaintenance(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    const dryRun = body.dryRun === true;
+    const policy = await this.runtimeSettings.getDataGovernanceRuntime();
+    const now = new Date();
+    const tenantId = this.prisma.getTenantId();
+
+    const retentionThreshold = new Date(now.getTime() - policy.retentionDays * 24 * 60 * 60 * 1000);
+    const auditRetentionThreshold = new Date(
+      now.getTime() - policy.auditRetentionYears * 365 * 24 * 60 * 60 * 1000
+    );
+    const archiveThreshold = new Date(now.getTime() - policy.archiveAfterDays * 24 * 60 * 60 * 1000);
+
+    const [auditCount, snapshotCount, notificationArchiveCount, notificationDeleteCount, auditLogCount] = await Promise.all([
+      this.prisma.client.setting.count({
+        where: {
+          settingKey: { startsWith: 'settings.audit.' },
+          createdAt: { lt: retentionThreshold }
+        }
+      }),
+      this.prisma.client.setting.count({
+        where: {
+          settingKey: { startsWith: 'settings.snapshot.' },
+          createdAt: { lt: retentionThreshold }
+        }
+      }),
+      this.prisma.client.notification.count({
+        where: {
+          isRead: false,
+          createdAt: { lt: archiveThreshold }
+        }
+      }),
+      this.prisma.client.notification.count({
+        where: {
+          createdAt: { lt: retentionThreshold }
+        }
+      }),
+      this.prisma.client.auditLog.count({
+        where: {
+          createdAt: { lt: auditRetentionThreshold }
+        }
+      })
+    ]);
+
+    const archiveSummary = await this.auditArchive.runArchiveAndPrune({
+      dryRun,
+      now,
+      policy: {
+        auditHotRetentionMonths: policy.auditHotRetentionMonths,
+        auditRetentionYears: policy.auditRetentionYears
+      },
+      tenantId
+    });
+
+    let deletedAuditLogEntries = 0;
+
+    if (!dryRun) {
+      await this.prisma.client.$transaction(async (tx) => {
+        if (notificationArchiveCount > 0) {
+          await tx.notification.updateMany({
+            where: {
+              isRead: false,
+              createdAt: { lt: archiveThreshold }
+            },
+            data: {
+              isRead: true
+            }
+          });
+        }
+
+        if (notificationDeleteCount > 0) {
+          await tx.notification.deleteMany({
+            where: {
+              createdAt: { lt: retentionThreshold }
+            }
+          });
+        }
+
+        if (auditCount > 0) {
+          await tx.setting.deleteMany({
+            where: {
+              settingKey: { startsWith: 'settings.audit.' },
+              createdAt: { lt: retentionThreshold }
+            }
+          });
+        }
+
+        if (snapshotCount > 0) {
+          await tx.setting.deleteMany({
+            where: {
+              settingKey: { startsWith: 'settings.snapshot.' },
+              createdAt: { lt: retentionThreshold }
+            }
+          });
+        }
+
+        if (auditLogCount > 0) {
+          await tx.$executeRawUnsafe(`SET LOCAL app.audit_prune = 'on'`);
+          const deleted = await tx.auditLog.deleteMany({
+            where: {
+              createdAt: { lt: auditRetentionThreshold }
+            }
+          });
+          deletedAuditLogEntries = deleted.count;
+        }
+      });
+    }
+
+    return {
+      dryRun,
+      policy,
+      executedAt: now.toISOString(),
+      summary: {
+        archivedNotifications: notificationArchiveCount,
+        deletedNotifications: notificationDeleteCount,
+        deletedAuditEntries: auditCount,
+        deletedAuditLogs: dryRun ? auditLogCount : deletedAuditLogEntries,
+        deletedSnapshots: snapshotCount,
+        archivedAuditLogs: archiveSummary.archivedRows,
+        archivedAuditWindows: archiveSummary.archivedWindows,
+        prunedAuditHotRows: archiveSummary.prunedRows,
+        archiveStorageEnabled: archiveSummary.storageEnabled,
+        archiveFailedWindows: archiveSummary.failedWindows
+      }
+    };
+  }
+
+  async runDataGovernanceBackup(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    const policy = await this.runtimeSettings.getDataGovernanceRuntime();
+    const now = new Date();
+
+    const snapshot = await this.settingsPolicy.createSnapshot({
+      reason: this.cleanString(body.reason) || 'Automated data governance backup',
+      domains: Array.isArray(body.domains) ? body.domains : undefined,
+      createdBy: this.cleanString(body.createdBy) || 'system'
+    });
+
+    await this.settingsPolicy.updateDomain('data_governance_backup', {
+      lastBackupAt: now.toISOString()
+    }, {
+      reason: 'Update lastBackupAt after backup run',
+      skipAuthorization: true
+    });
+
+    return {
+      snapshotId: snapshot.id,
+      executedAt: now.toISOString(),
+      cadence: policy.backupCadence,
+      nextDueAt: this.computeNextBackupDueAt(now, policy.backupCadence).toISOString()
+    };
+  }
+
+  async getDomainSettings(domain: string) {
+    return this.settingsPolicy.getDomain(domain);
+  }
+
+  async updateDomainSettings(domain: string, payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    const reason = this.composeReason(body, `Update domain ${domain}`);
+    const dryRun = body.dryRun === true;
+    const {
+      reason: _reason,
+      reasonTemplate: _reasonTemplate,
+      reasonNote: _reasonNote,
+      dryRun: _dryRun,
+      ...domainPayload
+    } = body;
+
+    return this.settingsPolicy.updateDomain(domain, domainPayload, {
+      reason,
+      dryRun
+    });
+  }
+
+  async validateDomainSettings(domain: string, payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    return this.settingsPolicy.validateDomain(domain, body);
+  }
+
+  async testDomainConnection(domain: string, payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    return this.settingsPolicy.testConnection(domain, body);
+  }
+
+  async listSettingsAudit(query: { domain?: string; actor?: string; limit?: number }) {
+    return this.settingsPolicy.listAudit(query);
+  }
+
+  async createSettingsSnapshot(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    return this.settingsPolicy.createSnapshot({
+      ...body,
+      reason: this.composeReason(body, this.cleanString(body.reason) || 'Manual snapshot')
+    });
+  }
+
+  async listSettingsSnapshots(limit?: number) {
+    return this.settingsPolicy.listSnapshots(limit ?? 20);
+  }
+
+  async restoreSettingsSnapshot(id: string, payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    return this.settingsPolicy.restoreSnapshot(id, {
+      ...body,
+      reason: this.composeReason(body, `Restore snapshot ${id}`)
+    });
+  }
+
   private async syncOrderSettingsFromConfig(orderSettings: unknown) {
     const tenantId = this.prisma.getTenantId();
     const settings = this.normalizeOrderSettings(orderSettings);
@@ -305,7 +603,11 @@ export class SettingsService {
     });
 
     if (!row) {
-      const initial = this.normalizeSystemConfig(DEFAULT_CONFIG);
+      const fallbackFromDomains = await this.settingsPolicy.buildLegacySystemConfig();
+      const initial = this.normalizeSystemConfig({
+        ...DEFAULT_CONFIG,
+        ...fallbackFromDomains
+      });
       await this.prisma.client.setting.create({
         data: {
           tenant_Id: tenantId,
@@ -313,10 +615,13 @@ export class SettingsService {
           settingValue: initial as any
         }
       });
+      await this.settingsPolicy.syncFromLegacySystemConfig(initial);
       return initial;
     }
 
-    return this.normalizeSystemConfig(row.settingValue);
+    const normalized = this.normalizeSystemConfig(row.settingValue);
+    await this.settingsPolicy.syncFromLegacySystemConfig(normalized);
+    return normalized;
   }
 
   private async saveSystemConfigObject(config: SystemConfig) {
@@ -331,6 +636,7 @@ export class SettingsService {
         where: { id: existing.id },
         data: { settingValue: normalized as any }
       });
+      await this.settingsPolicy.syncFromLegacySystemConfig(normalized);
       return;
     }
 
@@ -341,6 +647,8 @@ export class SettingsService {
         settingValue: normalized as any
       }
     });
+
+    await this.settingsPolicy.syncFromLegacySystemConfig(normalized);
   }
 
   private async upsertSettingByKey(settingKey: string, value: unknown) {
@@ -369,7 +677,11 @@ export class SettingsService {
   private normalizeSystemConfig(input: unknown): SystemConfig {
     const payload = this.ensureRecord(input);
     const enabledModulesRaw = Array.isArray(payload.enabledModules) ? payload.enabledModules : DEFAULT_CONFIG.enabledModules;
-    const enabledModules = enabledModulesRaw.map((item) => String(item)).filter(Boolean);
+    const enabledModules = [...new Set(
+      enabledModulesRaw
+        .map((item) => this.cleanString(item).toLowerCase())
+        .filter((item) => RUNTIME_TOGGLABLE_MODULES.has(item))
+    )];
 
     return {
       companyName: String(payload.companyName ?? DEFAULT_CONFIG.companyName),
@@ -411,10 +723,15 @@ export class SettingsService {
         ? (lastStatusRaw as BhtotSyncConfig['lastSyncStatus'])
         : DEFAULT_BHTOT_SYNC_CONFIG.lastSyncStatus;
 
+    const apiKeyRefRaw = this.cleanString(payload.apiKeyRef);
+    const legacyApiKey = this.cleanString(payload.apiKey);
+    const apiKeyRef = apiKeyRefRaw || (legacyApiKey ? 'BHTOT_API_KEY' : DEFAULT_BHTOT_SYNC_CONFIG.apiKeyRef);
+
     return {
       enabled: typeof payload.enabled === 'boolean' ? payload.enabled : DEFAULT_BHTOT_SYNC_CONFIG.enabled,
       baseUrl: String(payload.baseUrl ?? DEFAULT_BHTOT_SYNC_CONFIG.baseUrl),
-      apiKey: String(payload.apiKey ?? DEFAULT_BHTOT_SYNC_CONFIG.apiKey),
+      apiKey: '',
+      apiKeyRef,
       timeoutMs,
       ordersStateKey: String(payload.ordersStateKey ?? DEFAULT_BHTOT_SYNC_CONFIG.ordersStateKey),
       usersStateKey: String(payload.usersStateKey ?? DEFAULT_BHTOT_SYNC_CONFIG.usersStateKey),
@@ -430,7 +747,7 @@ export class SettingsService {
     };
   }
 
-  private async fetchBhtotState(config: BhtotSyncConfig, stateKey: string) {
+  private async fetchBhtotState(config: BhtotSyncConfig, stateKey: string, apiKey: string) {
     const url = this.buildBhtotApiUrl(config.baseUrl, `/state/${encodeURIComponent(stateKey)}`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -440,7 +757,7 @@ export class SettingsService {
         method: 'GET',
         headers: {
           accept: 'application/json',
-          'x-api-secret': config.apiKey
+          'x-api-secret': apiKey
         },
         signal: controller.signal
       });
@@ -732,6 +1049,53 @@ export class SettingsService {
     return null;
   }
 
+  private redactSystemConfig(config: SystemConfig): SystemConfig {
+    return {
+      ...config,
+      bhtotSync: this.redactBhtotSyncConfig(config.bhtotSync)
+    };
+  }
+
+  private redactBhtotSyncConfig(config: BhtotSyncConfig): BhtotSyncConfig {
+    const hasSecret = Boolean(this.settingsPolicy.resolveSecretByRef(config.apiKeyRef));
+    return {
+      ...config,
+      apiKey: '',
+      apiKeyRef: config.apiKeyRef,
+      lastSyncSummary: config.lastSyncSummary
+        ? {
+            ...config.lastSyncSummary,
+            secretConfigured: hasSecret
+          }
+        : null
+    };
+  }
+
+  private parseSearchReindexEntity(input: unknown): SearchReindexEntity {
+    const raw = this.cleanString(input).toLowerCase();
+    const normalized = (raw || 'all') as SearchReindexEntity;
+    if (SEARCH_REINDEX_ENTITIES.includes(normalized)) {
+      return normalized;
+    }
+
+    throw new BadRequestException(
+      `entity không hợp lệ. Chỉ chấp nhận: ${SEARCH_REINDEX_ENTITIES.join(', ')}.`
+    );
+  }
+
+  private computeNextBackupDueAt(base: Date, cadence: string) {
+    const normalized = this.cleanString(cadence).toLowerCase();
+    if (normalized === 'weekly') {
+      return new Date(base.getTime() + 7 * 24 * 60 * 60 * 1000);
+    }
+    if (normalized === 'monthly') {
+      const next = new Date(base);
+      next.setMonth(next.getMonth() + 1);
+      return next;
+    }
+    return new Date(base.getTime() + 24 * 60 * 60 * 1000);
+  }
+
   private ensureRecord(input: unknown): Record<string, unknown> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return {};
@@ -760,5 +1124,25 @@ export class SettingsService {
     }
     const date = new Date(String(input));
     return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private composeReason(payload: Record<string, unknown>, fallback: string) {
+    const explicit = this.cleanString(payload.reason);
+    if (explicit) {
+      return explicit;
+    }
+
+    const template = this.cleanString(payload.reasonTemplate);
+    const note = this.cleanString(payload.reasonNote);
+    if (template && note) {
+      return `${template} - ${note}`;
+    }
+    if (template) {
+      return template;
+    }
+    if (note) {
+      return note;
+    }
+    return fallback;
   }
 }

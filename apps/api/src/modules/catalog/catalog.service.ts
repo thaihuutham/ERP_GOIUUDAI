@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SearchService } from '../search/search.service';
 import {
   ArchiveProductDto,
   CatalogListQueryDto,
@@ -11,9 +12,14 @@ import {
 
 @Injectable()
 export class CatalogService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(SearchService) private readonly search: SearchService
+  ) {}
 
   async listProducts(query: CatalogListQueryDto) {
+    const take = this.take(query.limit);
+    const keyword = query.q?.trim();
     const where: Prisma.ProductWhereInput = {
       ...(query.status ? { status: query.status } : {}),
       ...(query.category
@@ -26,42 +32,70 @@ export class CatalogService {
         : {}),
       ...(query.variantOfProductId ? { variantOfProductId: query.variantOfProductId } : {}),
       ...(!query.includeArchived ? { archivedAt: null } : {}),
-      ...(query.q
+      ...(keyword
         ? {
             OR: [
-              { name: { contains: query.q, mode: 'insensitive' } },
-              { sku: { contains: query.q, mode: 'insensitive' } },
-              { categoryPath: { contains: query.q, mode: 'insensitive' } }
+              { name: { contains: keyword, mode: 'insensitive' } },
+              { sku: { contains: keyword, mode: 'insensitive' } },
+              { categoryPath: { contains: keyword, mode: 'insensitive' } }
             ]
           }
         : {})
     };
 
-    return this.prisma.client.product.findMany({
-      where,
-      include: {
-        variantOf: {
-          select: {
-            id: true,
-            sku: true,
-            name: true
-          }
-        },
-        variants: {
-          where: query.includeArchived ? {} : { archivedAt: null },
-          select: {
-            id: true,
-            sku: true,
-            name: true,
-            unitPrice: true,
-            status: true,
-            archivedAt: true
-          },
-          orderBy: { createdAt: 'asc' }
+    const baseInclude = {
+      variantOf: {
+        select: {
+          id: true,
+          sku: true,
+          name: true
         }
       },
+      variants: {
+        where: query.includeArchived ? {} : { archivedAt: null },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          unitPrice: true,
+          status: true,
+          archivedAt: true
+        },
+        orderBy: { createdAt: 'asc' as const }
+      }
+    };
+
+    if (keyword && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
+      const rankedIds = await this.search.searchProductIds(
+        keyword,
+        this.prisma.getTenantId(),
+        Math.min((take + 1) * 5, 500),
+        {
+          status: query.status,
+          includeArchived: query.includeArchived
+        }
+      );
+
+      if (rankedIds !== null) {
+        const rankedRows = rankedIds.length > 0
+          ? await this.prisma.client.product.findMany({
+              where: {
+                ...where,
+                id: { in: rankedIds }
+              },
+              include: baseInclude
+            })
+          : [];
+        const orderedRows = this.rankByIds(rankedRows, rankedIds);
+        return orderedRows.slice(0, take);
+      }
+    }
+
+    return this.prisma.client.product.findMany({
+      where,
+      include: baseInclude,
       orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      take
     });
   }
 
@@ -88,7 +122,7 @@ export class CatalogService {
     const status = body.status ?? GenericStatus.ACTIVE;
     const archivedAt = status === GenericStatus.ARCHIVED ? new Date() : null;
 
-    return this.prisma.client.product.create({
+    const created = await this.prisma.client.product.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
         sku: body.sku ?? null,
@@ -104,6 +138,8 @@ export class CatalogService {
         archivedAt
       }
     });
+    await this.search.syncProductUpsert(created);
+    return created;
   }
 
   async updateProduct(id: string, body: UpdateProductDto) {
@@ -139,7 +175,9 @@ export class CatalogService {
       }
     });
 
-    return this.ensureProduct(id);
+    const product = await this.ensureProduct(id);
+    await this.search.syncProductUpsert(product);
+    return product;
   }
 
   async archiveProduct(id: string, _body: ArchiveProductDto) {
@@ -156,7 +194,9 @@ export class CatalogService {
       }
     });
 
-    return this.ensureProduct(id);
+    const archived = await this.ensureProduct(id);
+    await this.search.syncProductUpsert(archived);
+    return archived;
   }
 
   async setPricePolicy(id: string, body: SetPricePolicyDto) {
@@ -170,7 +210,9 @@ export class CatalogService {
       }
     });
 
-    return this.ensureProduct(id);
+    const product = await this.ensureProduct(id);
+    await this.search.syncProductUpsert(product);
+    return product;
   }
 
   private async ensureProduct(id: string) {
@@ -194,5 +236,14 @@ export class CatalogService {
       return 100;
     }
     return Math.min(limit, 250);
+  }
+
+  private rankByIds<T extends { id: string }>(rows: T[], orderedIds: string[]) {
+    const rankMap = new Map(orderedIds.map((id, index) => [id, index]));
+    return [...rows].sort((left, right) => {
+      const leftRank = rankMap.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = rankMap.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+      return leftRank - rightRank;
+    });
   }
 }

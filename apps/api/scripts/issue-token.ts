@@ -14,7 +14,7 @@ const DEFAULTS: CliOptions = {
   sub: 'dev_user',
   email: 'dev@example.com',
   role: UserRole.ADMIN,
-  tenantId: 'tenant_demo_company',
+  tenantId: 'GOIUUDAI',
   expiresIn: '8h'
 };
 

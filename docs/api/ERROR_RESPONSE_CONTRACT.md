@@ -14,7 +14,7 @@ Mọi lỗi HTTP do API trả về phải theo cùng 1 shape:
   },
   "meta": {
     "requestId": "2f978dc0-3d03-4554-a6a8-a590eb6df1a8",
-    "tenantId": "tenant_demo_company",
+    "tenantId": "GOIUUDAI",
     "path": "/api/v1/crm/customers",
     "method": "GET",
     "timestamp": "2026-03-28T11:07:43.972Z"

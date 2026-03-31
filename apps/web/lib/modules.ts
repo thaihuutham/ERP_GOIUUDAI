@@ -18,6 +18,7 @@ export const moduleCards: ModuleCard[] = [
   { key: 'projects', title: 'Dự án', description: 'Dự án, công việc, theo dõi giờ công.', minRole: 'STAFF' },
   { key: 'workflows', title: 'Quy trình', description: 'Luồng phê duyệt và thực thi.', minRole: 'MANAGER' },
   { key: 'reports', title: 'Báo cáo', description: 'Báo cáo tổng hợp.', minRole: 'STAFF' },
+  { key: 'audit', title: 'Audit Log', description: 'Nhật ký thao tác toàn hệ thống.', minRole: 'MANAGER' },
   { key: 'settings', title: 'Cài đặt', description: 'Cấu hình hệ thống theo tenant.', minRole: 'ADMIN' },
   { key: 'notifications', title: 'Thông báo', description: 'Thông báo nội bộ.', minRole: 'STAFF' }
 ];

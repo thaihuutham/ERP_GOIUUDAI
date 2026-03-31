@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
+import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import { useUserRole } from './user-role-context';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -316,7 +317,7 @@ function renderCustomerCell(customer: Customer, key: CustomerColumnKey) {
     case 'source':
       return customer.source || '--';
     case 'totalOrders':
-      return toNumber(customer.totalOrders).toLocaleString('vi-VN');
+      return formatRuntimeNumber(toNumber(customer.totalOrders));
     case 'totalSpent':
       return toCurrency(customer.totalSpent);
     case 'status':
@@ -374,7 +375,7 @@ function toNumber(value: number | string | null | undefined) {
 }
 
 function toCurrency(value: number | string | null | undefined) {
-  return toNumber(value).toLocaleString('vi-VN');
+  return formatRuntimeNumber(toNumber(value));
 }
 
 function toDateTime(value: string | null | undefined) {
@@ -385,7 +386,7 @@ function toDateTime(value: string | null | undefined) {
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
-  return parsed.toLocaleString('vi-VN');
+  return formatRuntimeDateTime(parsed.toISOString());
 }
 
 function normalizeArray<T>(payload: unknown): T[] {
@@ -1386,7 +1387,7 @@ export function CrmOperationsBoard() {
             {customerStats.map((item) => (
               <article key={item.label} className={`crm-customer-stat-card crm-customer-stat-${item.tone}`}>
                 <p>{item.label}</p>
-                <strong>{item.value.toLocaleString('vi-VN')}</strong>
+                <strong>{formatRuntimeNumber(item.value)}</strong>
               </article>
             ))}
           </div>
@@ -1514,7 +1515,7 @@ export function CrmOperationsBoard() {
                 </thead>
                 <tbody>
                   {paginatedCustomers.map((customer, index) => (
-                    <tr key={customer.id} className={selectedCustomerId === customer.id ? 'table-row-selected' : ''} onClick={() => setSelectedCustomerId(customer.id)}>
+                    <tr key={customer.id} className={selectedCustomerId === customer.id ? 'table-row-selected' : ''}>
                       <td>
                         <input
                           type="checkbox"
@@ -1525,9 +1526,25 @@ export function CrmOperationsBoard() {
                         />
                       </td>
                       <td>{(currentCustomerPage - 1) * rowsPerPage + index + 1}</td>
-                      {visibleCustomerColumns.map((column) => (
-                        <td key={`${customer.id}-${column.key}`}>{renderCustomerCell(customer, column.key)}</td>
-                      ))}
+                      {visibleCustomerColumns.map((column) => {
+                        const value = renderCustomerCell(customer, column.key);
+                        if (column.key === 'fullName') {
+                          return (
+                            <td key={`${customer.id}-${column.key}`}>
+                              <button
+                                type="button"
+                                className="record-link row-select-trigger"
+                                onClick={() => setSelectedCustomerId(customer.id)}
+                              >
+                                {value}
+                                <span>Xem</span>
+                              </button>
+                            </td>
+                          );
+                        }
+
+                        return <td key={`${customer.id}-${column.key}`}>{value}</td>;
+                      })}
                     </tr>
                   ))}
                 </tbody>
@@ -1833,8 +1850,17 @@ export function CrmOperationsBoard() {
                   </thead>
                   <tbody>
                     {paymentRequests.map((item) => (
-                      <tr key={item.id} className={selectedPaymentRequestId === item.id ? 'table-row-selected' : ''} onClick={() => setSelectedPaymentRequestId(item.id)}>
-                        <td>{item.invoiceNo || item.orderNo || '--'}</td>
+                      <tr key={item.id} className={selectedPaymentRequestId === item.id ? 'table-row-selected' : ''}>
+                        <td>
+                          <button
+                            type="button"
+                            className="record-link row-select-trigger"
+                            onClick={() => setSelectedPaymentRequestId(item.id)}
+                          >
+                            {item.invoiceNo || item.orderNo || '--'}
+                            <span>Xem</span>
+                          </button>
+                        </td>
                         <td>{item.customer?.fullName || item.customerId || '--'}</td>
                         <td>{toCurrency(item.amount)}</td>
                         <td><span className={statusClass(item.status)}>{item.status || '--'}</span></td>

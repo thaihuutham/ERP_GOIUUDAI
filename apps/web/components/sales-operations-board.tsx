@@ -1,104 +1,134 @@
 'use client';
 
+import {
+  ShoppingCart,
+  Receipt,
+  CheckCircle2,
+  Plus,
+  Search,
+  RefreshCw,
+  Package,
+  TrendingUp,
+  History,
+  AlertCircle,
+  FileText,
+  XCircle,
+  Trash2
+} from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
+import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { useUserRole } from './user-role-context';
+import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
+import { SidePanel } from './ui/side-panel';
 
 type SalesOrderItem = {
   id?: string;
+  productId?: string | null;
   productName?: string | null;
   quantity?: number | null;
   unitPrice?: number | null;
+};
+
+type SalesInvoiceRef = {
+  id: string;
+  invoiceNo?: string | null;
+  status?: string | null;
+  createdAt?: string | null;
 };
 
 type SalesOrder = {
   id: string;
   orderNo?: string | null;
   customerName?: string | null;
+  customerId?: string | null;
+  employeeId?: string | null;
   totalAmount?: number | null;
   status?: string | null;
   createdBy?: string | null;
   createdAt?: string | null;
   items?: SalesOrderItem[];
-};
-
-type SalesOrdersResponse = {
-  items: SalesOrder[];
-  nextCursor?: string | null;
-  limit?: number;
+  invoices?: SalesInvoiceRef[];
 };
 
 type ApprovalRecord = {
   id: string;
   targetId?: string | null;
+  status?: string | null;
   requesterId?: string | null;
   approverId?: string | null;
-  status?: string | null;
-  createdAt?: string | null;
+  decisionNote?: string | null;
   decidedAt?: string | null;
+  createdAt?: string | null;
 };
 
-type OrderCreateForm = {
+type CreateOrderItemForm = {
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+};
+
+type CreateOrderFormState = {
   orderNo: string;
   customerName: string;
+  customerId: string;
+  employeeId: string;
   createdBy: string;
-  productName: string;
-  quantity: string;
-  unitPrice: string;
+  items: CreateOrderItemForm[];
 };
 
-type OrderUpdateForm = {
-  requesterId: string;
-  requesterName: string;
-  productName: string;
-  quantity: string;
-  unitPrice: string;
-};
-
-const STATUS_OPTIONS = ['ALL', 'DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'ARCHIVED', 'ACTIVE', 'INACTIVE'] as const;
+const SALES_COLUMN_SETTINGS_KEY = 'erp-retail.sales.order-table-settings.v3';
 
 function toCurrency(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
-    return '--';
-  }
-  return Number(value).toLocaleString('vi-VN');
+  return formatRuntimeCurrency(Number(value || 0));
 }
 
-function toDate(value: string | null | undefined) {
-  if (!value) {
-    return '--';
-  }
-  const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) {
-    return value;
-  }
-  return dt.toLocaleString('vi-VN');
+function toDateTime(value: string | null | undefined) {
+  if (!value) return '--';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : formatRuntimeDateTime(parsed.toISOString());
 }
 
-function normalizeOrdersPayload(payload: unknown): SalesOrdersResponse {
-  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const mapped = payload as SalesOrdersResponse;
-    if (Array.isArray(mapped.items)) {
-      return {
-        items: mapped.items,
-        nextCursor: mapped.nextCursor ?? null,
-        limit: mapped.limit
-      };
-    }
+function getStatusClass(status: string | null | undefined) {
+  const normalized = (status || '').toUpperCase();
+  if (['APPROVED', 'ACTIVE', 'PAID', 'DELIVERED'].includes(normalized)) {
+    return 'finance-status-pill finance-status-pill-success';
   }
+  if (['PENDING', 'DRAFT'].includes(normalized)) {
+    return 'finance-status-pill finance-status-pill-warning';
+  }
+  if (['REJECTED', 'CANCELLED', 'ARCHIVED'].includes(normalized)) {
+    return 'finance-status-pill finance-status-pill-danger';
+  }
+  return 'finance-status-pill finance-status-pill-neutral';
+}
+
+function buildAuditObjectHref(entityType: string, entityId: string) {
+  const params = new URLSearchParams({
+    entityType,
+    entityId
+  });
+  return `/modules/audit?${params.toString()}`;
+}
+
+function makeEmptyOrderItem(): CreateOrderItemForm {
   return {
-    items: [],
-    nextCursor: null,
-    limit: 20
+    productName: '',
+    quantity: 1,
+    unitPrice: 0
   };
 }
 
-function firstItem(order: SalesOrder | null) {
-  if (!order || !order.items || order.items.length === 0) {
-    return null;
-  }
-  return order.items[0] ?? null;
+function makeInitialCreateOrderForm(): CreateOrderFormState {
+  return {
+    orderNo: '',
+    customerName: '',
+    customerId: '',
+    employeeId: '',
+    createdBy: '',
+    items: [makeEmptyOrderItem()]
+  };
 }
 
 export function SalesOperationsBoard() {
@@ -108,570 +138,571 @@ export function SalesOperationsBoard() {
 
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [isLoadingApprovals, setIsLoadingApprovals] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [selectedOrder, setSelectedOrder] = useState<SalesOrder | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
 
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]>('ALL');
-  const [limit, setLimit] = useState(20);
-  const [pageCursor, setPageCursor] = useState<string | undefined>(undefined);
-  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [createOrderForm, setCreateOrderForm] = useState<CreateOrderFormState>(makeInitialCreateOrderForm());
 
-  const [selectedOrderId, setSelectedOrderId] = useState<string>('');
-  const [createForm, setCreateForm] = useState<OrderCreateForm>({
-    orderNo: '',
-    customerName: '',
-    createdBy: '',
-    productName: '',
-    quantity: '1',
-    unitPrice: ''
-  });
-  const [updateForm, setUpdateForm] = useState<OrderUpdateForm>({
-    requesterId: '',
-    requesterName: '',
-    productName: '',
-    quantity: '1',
-    unitPrice: ''
-  });
+  const [decisionNote, setDecisionNote] = useState('');
+  const [isHandlingDecision, setIsHandlingDecision] = useState(false);
+  const [isExportingInvoice, setIsExportingInvoice] = useState(false);
 
-  const selectedOrder = useMemo(() => orders.find((order) => order.id === selectedOrderId) ?? null, [orders, selectedOrderId]);
-  const selectedOrderFirstItem = useMemo(() => firstItem(selectedOrder), [selectedOrder]);
-
-  useEffect(() => {
-    if (!selectedOrderId && orders.length > 0) {
-      setSelectedOrderId(orders[0].id);
-      return;
-    }
-    if (selectedOrderId && orders.length > 0 && !orders.some((order) => order.id === selectedOrderId)) {
-      setSelectedOrderId(orders[0].id);
-    }
-  }, [orders, selectedOrderId]);
-
-  useEffect(() => {
-    setUpdateForm((prev) => ({
-      ...prev,
-      productName: selectedOrderFirstItem?.productName ?? '',
-      quantity: String(selectedOrderFirstItem?.quantity ?? 1),
-      unitPrice: String(selectedOrderFirstItem?.unitPrice ?? '')
-    }));
-  }, [selectedOrderFirstItem]);
-
-  const loadOrders = async () => {
-    if (!canView) {
-      return;
-    }
-    setIsLoadingOrders(true);
-    setErrorMessage(null);
-
+  const loadData = async () => {
+    if (!canView) return;
+    setIsLoading(true);
     try {
-      const payload = await apiRequest<SalesOrdersResponse>('/sales/orders', {
-        query: {
-          q: search,
-          status,
-          limit,
-          cursor: pageCursor
-        }
-      });
-      const normalized = normalizeOrdersPayload(payload);
-      setOrders(normalized.items);
-      setNextCursor(normalized.nextCursor ?? null);
+      const [ordersPayload, approvalsPayload] = await Promise.all([
+        apiRequest<any>('/sales/orders', { query: { q: search, limit: 200 } }),
+        apiRequest<any>('/sales/approvals')
+      ]);
+      setOrders(Array.isArray(ordersPayload?.items) ? ordersPayload.items : []);
+      setApprovals(Array.isArray(approvalsPayload) ? approvalsPayload : []);
+      setErrorMessage(null);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách đơn hàng.');
-      setOrders([]);
-      setNextCursor(null);
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tải dữ liệu đơn hàng');
     } finally {
-      setIsLoadingOrders(false);
-    }
-  };
-
-  const loadApprovals = async () => {
-    if (!canView) {
-      return;
-    }
-    setIsLoadingApprovals(true);
-    try {
-      const payload = await apiRequest<ApprovalRecord[]>('/sales/approvals');
-      setApprovals(Array.isArray(payload) ? payload : []);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không tải được hàng chờ phê duyệt.');
-      setApprovals([]);
-    } finally {
-      setIsLoadingApprovals(false);
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    void loadOrders();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status, limit, pageCursor, canView]);
+    const timer = setTimeout(() => {
+      loadData();
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search, canView]);
 
   useEffect(() => {
-    void loadApprovals();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canView]);
-
-  const refreshAll = async () => {
-    await Promise.all([loadOrders(), loadApprovals()]);
-  };
-
-  const onSubmitCreateOrder = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!canMutate) {
-      return;
+    if (!selectedOrder) return;
+    const refreshed = orders.find((order) => order.id === selectedOrder.id);
+    if (refreshed) {
+      setSelectedOrder(refreshed);
     }
-    setResultMessage(null);
-    setErrorMessage(null);
-    try {
-      const quantity = Math.max(1, Number(createForm.quantity || '1'));
-      const unitPrice = Number(createForm.unitPrice);
-      if (Number.isNaN(unitPrice) || unitPrice <= 0) {
-        throw new Error('Đơn giá phải lớn hơn 0.');
-      }
+  }, [orders, selectedOrder]);
 
-      await apiRequest('/sales/orders', {
-        method: 'POST',
-        body: {
-          orderNo: createForm.orderNo || undefined,
-          customerName: createForm.customerName || undefined,
-          createdBy: createForm.createdBy || undefined,
-          productName: createForm.productName,
-          quantity,
-          unitPrice
-        }
+  const selectedOrderApprovals = useMemo(() => {
+    if (!selectedOrder) return [];
+    return approvals
+      .filter((approval) => approval.targetId === selectedOrder.id)
+      .sort((left, right) => {
+        const leftAt = new Date(left.createdAt || 0).getTime();
+        const rightAt = new Date(right.createdAt || 0).getTime();
+        return rightAt - leftAt;
       });
-      setResultMessage('Tạo đơn hàng thành công.');
-      setCreateForm({
-        orderNo: '',
-        customerName: '',
-        createdBy: '',
-        productName: '',
-        quantity: '1',
-        unitPrice: ''
-      });
-      setPageCursor(undefined);
-      setCursorHistory([]);
-      await refreshAll();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo đơn hàng.');
-    }
-  };
+  }, [approvals, selectedOrder]);
 
-  const onSubmitUpdateOrder = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!canMutate || !selectedOrder) {
-      return;
-    }
-    setResultMessage(null);
-    setErrorMessage(null);
-    try {
-      const quantity = Math.max(1, Number(updateForm.quantity || '1'));
-      const unitPrice = Number(updateForm.unitPrice);
-      if (Number.isNaN(unitPrice) || unitPrice <= 0) {
-        throw new Error('Đơn giá cập nhật phải lớn hơn 0.');
-      }
-      if (!updateForm.requesterId || !updateForm.requesterName) {
-        throw new Error('Cần nhập requesterId và requesterName để gửi yêu cầu chỉnh sửa.');
-      }
+  const totalRevenue = useMemo(
+    () => orders.reduce((sum, order) => sum + Number(order.totalAmount ?? 0), 0),
+    [orders]
+  );
+  const pendingOrders = useMemo(
+    () => orders.filter((order) => String(order.status || '').toUpperCase() === 'PENDING').length,
+    [orders]
+  );
 
-      const response = await apiRequest<{ needsApproval?: boolean; message?: string } | SalesOrder>(
-        `/sales/orders/${selectedOrder.id}`,
-        {
-          method: 'PATCH',
-          body: {
-            requesterId: updateForm.requesterId,
-            requesterName: updateForm.requesterName,
-            productName: updateForm.productName,
-            quantity,
-            unitPrice
-          }
-        }
-      );
-
-      if (response && typeof response === 'object' && 'needsApproval' in response) {
-        setResultMessage(String(response.message ?? 'Yêu cầu chỉnh sửa đã được gửi.'));
-      } else {
-        setResultMessage('Đơn hàng đã được cập nhật.');
-      }
-
-      await refreshAll();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật đơn hàng.');
+  const columns: ColumnDefinition<SalesOrder>[] = [
+    {
+      key: 'orderNo',
+      label: 'Số đơn hàng',
+      isLink: true,
+      render: (order) => order.orderNo || order.id.slice(-8)
+    },
+    { key: 'customerName', label: 'Khách hàng' },
+    {
+      key: 'totalAmount',
+      label: 'Tổng tiền',
+      render: (order) => toCurrency(order.totalAmount ?? 0)
+    },
+    {
+      key: 'status',
+      label: 'Trạng thái',
+      render: (order) => <span className={getStatusClass(order.status)}>{order.status || '--'}</span>
+    },
+    {
+      key: 'invoices',
+      label: 'Hóa đơn liên kết',
+      render: (order) => order.invoices?.[0]?.invoiceNo ?? '--'
+    },
+    { key: 'createdBy', label: 'Người tạo' },
+    {
+      key: 'createdAt',
+      label: 'Ngày tạo',
+      render: (order) => toDateTime(order.createdAt)
     }
-  };
-
-  const onDecision = async (approvalId: string, decision: 'approve' | 'reject') => {
-    if (!canMutate) {
-      return;
-    }
-    setResultMessage(null);
-    setErrorMessage(null);
-    try {
-      await apiRequest(`/sales/approvals/${approvalId}/${decision}`, { method: 'POST' });
-      setResultMessage(decision === 'approve' ? 'Đã duyệt yêu cầu chỉnh sửa.' : 'Đã từ chối yêu cầu chỉnh sửa.');
-      await refreshAll();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể xử lý yêu cầu phê duyệt.');
-    }
-  };
-
-  const goNextPage = () => {
-    if (!nextCursor) {
-      return;
-    }
-    setCursorHistory((prev) => [...prev, pageCursor ?? '']);
-    setPageCursor(nextCursor);
-  };
-
-  const goPrevPage = () => {
-    if (cursorHistory.length === 0) {
-      setPageCursor(undefined);
-      return;
-    }
-    const cloned = [...cursorHistory];
-    const previousCursor = cloned.pop() ?? '';
-    setCursorHistory(cloned);
-    setPageCursor(previousCursor || undefined);
-  };
+  ];
 
   if (!canView) {
-    return (
-      <article className="module-workbench">
-        <header className="module-header">
-          <div>
-            <h1>Sales Operations Board</h1>
-            <p>Bạn không có quyền truy cập phân hệ Sales với vai trò hiện tại.</p>
-          </div>
-          <ul>
-            <li>Vai trò hiện tại: {role}</li>
-            <li>Đổi vai trò ở thanh công cụ để mô phỏng phân quyền.</li>
-          </ul>
-        </header>
-      </article>
-    );
+    return <div style={{ padding: '2rem', textAlign: 'center' }}>Không có quyền truy cập module bán hàng.</div>;
   }
 
+  const selectedInvoiceRef = selectedOrder?.invoices?.[0] ?? null;
+  const canApproveOrReject = canMutate && String(selectedOrder?.status || '').toUpperCase() === 'PENDING';
+  const canExportInvoice =
+    canMutate
+    && String(selectedOrder?.status || '').toUpperCase() === 'APPROVED'
+    && !selectedInvoiceRef;
+
+  const handleCreateOrder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canMutate) return;
+
+    const normalizedItems = createOrderForm.items
+      .map((item) => ({
+        productName: item.productName.trim(),
+        quantity: Number(item.quantity),
+        unitPrice: Number(item.unitPrice)
+      }))
+      .filter((item) => item.productName && item.quantity > 0 && item.unitPrice > 0);
+
+    if (normalizedItems.length === 0) {
+      setErrorMessage('Cần ít nhất một dòng sản phẩm hợp lệ (tên, số lượng, đơn giá).');
+      return;
+    }
+
+    setIsCreatingOrder(true);
+    try {
+      const createdOrder = await apiRequest<SalesOrder>('/sales/orders', {
+        method: 'POST',
+        body: {
+          orderNo: createOrderForm.orderNo || undefined,
+          customerName: createOrderForm.customerName || undefined,
+          customerId: createOrderForm.customerId || undefined,
+          employeeId: createOrderForm.employeeId || undefined,
+          createdBy: createOrderForm.createdBy || undefined,
+          items: normalizedItems
+        }
+      });
+      setResultMessage(`Đã tạo đơn hàng ${createdOrder.orderNo || createdOrder.id.slice(-8)}.`);
+      setErrorMessage(null);
+      setIsCreatePanelOpen(false);
+      setCreateOrderForm(makeInitialCreateOrderForm());
+      await loadData();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo đơn hàng');
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  };
+
+  const handleUpdateItem = (index: number, key: keyof CreateOrderItemForm, value: string) => {
+    setCreateOrderForm((prev) => ({
+      ...prev,
+      items: prev.items.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        if (key === 'quantity' || key === 'unitPrice') {
+          return {
+            ...item,
+            [key]: Number(value)
+          };
+        }
+        return {
+          ...item,
+          [key]: value
+        };
+      })
+    }));
+  };
+
+  const handleAddItem = () => {
+    setCreateOrderForm((prev) => ({
+      ...prev,
+      items: [...prev.items, makeEmptyOrderItem()]
+    }));
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setCreateOrderForm((prev) => {
+      const nextItems = prev.items.filter((_, itemIndex) => itemIndex !== index);
+      return {
+        ...prev,
+        items: nextItems.length > 0 ? nextItems : [makeEmptyOrderItem()]
+      };
+    });
+  };
+
+  const handleOrderDecision = async (action: 'approve' | 'reject') => {
+    if (!selectedOrder || !canApproveOrReject) return;
+    setIsHandlingDecision(true);
+    try {
+      await apiRequest(`/sales/orders/${selectedOrder.id}/${action}`, {
+        method: 'POST',
+        body: {
+          note: decisionNote || undefined
+        }
+      });
+      setResultMessage(
+        action === 'approve'
+          ? `Đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)} đã được phê duyệt.`
+          : `Đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)} đã bị từ chối.`
+      );
+      setErrorMessage(null);
+      setDecisionNote('');
+      await loadData();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể xử lý duyệt đơn');
+    } finally {
+      setIsHandlingDecision(false);
+    }
+  };
+
+  const handleExportInvoice = async () => {
+    if (!selectedOrder || !canExportInvoice) return;
+    setIsExportingInvoice(true);
+    try {
+      const payload = await apiRequest<any>('/finance/invoices/from-order', {
+        method: 'POST',
+        body: {
+          orderId: selectedOrder.id
+        }
+      });
+      setResultMessage(
+        `Đã xuất hóa đơn ${payload?.invoiceNo || payload?.id || ''} từ đơn ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}.`
+      );
+      setErrorMessage(null);
+      await loadData();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể xuất hóa đơn từ đơn hàng');
+    } finally {
+      setIsExportingInvoice(false);
+    }
+  };
+
   return (
-    <article className="module-workbench">
-      <header className="module-header">
-        <div>
-          <h1>Sales Operations Board</h1>
-          <p>Màn hình nghiệp vụ chuyên sâu cho luồng đơn hàng: danh sách, chỉnh sửa có duyệt và timeline phê duyệt.</p>
+    <div className="sales-board">
+      {errorMessage && (
+        <div className="finance-alert finance-alert-danger" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span><strong>Lỗi:</strong> {errorMessage}</span>
+          <button onClick={() => setErrorMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
         </div>
-        <ul>
-          <li>Server-side filter: `q`, `status`, `limit`, `cursor`</li>
-          <li>Flow UI: tạo đơn {'->'} cập nhật {'->'} hàng chờ duyệt {'->'} approve/reject</li>
-          <li>Action gating theo RBAC (STAFF read-only, MANAGER/ADMIN thao tác đầy đủ)</li>
-        </ul>
-      </header>
+      )}
+      {resultMessage && (
+        <div className="finance-alert finance-alert-success" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span><strong>Thành công:</strong> {resultMessage}</span>
+          <button onClick={() => setResultMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
+        </div>
+      )}
 
-      {errorMessage ? <p className="banner banner-error">{errorMessage}</p> : null}
-      {resultMessage ? <p className="banner banner-success">{resultMessage}</p> : null}
-      {!canMutate ? (
-        <p className="banner banner-warning">Vai trò `{role}` chỉ có quyền xem trong màn hình này.</p>
-      ) : null}
+      <div className="metrics-grid" style={{ marginBottom: '2rem', gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        <div className="finance-status-card" style={{ borderLeft: '4px solid var(--primary)' }}>
+          <h4 className="finance-status-title"><TrendingUp size={16} /> Doanh thu đơn hàng</h4>
+          <p className="finance-status-value">{toCurrency(totalRevenue)}</p>
+        </div>
+        <div className="finance-status-card" style={{ borderLeft: '4px solid var(--warning)' }}>
+          <h4 className="finance-status-title"><AlertCircle size={16} /> Đơn chờ duyệt</h4>
+          <p className="finance-status-value finance-status-value-warning">{pendingOrders}</p>
+        </div>
+        <div className="finance-status-card" style={{ borderLeft: '4px solid var(--success)' }}>
+          <h4 className="finance-status-title"><CheckCircle2 size={16} /> Đơn đã duyệt</h4>
+          <p className="finance-status-value finance-status-value-success">
+            {orders.filter((order) => String(order.status || '').toUpperCase() === 'APPROVED').length}
+          </p>
+        </div>
+        <div className="finance-status-card" style={{ borderLeft: '4px solid var(--line)' }}>
+          <h4 className="finance-status-title"><ShoppingCart size={16} /> Tổng số đơn</h4>
+          <p className="finance-status-value">{orders.length}</p>
+        </div>
+      </div>
 
-      <section className="sales-grid">
-        <section className="panel-surface sales-panel">
-          <div className="sales-panel-head">
-            <h2>Danh sách đơn hàng</h2>
-            <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>
-              Tải lại
-            </button>
-          </div>
-
-          <div className="filter-grid">
-            <div className="field">
-              <label htmlFor="sales-search">Từ khóa</label>
+      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
+        <div className="toolbar-left">
+          <div className="field" style={{ width: '320px' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
               <input
-                id="sales-search"
+                placeholder="Tìm mã đơn, khách hàng..."
+                style={{ paddingLeft: '36px' }}
                 value={search}
-                placeholder="Mã đơn hoặc tên khách hàng"
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPageCursor(undefined);
-                  setCursorHistory([]);
-                }}
+                onChange={(event) => setSearch(event.target.value)}
               />
-            </div>
-
-            <div className="field">
-              <label htmlFor="sales-status">Trạng thái</label>
-              <select
-                id="sales-status"
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value as (typeof STATUS_OPTIONS)[number]);
-                  setPageCursor(undefined);
-                  setCursorHistory([]);
-                }}
-              >
-                {STATUS_OPTIONS.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="field">
-              <label htmlFor="sales-limit">Limit</label>
-              <select
-                id="sales-limit"
-                value={String(limit)}
-                onChange={(event) => {
-                  setLimit(Number(event.target.value));
-                  setPageCursor(undefined);
-                  setCursorHistory([]);
-                }}
-              >
-                <option value="10">10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-              </select>
             </div>
           </div>
+        </div>
+        <div className="toolbar-right">
+          <button className="btn btn-ghost" onClick={loadData}><RefreshCw size={16} /> Refresh</button>
+          <button
+            className="btn btn-primary"
+            disabled={!canMutate}
+            onClick={() => {
+              if (!canMutate) return;
+              setIsCreatePanelOpen(true);
+            }}
+          >
+            <Plus size={16} /> Tạo đơn hàng
+          </button>
+        </div>
+      </div>
 
-          {isLoadingOrders ? <p className="muted">Đang tải đơn hàng...</p> : null}
+      <StandardDataTable
+        data={orders}
+        columns={columns}
+        isLoading={isLoading}
+        storageKey={SALES_COLUMN_SETTINGS_KEY}
+        onRowClick={(order) => setSelectedOrder(order)}
+      />
 
-          {!isLoadingOrders && orders.length === 0 ? <p className="muted">Chưa có đơn hàng nào.</p> : null}
-
-          {orders.length > 0 ? (
-            <>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Mã đơn</th>
-                      <th>Khách hàng</th>
-                      <th>Tổng tiền</th>
-                      <th>Trạng thái</th>
-                      <th>Tạo bởi</th>
-                      <th>Ngày tạo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.map((order) => (
-                      <tr
-                        key={order.id}
-                        className={selectedOrderId === order.id ? 'table-row-selected' : ''}
-                        onClick={() => setSelectedOrderId(order.id)}
-                      >
-                        <td>{order.orderNo || order.id.slice(-8)}</td>
-                        <td>{order.customerName || '--'}</td>
-                        <td>{toCurrency(order.totalAmount)}</td>
-                        <td>{order.status || '--'}</td>
-                        <td>{order.createdBy || '--'}</td>
-                        <td>{toDate(order.createdAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+      <SidePanel
+        isOpen={Boolean(selectedOrder)}
+        onClose={() => {
+          setSelectedOrder(null);
+          setDecisionNote('');
+        }}
+        title="Chi tiết đơn bán hàng"
+      >
+        {selectedOrder && (
+          <div style={{ display: 'grid', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingBottom: '1rem', borderBottom: '1px solid var(--line)' }}>
+              <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'var(--primary-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)' }}>
+                <Receipt size={24} />
               </div>
-
-              <div className="pagination-row">
-                <div className="pagination-left">
-                  <span>Đang hiển thị: {orders.length} bản ghi</span>
-                </div>
-                <div className="pagination-right">
-                  <button type="button" className="btn btn-ghost" disabled={cursorHistory.length === 0} onClick={goPrevPage}>
-                    Trang trước
-                  </button>
-                  <button type="button" className="btn btn-ghost" disabled={!nextCursor} onClick={goNextPage}>
-                    Trang sau
-                  </button>
-                </div>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>{selectedOrder.orderNo || selectedOrder.id.slice(-8)}</h3>
+                <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>Khách hàng: {selectedOrder.customerName || '--'}</p>
               </div>
-            </>
-          ) : null}
-        </section>
+              <div style={{ marginLeft: 'auto' }}>
+                <span className={getStatusClass(selectedOrder.status)}>{selectedOrder.status || '--'}</span>
+              </div>
+            </div>
 
-        <section className="panel-surface sales-panel">
-          <div className="sales-panel-head">
-            <h2>Tạo / cập nhật đơn hàng</h2>
-            <p className="muted">Flow thao tác nghiệp vụ theo vai trò.</p>
+            <div style={{ padding: '1rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-lg)' }}>
+              <p style={{ color: 'var(--muted)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.25rem' }}>Tổng giá trị đơn</p>
+              <h2 style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--primary)' }}>{toCurrency(selectedOrder.totalAmount ?? 0)}</h2>
+            </div>
+
+            <div>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Package size={16} /> Danh sách sản phẩm
+              </h4>
+              <div style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                {(!selectedOrder.items || selectedOrder.items.length === 0) ? (
+                  <p style={{ padding: '1rem', color: 'var(--muted)', fontStyle: 'italic' }}>Không có chi tiết sản phẩm.</p>
+                ) : (
+                  selectedOrder.items.map((item, index) => (
+                    <div
+                      key={`${item.id || index}`}
+                      style={{
+                        padding: '0.85rem 1rem',
+                        borderBottom: index === selectedOrder.items!.length - 1 ? 'none' : '1px solid var(--line)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <div>
+                        <p style={{ fontWeight: 500, fontSize: '0.875rem' }}>{item.productName || '--'}</p>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                          SL: {Number(item.quantity || 0)} x {toCurrency(Number(item.unitPrice || 0))}
+                        </p>
+                      </div>
+                      <p style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                        {toCurrency(Number(item.quantity || 0) * Number(item.unitPrice || 0))}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.875rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--muted)' }}>Người tạo</span>
+                <span style={{ fontWeight: 500 }}>{selectedOrder.createdBy || '--'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--muted)' }}>Thời gian tạo</span>
+                <span style={{ fontWeight: 500 }}>{toDateTime(selectedOrder.createdAt)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--muted)' }}>Hóa đơn liên kết</span>
+                <span style={{ fontWeight: 500 }}>{selectedInvoiceRef?.invoiceNo || '--'}</span>
+              </div>
+            </div>
+
+            <div>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <History size={16} /> Lịch sử phê duyệt chỉnh sửa
+              </h4>
+              {selectedOrderApprovals.length === 0 ? (
+                <p style={{ fontSize: '0.82rem', color: 'var(--muted)', fontStyle: 'italic' }}>Chưa có yêu cầu chỉnh sửa cần duyệt.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '0.5rem' }}>
+                  {selectedOrderApprovals.map((approval) => (
+                    <div key={approval.id} style={{ padding: '0.75rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-md)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                        <span className={getStatusClass(approval.status)}>{approval.status || '--'}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{toDateTime(approval.createdAt)}</span>
+                      </div>
+                      <p style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                        Note: {approval.decisionNote || '--'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="field">
+              <label>Ghi chú phê duyệt / từ chối</label>
+              <textarea
+                value={decisionNote}
+                onChange={(event) => setDecisionNote(event.target.value)}
+                placeholder="Nhập lý do hoặc ghi chú nghiệp vụ..."
+                style={{ minHeight: '90px' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              <button
+                className="btn btn-primary"
+                disabled={!canApproveOrReject || isHandlingDecision}
+                onClick={() => handleOrderDecision('approve')}
+              >
+                <CheckCircle2 size={16} /> {isHandlingDecision ? 'Đang xử lý...' : 'Phê duyệt đơn'}
+              </button>
+              <button
+                className="btn btn-ghost"
+                disabled={!canApproveOrReject || isHandlingDecision}
+                onClick={() => handleOrderDecision('reject')}
+              >
+                <XCircle size={16} /> Từ chối đơn
+              </button>
+              <button
+                className="btn btn-ghost"
+                disabled={!canExportInvoice || isExportingInvoice}
+                onClick={handleExportInvoice}
+              >
+                <FileText size={16} />
+                {selectedInvoiceRef
+                  ? `Đã có hóa đơn ${selectedInvoiceRef.invoiceNo || selectedInvoiceRef.id}`
+                  : isExportingInvoice
+                    ? 'Đang xuất hóa đơn...'
+                    : 'Xuất hóa đơn'}
+              </button>
+              <a className="btn btn-ghost" href={buildAuditObjectHref('Order', selectedOrder.id)}>
+                <History size={16} /> Xem audit log
+              </a>
+            </div>
+          </div>
+        )}
+      </SidePanel>
+
+      <SidePanel
+        isOpen={isCreatePanelOpen}
+        onClose={() => {
+          if (isCreatingOrder) return;
+          setIsCreatePanelOpen(false);
+          setCreateOrderForm(makeInitialCreateOrderForm());
+        }}
+        title="Tạo đơn bán hàng"
+      >
+        <form onSubmit={handleCreateOrder} style={{ display: 'grid', gap: '1rem' }}>
+          <div className="field">
+            <label>Số đơn hàng</label>
+            <input
+              value={createOrderForm.orderNo}
+              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, orderNo: event.target.value }))}
+              placeholder="SO-2026-000001"
+            />
+          </div>
+          <div className="field">
+            <label>Khách hàng *</label>
+            <input
+              required
+              value={createOrderForm.customerName}
+              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, customerName: event.target.value }))}
+              placeholder="Tên khách hàng"
+            />
+          </div>
+          <div className="field">
+            <label>Customer ID (optional)</label>
+            <input
+              value={createOrderForm.customerId}
+              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, customerId: event.target.value }))}
+              placeholder="cus_xxx"
+            />
+          </div>
+          <div className="field">
+            <label>Employee ID (optional)</label>
+            <input
+              value={createOrderForm.employeeId}
+              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, employeeId: event.target.value }))}
+              placeholder="emp_xxx"
+            />
+          </div>
+          <div className="field">
+            <label>Người tạo</label>
+            <input
+              value={createOrderForm.createdBy}
+              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, createdBy: event.target.value }))}
+              placeholder="manager@erp.local"
+            />
           </div>
 
-          <form className="form-grid" onSubmit={onSubmitCreateOrder}>
-            <h3>Tạo đơn hàng mới</h3>
-            <div className="field">
-              <label htmlFor="create-order-no">Mã đơn</label>
-              <input
-                id="create-order-no"
-                value={createForm.orderNo}
-                placeholder="SO-2026-001"
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, orderNo: event.target.value }))}
-              />
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: '1rem', display: 'grid', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Dòng sản phẩm</h4>
+              <button type="button" className="btn btn-ghost" onClick={handleAddItem}><Plus size={14} /> Thêm dòng</button>
             </div>
-            <div className="field">
-              <label htmlFor="create-customer">Khách hàng</label>
-              <input
-                id="create-customer"
-                value={createForm.customerName}
-                required
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, customerName: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="create-created-by">Người tạo</label>
-              <input
-                id="create-created-by"
-                value={createForm.createdBy}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, createdBy: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="create-product">Sản phẩm</label>
-              <input
-                id="create-product"
-                value={createForm.productName}
-                required
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, productName: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="create-quantity">Số lượng</label>
-              <input
-                id="create-quantity"
-                type="number"
-                min={1}
-                value={createForm.quantity}
-                required
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, quantity: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="create-price">Đơn giá</label>
-              <input
-                id="create-price"
-                type="number"
-                min={1}
-                value={createForm.unitPrice}
-                required
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, unitPrice: event.target.value }))}
-              />
-            </div>
-            <div className="action-buttons">
-              <button type="submit" className="btn btn-primary" disabled={!canMutate}>
-                Tạo đơn
-              </button>
-            </div>
-          </form>
+            {createOrderForm.items.map((item, index) => (
+              <div key={`item-${index}`} style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+                <div className="field">
+                  <label>Tên sản phẩm</label>
+                  <input
+                    value={item.productName}
+                    onChange={(event) => handleUpdateItem(index, 'productName', event.target.value)}
+                    placeholder="Sản phẩm A"
+                  />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem' }}>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Số lượng</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={item.quantity}
+                      onChange={(event) => handleUpdateItem(index, 'quantity', event.target.value)}
+                    />
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Đơn giá</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={item.unitPrice}
+                      onChange={(event) => handleUpdateItem(index, 'unitPrice', event.target.value)}
+                    />
+                  </div>
+                  <button type="button" className="btn btn-ghost" style={{ alignSelf: 'end' }} onClick={() => handleRemoveItem(index)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
 
-          <form className="form-grid" onSubmit={onSubmitUpdateOrder}>
-            <h3>Yêu cầu chỉnh sửa đơn đã chọn</h3>
-            <p className="muted">Đơn hiện tại: {selectedOrder ? selectedOrder.orderNo || selectedOrder.id : '--'}</p>
-            <div className="field">
-              <label htmlFor="update-requester-id">Requester ID</label>
-              <input
-                id="update-requester-id"
-                value={updateForm.requesterId}
-                required
-                onChange={(event) => setUpdateForm((prev) => ({ ...prev, requesterId: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="update-requester-name">Requester Name</label>
-              <input
-                id="update-requester-name"
-                value={updateForm.requesterName}
-                required
-                onChange={(event) => setUpdateForm((prev) => ({ ...prev, requesterName: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="update-product">Sản phẩm</label>
-              <input
-                id="update-product"
-                value={updateForm.productName}
-                required
-                onChange={(event) => setUpdateForm((prev) => ({ ...prev, productName: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="update-quantity">Số lượng</label>
-              <input
-                id="update-quantity"
-                type="number"
-                min={1}
-                value={updateForm.quantity}
-                required
-                onChange={(event) => setUpdateForm((prev) => ({ ...prev, quantity: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="update-price">Đơn giá</label>
-              <input
-                id="update-price"
-                type="number"
-                min={1}
-                value={updateForm.unitPrice}
-                required
-                onChange={(event) => setUpdateForm((prev) => ({ ...prev, unitPrice: event.target.value }))}
-              />
-            </div>
-            <div className="action-buttons">
-              <button type="submit" className="btn btn-primary" disabled={!canMutate || !selectedOrder}>
-                Gửi yêu cầu chỉnh sửa
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section className="panel-surface sales-panel">
-          <div className="sales-panel-head">
-            <h2>Timeline phê duyệt chỉnh sửa</h2>
-            <button type="button" className="btn btn-ghost" onClick={() => void loadApprovals()}>
-              Tải lại timeline
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <button type="submit" className="btn btn-primary" disabled={isCreatingOrder} style={{ flex: 1 }}>
+              {isCreatingOrder ? 'Đang tạo...' : 'Tạo đơn hàng'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ flex: 1 }}
+              onClick={() => {
+                if (isCreatingOrder) return;
+                setIsCreatePanelOpen(false);
+                setCreateOrderForm(makeInitialCreateOrderForm());
+              }}
+            >
+              Hủy
             </button>
           </div>
-
-          {isLoadingApprovals ? <p className="muted">Đang tải hàng chờ phê duyệt...</p> : null}
-          {!isLoadingApprovals && approvals.length === 0 ? <p className="muted">Không có yêu cầu phê duyệt nào.</p> : null}
-
-          {approvals.length > 0 ? (
-            <div className="sales-approval-list">
-              {approvals.map((approval) => (
-                <article key={approval.id} className="sales-approval-item">
-                  <div className="sales-approval-meta">
-                    <strong>{approval.targetId || '--'}</strong>
-                    <span>{approval.status || '--'}</span>
-                  </div>
-                  <p>
-                    requester: <strong>{approval.requesterId || '--'}</strong> | approver:{' '}
-                    <strong>{approval.approverId || '--'}</strong>
-                  </p>
-                  <p>
-                    tạo lúc: {toDate(approval.createdAt)} | quyết định: {toDate(approval.decidedAt)}
-                  </p>
-                  {approval.status === 'PENDING' ? (
-                    <div className="action-buttons">
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        disabled={!canMutate}
-                        onClick={() => void onDecision(approval.id, 'approve')}
-                      >
-                        Duyệt
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        disabled={!canMutate}
-                        onClick={() => void onDecision(approval.id, 'reject')}
-                      >
-                        Từ chối
-                      </button>
-                    </div>
-                  ) : null}
-                </article>
-              ))}
-            </div>
-          ) : null}
-        </section>
-      </section>
-    </article>
+        </form>
+      </SidePanel>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, UnauthorizedExcepti
 import { ConversationChannel, ConversationSenderType } from '@prisma/client';
 import { createHmac } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloOaOutboundWorkerService } from './zalo-oa-outbound.worker';
@@ -11,13 +12,13 @@ type AccountType = 'PERSONAL' | 'OA';
 
 @Injectable()
 export class ZaloService {
-  private readonly oaOutboundWorker = new ZaloOaOutboundWorkerService();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly conversationsService: ConversationsService,
-    private readonly personalPool: ZaloPersonalPoolService
+    private readonly personalPool: ZaloPersonalPoolService,
+    private readonly oaOutboundWorker: ZaloOaOutboundWorkerService,
+    private readonly runtimeSettings: RuntimeSettingsService
   ) {}
 
   async listAccounts(accountType?: AccountType | 'ALL') {
@@ -127,6 +128,7 @@ export class ZaloService {
 
   async sendOaMessage(id: string, payload: Record<string, unknown>) {
     const account = await this.requireOaAccount(id);
+    const integrationRuntime = await this.runtimeSettings.getIntegrationRuntime();
 
     const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
     const content = this.requiredString(payload.content, 'Thiếu nội dung tin nhắn.');
@@ -136,6 +138,12 @@ export class ZaloService {
         id: account.id,
         accessTokenEnc: account.accessTokenEnc,
         metadataJson: account.metadataJson
+      },
+      runtimeConfig: {
+        outboundUrl: integrationRuntime.zalo.outboundUrl,
+        apiBaseUrl: integrationRuntime.zalo.apiBaseUrl,
+        outboundTimeoutMs: integrationRuntime.zalo.outboundTimeoutMs,
+        accessToken: integrationRuntime.zalo.accessToken
       },
       externalThreadId,
       content,
@@ -172,7 +180,7 @@ export class ZaloService {
     rawBody: string,
     signatureHeader?: string
   ) {
-    this.verifyOaWebhookSignature(rawBody, signatureHeader);
+    await this.verifyOaWebhookSignature(rawBody, signatureHeader);
 
     const accountId = this.requiredString(payload.zaloAccountId, 'Thiếu zaloAccountId.');
     const account = await this.prisma.client.zaloAccount.findFirst({ where: { id: accountId } });
@@ -209,8 +217,11 @@ export class ZaloService {
     };
   }
 
-  private verifyOaWebhookSignature(rawBody: string, signatureHeader?: string) {
-    const secret = this.config.get<string>('ZALO_OA_WEBHOOK_SECRET', '').trim();
+  private async verifyOaWebhookSignature(rawBody: string, signatureHeader?: string) {
+    const integrationRuntime = await this.runtimeSettings.getIntegrationRuntime();
+    const secret =
+      integrationRuntime.zalo.webhookSecret.trim()
+      || this.config.get<string>('ZALO_OA_WEBHOOK_SECRET', '').trim();
     if (!secret) {
       throw new UnauthorizedException('Thiếu cấu hình ZALO_OA_WEBHOOK_SECRET. Không thể xác thực webhook.');
     }

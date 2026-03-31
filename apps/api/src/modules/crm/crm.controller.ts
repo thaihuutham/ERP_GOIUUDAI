@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
+import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CrmService } from './crm.service';
 
@@ -17,12 +18,19 @@ export class CrmController {
     return this.crmService.listCustomers(query, { status, stage, tag });
   }
 
+  @Get('taxonomy')
+  getTaxonomy() {
+    return this.crmService.getCustomerTaxonomy();
+  }
+
   @Post('customers')
+  @AuditAction({ action: 'CREATE_CUSTOMER', entityType: 'Customer' })
   createCustomer(@Body() body: Record<string, unknown>) {
     return this.crmService.createCustomer(body);
   }
 
   @Patch('customers/:id')
+  @AuditAction({ action: 'UPDATE_CUSTOMER', entityType: 'Customer', entityIdParam: 'id' })
   updateCustomer(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.crmService.updateCustomer(id, body);
   }
@@ -56,6 +64,7 @@ export class CrmController {
   }
 
   @Post('interactions')
+  @AuditAction({ action: 'CREATE_CUSTOMER_INTERACTION', entityType: 'CustomerInteraction' })
   createInteraction(@Body() body: Record<string, unknown>) {
     return this.crmService.createInteraction(body);
   }
@@ -69,11 +78,13 @@ export class CrmController {
   }
 
   @Post('payment-requests')
+  @AuditAction({ action: 'CREATE_PAYMENT_REQUEST', entityType: 'PaymentRequest' })
   createPaymentRequest(@Body() body: Record<string, unknown>) {
     return this.crmService.createPaymentRequest(body);
   }
 
   @Post('payment-requests/:id/mark-paid')
+  @AuditAction({ action: 'MARK_PAYMENT_REQUEST_PAID', entityType: 'PaymentRequest', entityIdParam: 'id' })
   markPaymentRequestPaid(@Param('id') id: string) {
     return this.crmService.markPaymentRequestPaid(id);
   }
@@ -84,6 +95,7 @@ export class CrmController {
   }
 
   @Post('merge-customers')
+  @AuditAction({ action: 'MERGE_CUSTOMERS', entityType: 'Customer' })
   mergeCustomers(@Body() body: Record<string, unknown>) {
     return this.crmService.mergeCustomers(body);
   }

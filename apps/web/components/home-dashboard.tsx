@@ -2,8 +2,19 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { 
+  TrendingUp, 
+  Users, 
+  FileText, 
+  ShoppingCart, 
+  LayoutDashboard,
+  ShieldCheck,
+  Activity,
+  ArrowRight
+} from 'lucide-react';
 import { apiRequest } from '../lib/api-client';
 import { getVisibleModuleCards } from '../lib/modules';
+import { formatRuntimeCurrency } from '../lib/runtime-format';
 import { useUserRole } from './user-role-context';
 
 type Overview = {
@@ -13,6 +24,18 @@ type Overview = {
   activePurchaseOrders?: number;
 };
 
+const REPORTS_DISABLED_NOTICE =
+  "Phân hệ 'reports' đang tắt. Vui lòng bật lại trong Settings Center Enterprise > Tổ chức > Phân hệ đang bật.";
+
+function isReportsDisabledErrorMessage(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("phân hệ 'reports' đang bị tắt") ||
+    (normalized.includes('reports') && normalized.includes('đang bị tắt')) ||
+    normalized.includes("module 'reports' is disabled")
+  );
+}
+
 export function HomeDashboard() {
   const { role } = useUserRole();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -20,87 +43,135 @@ export function HomeDashboard() {
 
   useEffect(() => {
     let active = true;
-
     const load = async () => {
+      let shouldFetchOverview = true;
+
       try {
+        try {
+          const runtime = await apiRequest<{ enabledModules?: unknown }>('/settings/runtime');
+          const enabledModules = Array.isArray(runtime?.enabledModules)
+            ? runtime.enabledModules
+                .map((item) => String(item).toLowerCase())
+                .filter((item) => item.length > 0)
+            : [];
+          if (enabledModules.length > 0 && !enabledModules.includes('reports')) {
+            shouldFetchOverview = false;
+          }
+        } catch {
+          // Runtime endpoint chỉ là pre-check thân thiện; nếu lỗi vẫn thử gọi overview.
+        }
+
+        if (!shouldFetchOverview) {
+          if (active) {
+            setOverview(null);
+            setError(REPORTS_DISABLED_NOTICE);
+          }
+          return;
+        }
+
         const payload = await apiRequest<Overview>('/reports/overview');
         if (active) {
           setOverview(payload);
+          setError(null);
         }
       } catch (err) {
         if (active) {
-          setError(err instanceof Error ? err.message : 'Không tải được dữ liệu tổng quan.');
+          const message = err instanceof Error ? err.message : 'Lỗi hệ thống';
+          setOverview(null);
+          setError(isReportsDisabledErrorMessage(message) ? REPORTS_DISABLED_NOTICE : message);
         }
       }
     };
-
-    void load();
-
-    return () => {
-      active = false;
-    };
+    load();
+    return () => { active = false; };
   }, []);
 
-  const metrics = useMemo(
-    () => [
-      {
-        label: 'Tổng doanh thu',
-        value: overview?.totalRevenue !== undefined ? Number(overview.totalRevenue).toLocaleString('vi-VN') : '--',
-        accent: 'metric-accent-blue'
-      },
-      {
-        label: 'Tổng nhân sự',
-        value: overview?.totalEmployees !== undefined ? String(overview.totalEmployees) : '--',
-        accent: 'metric-accent-green'
-      },
-      {
-        label: 'Hóa đơn chờ xử lý',
-        value: overview?.pendingInvoices !== undefined ? String(overview.pendingInvoices) : '--',
-        accent: 'metric-accent-orange'
-      },
-      {
-        label: 'Đơn mua hàng đang mở',
-        value: overview?.activePurchaseOrders !== undefined ? String(overview.activePurchaseOrders) : '--',
-        accent: 'metric-accent-cyan'
-      }
-    ],
-    [overview]
-  );
+  const metrics = useMemo(() => [
+    {
+      label: 'Phát sinh doanh thu',
+      value: overview?.totalRevenue !== undefined ? formatRuntimeCurrency(Number(overview.totalRevenue)) : '--',
+      icon: <TrendingUp size={20} />,
+      color: 'var(--primary)'
+    },
+    {
+      label: 'Nhân sự vận hành',
+      value: overview?.totalEmployees !== undefined ? String(overview.totalEmployees) : '--',
+      icon: <Users size={20} />,
+      color: 'var(--success)'
+    },
+    {
+      label: 'Hóa đơn chờ xử lý',
+      value: overview?.pendingInvoices !== undefined ? String(overview.pendingInvoices) : '--',
+      icon: <FileText size={20} />,
+      color: 'var(--warning)'
+    },
+    {
+      label: 'Đơn mua hàng (PO)',
+      value: overview?.activePurchaseOrders !== undefined ? String(overview.activePurchaseOrders) : '--',
+      icon: <ShoppingCart size={20} />,
+      color: 'var(--danger)'
+    }
+  ], [overview]);
+
   const visibleModules = useMemo(() => getVisibleModuleCards(role), [role]);
 
   return (
     <div className="dashboard-root">
       <section className="hero-panel">
         <div>
-          <h1>Trung tâm điều hành ERP Bán lẻ</h1>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', color: 'var(--primary)', fontWeight: 700, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.45rem' }}>
+            <Activity size={14} /> System healthy
+          </div>
+          <h1 style={{ fontSize: '1.65rem', marginBottom: '0.3rem' }}>
+            Chào mừng trở lại, <span style={{ color: 'var(--primary)' }}>{role}</span>
+          </h1>
           <p>
-            Trung tâm điều hành cho toàn bộ phân hệ ERP theo kiến trúc SaaS-ready. Mọi thao tác dữ liệu đều đi qua API
-            theo tenant.
+            Workspace điều hành ERP bán lẻ theo mô hình nội bộ 50 nhân sự. Theo dõi doanh thu, vận hành chuỗi cung ứng và CRM trên một giao diện thống nhất.
           </p>
         </div>
-        <div className="hero-badge">12 phân hệ • Lược đồ dùng chung • Ngữ cảnh tenant CLS</div>
+        <div className="hero-badge">
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+            <ShieldCheck size={14} />
+            <span>Tenant Isolation Active</span>
+          </div>
+        </div>
       </section>
 
-      <section className="metrics-grid" aria-label="Chỉ số tổng quan ERP">
-        {metrics.map((metric) => (
-          <article className={`metric-card ${metric.accent}`} key={metric.label}>
-            <h2>{metric.label}</h2>
-            <p>{metric.value}</p>
+      <section className="metrics-grid">
+        {metrics.map((m) => (
+          <article key={m.label} className="metric-card">
+            <h2 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ color: m.color, display: 'inline-flex', alignItems: 'center' }}>{m.icon}</span>
+              {m.label}
+            </h2>
+            <p>{m.value}</p>
           </article>
         ))}
       </section>
 
-      {error ? <p className="banner banner-warning">{error}</p> : null}
-
-      <section className="module-card-grid">
-        {visibleModules.map((module) => (
-          <Link className="module-card" key={module.key} href={`/modules/${module.key}`}>
-            <h3>{module.title}</h3>
-            <p>{module.description}</p>
-            <span className="module-card-link">Mở phân hệ</span>
-          </Link>
-        ))}
+      <section>
+        <h3 style={{ fontSize: '1.02rem', marginBottom: '0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
+          <LayoutDashboard size={20} /> Truy cập phân hệ nghiệp vụ
+        </h3>
+        <div className="module-card-grid">
+          {visibleModules.map((module) => (
+            <Link 
+              key={module.key} 
+              href={`/modules/${module.key}`}
+              className="module-card"
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h3>{module.title}</h3>
+                <ArrowRight size={14} color="var(--muted)" />
+              </div>
+              <p>{module.description}</p>
+              <span className="module-card-link">Bắt đầu làm việc</span>
+            </Link>
+          ))}
+        </div>
       </section>
+
+      {error && <div className={`banner ${error === REPORTS_DISABLED_NOTICE ? 'banner-warning' : 'banner-error'}`}>{error}</div>}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { HttpMethod } from './module-ui';
+import { readStoredAuthSession } from './auth-session';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1').replace(/\/$/, '');
 
@@ -6,6 +7,8 @@ export type ApiRequestOptions = {
   method?: HttpMethod;
   query?: Record<string, string | number | boolean | null | undefined>;
   body?: unknown;
+  headers?: Record<string, string>;
+  skipAuth?: boolean;
 };
 
 function buildUrl(path: string, query?: ApiRequestOptions['query']) {
@@ -26,10 +29,35 @@ function buildUrl(path: string, query?: ApiRequestOptions['query']) {
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}) {
   const method = options.method ?? 'GET';
+
+  // Always send x-tenant-id for API compatibility across local/dev environments.
+  // If a custom header key is configured, send it in parallel.
+  const tenantHeaderKey = (process.env.NEXT_PUBLIC_TENANT_HEADER_KEY ?? 'x-tenant-id').trim();
+  const tenantId = process.env.NEXT_PUBLIC_DEFAULT_TENANT_ID ?? 'GOIUUDAI';
+
+  const tenantHeaders: Record<string, string> = {
+    'x-tenant-id': tenantId
+  };
+  if (tenantHeaderKey && tenantHeaderKey.toLowerCase() !== 'x-tenant-id') {
+    tenantHeaders[tenantHeaderKey] = tenantId;
+  }
+
+  const authHeaders: Record<string, string> = {};
+  if (!options.skipAuth) {
+    const authSession = readStoredAuthSession();
+    const token = String(authSession?.accessToken ?? '').trim();
+    if (token) {
+      authHeaders.authorization = `Bearer ${token}`;
+    }
+  }
+
   const res = await fetch(buildUrl(path, options.query), {
     method,
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...tenantHeaders,
+      ...authHeaders,
+      ...(options.headers ?? {})
     },
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     cache: 'no-store'
@@ -39,9 +67,7 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   const payload = text ? safeJsonParse(text) : null;
 
   if (!res.ok) {
-    const message =
-      (payload && typeof payload === 'object' && 'message' in payload && typeof payload.message === 'string' && payload.message) ||
-      `Request failed (${res.status})`;
+    const message = extractApiErrorMessage(payload) ?? `Request failed (${res.status})`;
     throw new Error(message);
   }
 
@@ -54,6 +80,48 @@ function safeJsonParse(value: string) {
   } catch {
     return value;
   }
+}
+
+function extractApiErrorMessage(payload: unknown): string | null {
+  if (!payload) {
+    return null;
+  }
+
+  if (typeof payload === 'string') {
+    return payload;
+  }
+
+  if (typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  if (typeof record.message === 'string' && record.message.trim()) {
+    return record.message;
+  }
+
+  const errorRecord =
+    record.error && typeof record.error === 'object' && !Array.isArray(record.error)
+      ? (record.error as Record<string, unknown>)
+      : null;
+  if (!errorRecord) {
+    return null;
+  }
+
+  if (typeof errorRecord.message === 'string' && errorRecord.message.trim()) {
+    return errorRecord.message;
+  }
+
+  const detailRecord =
+    errorRecord.details && typeof errorRecord.details === 'object' && !Array.isArray(errorRecord.details)
+      ? (errorRecord.details as Record<string, unknown>)
+      : null;
+  if (detailRecord && typeof detailRecord.message === 'string' && detailRecord.message.trim()) {
+    return detailRecord.message;
+  }
+
+  return null;
 }
 
 export function normalizeListPayload(payload: unknown): Record<string, unknown>[] {

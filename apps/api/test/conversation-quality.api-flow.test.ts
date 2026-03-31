@@ -1,34 +1,18 @@
 import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { sign } from 'jsonwebtoken';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { ConversationQualityService } from '../src/modules/conversation-quality/conversation-quality.service';
+import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('Conversation quality API flow integration', () => {
   let app: INestApplication;
   let conversationQualityService: ConversationQualityService;
 
-  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
-    sign(
-      {
-        sub: `test_${role.toLowerCase()}`,
-        userId: `test_${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@example.com`,
-        role,
-        tenantId: 'tenant_demo_company'
-      },
-      process.env.JWT_SECRET as string,
-      { algorithm: 'HS256', expiresIn: '1h' }
-    );
-
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.AUTH_ENABLED = 'true';
-    process.env.JWT_SECRET = 'phase-conversation-quality-flow-secret';
-    process.env.PRISMA_SKIP_CONNECT = 'true';
+    setupSingleTenantAuthTestEnv('phase-conversation-quality-flow-secret');
 
     app = await NestFactory.create(AppModule, {
       logger: false,
@@ -57,7 +41,7 @@ describe('Conversation quality API flow integration', () => {
   });
 
   it('executes quality job flow: list/create/update -> run now -> list/get runs', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
 
     vi.spyOn(conversationQualityService, 'listJobs').mockResolvedValue([
       {

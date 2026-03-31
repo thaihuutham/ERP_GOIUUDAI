@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { SettingsCenter } from '../../../components/settings-center';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="settings" />;
+  return <SettingsCenter />;
 }

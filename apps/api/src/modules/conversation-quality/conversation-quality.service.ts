@@ -5,6 +5,7 @@ import {
   ConversationSenderType,
   Prisma
 } from '@prisma/client';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type OpenAICompatibleUsage = {
@@ -50,7 +51,10 @@ export class ConversationQualityService implements OnModuleInit, OnModuleDestroy
   private readonly runningJobs = new Set<string>();
   private polling = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly runtimeSettings: RuntimeSettingsService
+  ) {}
 
   onModuleInit() {
     this.pollTimer = setInterval(() => {
@@ -444,10 +448,23 @@ export class ConversationQualityService implements OnModuleInit, OnModuleDestroy
     job: { aiModel: string | null; rulesContent: string | null; skipConditions: string | null },
     transcript: string
   ) {
-    const apiBaseUrl = this.requiredEnv('AI_OPENAI_COMPAT_BASE_URL');
-    const apiKey = this.requiredEnv('AI_OPENAI_COMPAT_API_KEY');
-    const model = job.aiModel ?? this.getDefaultModel();
-    const timeoutMs = this.parseInt(process.env.AI_OPENAI_COMPAT_TIMEOUT_MS, 45_000, 5_000, 300_000);
+    const integrationRuntime = await this.runtimeSettings.getIntegrationRuntime();
+    const apiBaseUrl = this.optionalString(integrationRuntime.ai.baseUrl) ?? process.env.AI_OPENAI_COMPAT_BASE_URL?.trim();
+    const apiKey = this.optionalString(integrationRuntime.ai.apiKey) ?? process.env.AI_OPENAI_COMPAT_API_KEY?.trim();
+    const model = job.aiModel ?? this.optionalString(integrationRuntime.ai.model) ?? this.getDefaultModel();
+    const timeoutMs = this.parseInt(
+      integrationRuntime.ai.timeoutMs ?? process.env.AI_OPENAI_COMPAT_TIMEOUT_MS,
+      45_000,
+      5_000,
+      300_000
+    );
+
+    if (!apiBaseUrl) {
+      throw new BadRequestException('Thiếu cấu hình AI base URL trong settings.integrations.ai hoặc ENV.');
+    }
+    if (!apiKey) {
+      throw new BadRequestException('Thiếu API key AI trong settings.integrations.ai hoặc ENV.');
+    }
 
     const prompt = this.buildQcPrompt(job.rulesContent ?? '', job.skipConditions ?? '');
     const url = `${apiBaseUrl.replace(/\/$/, '')}/chat/completions`;

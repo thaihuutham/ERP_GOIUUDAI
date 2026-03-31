@@ -1,34 +1,18 @@
 import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { sign } from 'jsonwebtoken';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { CrmService } from '../src/modules/crm/crm.service';
+import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('CRM API flow integration', () => {
   let app: INestApplication;
   let crmService: CrmService;
 
-  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
-    sign(
-      {
-        sub: `test_${role.toLowerCase()}`,
-        userId: `test_${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@example.com`,
-        role,
-        tenantId: 'tenant_demo_company'
-      },
-      process.env.JWT_SECRET as string,
-      { algorithm: 'HS256', expiresIn: '1h' }
-    );
-
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.AUTH_ENABLED = 'true';
-    process.env.JWT_SECRET = 'phase3-crm-flow-secret';
-    process.env.PRISMA_SKIP_CONNECT = 'true';
+    setupSingleTenantAuthTestEnv('phase3-crm-flow-secret');
 
     app = await NestFactory.create(AppModule, {
       logger: false,
@@ -57,7 +41,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('executes CRM flow: customer -> interaction -> payment request -> mark paid', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
 
     const state = {
       customer: {
@@ -167,7 +151,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('executes customer merge flow', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
 
     vi.spyOn(crmService, 'mergeCustomers').mockImplementation(async (body: any) => ({
       message: 'Đã gộp hồ sơ khách hàng thành công.',
@@ -195,5 +179,24 @@ describe('CRM API flow integration', () => {
     expect(mergeRes.status).toBe(201);
     expect(mergeRes.body.customer.id).toBe('cus_primary');
     expect(mergeRes.body.summary.movedInteractions).toBe(3);
+  });
+
+  it('returns runtime CRM customer taxonomy', async () => {
+    const managerToken = makeAuthToken('MANAGER');
+
+    vi.spyOn(crmService, 'getCustomerTaxonomy').mockResolvedValue({
+      customerTaxonomy: {
+        stages: ['MOI', 'DANG_CHAM_SOC', 'CHOT_DON'],
+        sources: ['ONLINE', 'REFERRAL']
+      }
+    } as any);
+
+    const taxonomyRes = await request(app.getHttpServer())
+      .get('/api/v1/crm/taxonomy')
+      .set('authorization', `Bearer ${managerToken}`);
+
+    expect(taxonomyRes.status).toBe(200);
+    expect(taxonomyRes.body.customerTaxonomy.stages).toEqual(['MOI', 'DANG_CHAM_SOC', 'CHOT_DON']);
+    expect(taxonomyRes.body.customerTaxonomy.sources).toEqual(['ONLINE', 'REFERRAL']);
   });
 });

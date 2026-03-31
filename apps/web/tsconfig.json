@@ -24,8 +24,13 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    ".next-dev-e2e-goals/types/**/*.ts",
+    ".next-dev-e2e-reports/types/**/*.ts",
+    ".next-dev-e2e3110/types/**/*.ts",
+    ".next-dev-web/types/**/*.ts",
+    ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next/types/**/*.ts"
+    ".next-dev-e2e-core/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -1,34 +1,18 @@
 import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { sign } from 'jsonwebtoken';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { HrService } from '../src/modules/hr/hr.service';
+import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('HR API flow integration', () => {
   let app: INestApplication;
   let hrService: HrService;
 
-  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
-    sign(
-      {
-        sub: `test_${role.toLowerCase()}`,
-        userId: `test_${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@example.com`,
-        role,
-        tenantId: 'tenant_demo_company'
-      },
-      process.env.JWT_SECRET as string,
-      { algorithm: 'HS256', expiresIn: '1h' }
-    );
-
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.AUTH_ENABLED = 'true';
-    process.env.JWT_SECRET = 'phase3-hr-flow-secret';
-    process.env.PRISMA_SKIP_CONNECT = 'true';
+    setupSingleTenantAuthTestEnv('phase3-hr-flow-secret');
 
     app = await NestFactory.create(AppModule, {
       logger: false,
@@ -57,7 +41,7 @@ describe('HR API flow integration', () => {
   });
 
   it('executes HR flow: employee -> attendance -> leave -> payroll', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
 
     const state = {
       employee: {

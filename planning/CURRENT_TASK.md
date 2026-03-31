@@ -1,11 +1,284 @@
 # CURRENT_TASK
 
 ## Trạng thái tổng quan
-- Phase: CRM Omnichannel + AI QC Integration (backend + inbox UI + API flow tests + web e2e)
-- Last updated: 2026-03-30 09:12 +07
-- Owner: Antigravity session
+- Phase: Global Audit Log Hardening + Audit Hot/Cold Tier + HR/Sales/Finance stabilization
+- Last updated: 2026-03-31 22:38 +07
+- Owner: Codex session
 
 ## In Progress
+### Task ID: RETAIL-AUDIT-001
+- Tên: Triển khai Audit Log chuẩn ERP (global, filter theo object/action)
+- Mục tiêu:
+  - Xây pipeline audit tập trung cho write toàn hệ thống + read nhạy cảm (whitelist endpoint).
+  - Đảm bảo integrity `append-only + hash chain`.
+  - Cung cấp module tra cứu riêng `/modules/audit` và deep-link theo object từ CRM/Sales/Finance.
+  - Khóa policy retention audit mặc định 7 năm.
+- Tiến độ:
+  - [x] DB schema + migration:
+    - thêm `AuditOperationType`, `audit_logs`, `audit_chain_state`.
+    - thêm index phục vụ filter theo object/action/actor/module/request/time.
+    - thêm trigger guard append-only (`UPDATE/DELETE` bị chặn; prune có cờ `app.audit_prune='on'`).
+  - [x] Capture pipeline:
+    - thêm `AuditContextInterceptor` global để chuẩn hóa context request/actor/module.
+    - migrate cơ chế capture write từ Prisma middleware cũ sang Prisma query extension (tương thích Prisma v6).
+    - thêm `@AuditAction` cho semantic actions tại CRM/Sales/Finance/HR/SCM/Workflows/Catalog/Settings.
+    - thêm `@AuditRead` cho endpoint đọc nhạy cảm theo whitelist.
+    - áp masking field nhạy cảm trước khi lưu payload audit.
+  - [x] API Audit read-only:
+    - `GET /api/v1/audit/logs`
+    - `GET /api/v1/audit/objects/:entityType/:entityId/history`
+    - `GET /api/v1/audit/actions`
+    - RBAC xem audit: `MANAGER/ADMIN`.
+  - [x] Web Audit module:
+    - thêm route `/modules/audit` với filter bar + timeline + panel chi tiết before/after/diff.
+    - filter object tự gọi endpoint object history.
+    - deep-link object history từ:
+      - CRM customer detail (`entityType=Customer`),
+      - Sales order detail (`entityType=Order`),
+      - Finance invoice detail (`entityType=Invoice`).
+  - [x] Governance:
+    - runtime policy thêm `auditRetentionYears` default `7`.
+    - maintenance job prune audit theo retention mới.
+    - bổ sung migration backfill `enabledModules` để thêm `audit` cho tenant cũ:
+      - `20260331221500_backfill_audit_module_enabled`.
+    - thêm backward-compat runtime normalize để tự include `audit` nếu cấu hình cũ chưa có.
+  - [x] Tests/verify:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test --workspace @erp/api -- test/audit.util.test.ts test/audit.service.test.ts test/audit-read.interceptor.api-flow.test.ts` ✅
+    - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/audit-module.spec.ts` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - [x] ADR:
+    - `docs/decisions/ADR-021-GLOBAL-AUDIT-LOG-HASH-CHAIN-AND-AUDIT-MODULE.md`
+  - [ ] Chờ UAT nghiệp vụ trên data production-like + đánh giá phase 2 (external WORM archive nếu cần).
+
+### Task ID: RETAIL-AUDIT-002
+- Tên: Tối ưu lưu trữ audit 7 năm (Hot 12 tháng + Cold MinIO trên VM)
+- Mục tiêu:
+  - Giữ đầy đủ audit 7 năm nhưng giảm tải DB giao dịch để tránh lag/treo.
+  - Tự động archive/prune hàng ngày, idempotent và an toàn (upload thành công mới prune).
+  - Tra cứu audit hợp nhất hot+cold trên cùng UI/API, có guard hiệu năng và UX thân thiện.
+- Tiến độ:
+  - [x] Giảm log nhiễu tại nguồn:
+    - skip audit `updateMany/deleteMany` khi `count=0`.
+    - denylist model kỹ thuật mặc định `Notification` + mở rộng qua `AUDIT_MODEL_DENYLIST`.
+  - [x] Data model archive:
+    - thêm enum/model `AuditArchiveStatus`, `AuditArchiveManifest`.
+    - migration: `20260331234500_add_audit_archive_manifest`.
+  - [x] Archive engine + storage:
+    - thêm `AuditArchiveService` (window theo ngày, export NDJSON.GZ, checksum, manifest, prune guard).
+    - thêm `AuditArchiveStorageService` (S3-compatible MinIO, verify object, auto ensure bucket).
+  - [x] Scheduler vận hành:
+    - thêm `SettingsMaintenanceSchedulerService` chạy daily off-peak (mặc định 19 UTC = 02:00 ICT).
+    - `runDataGovernanceMaintenance` đã nối flow archive + prune + summary stats.
+  - [x] Runtime policy:
+    - thêm `auditHotRetentionMonths` default `12` vào `data_governance_backup`.
+    - expose runtime field qua settings runtime service và settings center.
+  - [x] API audit hợp nhất hot+cold:
+    - `GET /audit/logs` + `GET /audit/objects/:entityType/:entityId/history` nhận `includeArchived`.
+    - `pageInfo` bổ sung `tier: hot|cold|mixed` + `coldScanStats`.
+    - guard cold query:
+      - nếu chạm cold tier bắt buộc có `from/to`.
+      - giới hạn `AUDIT_COLD_QUERY_MAX_DAYS` (default 31).
+    - merge sắp xếp chuẩn `createdAt desc, id desc`.
+  - [x] UI audit:
+    - chuyển sang cursor pagination + load-more (không render dồn toàn bộ).
+    - badge nguồn dữ liệu từng dòng (`Hot`/`Archive`).
+    - hiển thị trạng thái tra cứu archive và guidance khi thiếu `from/to`.
+  - [x] VM deploy:
+    - thêm service `minio` trong `docker-compose`.
+    - bổ sung env/minio/audit archive vào `config/.env.example`.
+    - mở rộng inject env ở `deploy-vm.yml` + `scripts/deploy/deploy-from-runner.sh`.
+  - [x] Governance docs:
+    - ADR mới: `docs/decisions/ADR-022-AUDIT-HOT-COLD-TIER-MINIO-VM.md`.
+    - cập nhật runbook: `docs/deployment/VM_AUTODEPLOY.md`.
+    - cập nhật specs/architecture: `PROJECT_OVERVIEW.md`, `SCALING_DESIGN.md`.
+  - [ ] Verify full regression API/Web trong session hiện tại (lint/build/test targeted).
+
+### Task ID: RETAIL-CORE-006
+- Tên: Hoàn thiện CRM-Sales-Finance Core Flow (Operations Boards + ERP transitions)
+- Mục tiêu:
+  - Bỏ toàn bộ placeholder action cho 3 nút tạo chính và nối API thật.
+  - Chuẩn hóa luồng Sales -> Finance theo rule `APPROVED order` + `1 order -> 1 invoice`.
+  - Chốt migration gate theo `prisma migrate deploy` trước healthcheck.
+- Tiến độ:
+  - [x] DB + migration:
+    - bổ sung relation `Invoice.orderId` + unique tenant scoped (`@@unique([tenant_Id, orderId])`).
+    - tạo migration `20260331190000_add_invoice_order_link_core_flow`.
+    - local DB sync: resolve drift migration cũ + apply toàn bộ migration pending bằng `migrate deploy`.
+    - verify `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` => `Database schema is up to date`.
+  - [x] Deploy pipeline:
+    - `scripts/deploy/deploy-from-runner.sh` chạy `prisma migrate deploy` trước khi start `api/web`.
+    - update docs checklist tại `docs/deployment/VM_AUTODEPLOY.md`.
+  - [x] API CRM/Sales/Finance:
+    - `GET /crm/taxonomy`.
+    - `POST /sales/orders/:id/approve`, `POST /sales/orders/:id/reject`.
+    - DTO validation chặt cho `POST/PATCH /sales/orders`.
+    - `POST /finance/invoices/from-order` + guard `order APPROVED` + chặn duplicate invoice.
+    - invoice list/detail trả thêm `orderId/orderNo`.
+  - [x] Web Operations Boards:
+    - CRM: nút `Khách hàng` mở form tạo thật + taxonomy runtime cho stage/source.
+    - Sales: tạo đơn nhiều line items + approve/reject + xuất hóa đơn từ order.
+    - Finance: tạo hóa đơn thủ công + issue/approve + ghi nhận thanh toán từ panel.
+    - UX: hiển thị success/error banner, disable action theo quyền/trạng thái để tránh click im lặng.
+  - [x] Hotfix UX chi tiết khách hàng:
+    - panel chi tiết khi click tên khách hàng đã có mode chỉnh sửa thật và lưu qua `PATCH /crm/customers/:id`.
+    - root cause trước đó: nút `Chỉnh sửa hồ sơ` bị disable nên user không thể cập nhật từ panel.
+  - [x] Test/verify:
+    - `npm run test --workspace @erp/api -- test/sales.service.test.ts test/finance.service.test.ts test/crm.api-flow.test.ts` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts` ✅
+  - [ ] Trigger deploy từ session hiện tại:
+    - blocked do môi trường không có `gh` CLI + không có GitHub token/auth để dispatch workflow từ máy agent.
+    - ghi nhận thêm: repo hiện chỉ có workflow `deploy-vm.yml` chạy runner `vm-prod`, chưa có job/workflow staging riêng.
+  - [x] ADR:
+    - `docs/decisions/ADR-020-CRM-SALES-FINANCE-CORE-ORDER-INVOICE-LIFECYCLE.md`
+  - [ ] Chờ UAT nghiệp vụ thực tế cho full flow tại môi trường staging/prod.
+
+### Task ID: RETAIL-SETTINGS-002
+- Tên: Enforce runtime 100% cho Settings Center Enterprise
+- Mục tiêu:
+  - Mọi thay đổi settings phải tác động hành vi runtime ngay.
+  - Settings Center là source-of-truth, ENV chỉ fallback.
+  - Module disabled bị chặn nhất quán ở web và API.
+- Tiến độ:
+  - [x] Bổ sung migration runtime enforcement:
+    - `User` MFA/lockout fields.
+    - `NotificationDispatch` + `Notification.templateVersion`.
+    - `Invoice`/`JournalEntry` numbering metadata.
+    - `PurchaseOrder`/`Shipment` warehouse code.
+  - [x] Hoàn thiện runtime precedence integrations:
+    - `zalo.webhookSecretRef` + allowlist.
+    - resolver settings-first, ENV fallback.
+  - [x] Enforce runtime format trên web boards theo `locale_calendar`.
+  - [x] Settings Center UI hiển thị runtime applied status (RT/NRT + loadedAt).
+  - [x] Seed/backfill demo cho settings domains + numbering counters + dispatch samples.
+  - [x] Regression pass:
+    - `npm run test --workspace @erp/api` ✅ (66/66)
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/web` ✅
+  - [x] ADR runtime enforcement:
+    - `docs/decisions/ADR-017-RUNTIME-ENFORCEMENT-SETTINGS-CENTER.md`
+  - [x] Hotfix lệch `reports` giữa Settings Center và Dashboard:
+    - `Settings Center` đồng bộ danh sách module từ `@erp/shared` (`ERP_MODULES`, loại `settings`) cho `org_profile.enabledModules` và `approval_matrix`.
+    - Gỡ toàn bộ preset trong Settings Center (config + UI + CSS preset styles).
+    - Backend normalize `org_profile.enabledModules` (lowercase + dedupe + filter runtime modules hợp lệ) tại policy/runtime/legacy settings services.
+    - Dashboard pre-check runtime module và hiển thị warning thân thiện khi `reports` tắt (không gọi `/reports/overview`).
+    - Test bổ sung:
+      - API: `settings-policy.service.test.ts` (normalize/filter enabledModules).
+      - E2E: `settings-center-reports.spec.ts`, `dashboard-reports-availability.spec.ts`.
+    - Verify:
+      - `npm run test --workspace @erp/api -- settings-policy.service.test.ts` ✅
+      - `npm run lint --workspace @erp/api` ✅
+      - `npm run build --workspace @erp/api` ✅
+      - `npm run lint --workspace @erp/web` ✅
+      - `npm run build --workspace @erp/web` ✅
+      - `npx playwright test -c apps/web/e2e/playwright.reports.config.ts apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/dashboard-reports-availability.spec.ts` ✅ (config tạm cổng `3110`, đã xóa sau verify)
+  - [ ] Chờ UAT nghiệp vụ production-like cho toàn bộ 12 domain policy.
+
+### Task ID: RETAIL-HR-004
+- Tên: Xây ATS pipeline tuyển dụng thực tế cho HR Recruitment
+- Mục tiêu:
+  - Thay CRUD tuyển dụng đơn giản bằng pipeline ATS có stage chuẩn, lịch sử audit, interview/offer workflow và convert-to-employee có điều kiện.
+  - Đặt trải nghiệm chính tại trang Tuyển dụng HR theo Kanban kéo-thả.
+- Tiến độ:
+  - [x] Mở rộng schema ATS:
+    - enums `RecruitmentStage`, `RecruitmentApplicationStatus`, `RecruitmentSource`, `RecruitmentInterviewStatus`, `RecruitmentOfferStatus`.
+    - models `RecruitmentRequisition`, `RecruitmentCandidate`, `RecruitmentApplication`, `RecruitmentStageHistory`, `RecruitmentInterview`, `RecruitmentOffer`.
+  - [x] Thêm migration + backfill từ `Recruitment` legacy sang ATS entities.
+  - [x] Triển khai API ATS dưới `/api/v1/hr/recruitment`:
+    - pipeline/metrics/application detail
+    - stage/status transitions
+    - interview create/update
+    - offer create/update/submit approval
+    - convert ứng viên sang employee.
+  - [x] Tích hợp Workflow Engine cho offer approval (`targetType=HR_RECRUITMENT_OFFER`).
+  - [x] Triển khai guard nghiệp vụ:
+    - chặn nhảy stage sai thứ tự
+    - reject/withdraw/reopen có kiểm soát
+    - chỉ cho HIRED/convert khi offer `APPROVED` + `ACCEPTED`.
+  - [x] Triển khai UI Kanban tuyển dụng chuyên dụng:
+    - filter global, candidate cards, detail drawer, timeline/interviews/offers actions.
+    - drag-drop stage, reject/withdraw/reopen, submit approval, convert-to-employee.
+  - [x] Tương thích ngược:
+    - giữ endpoint recruitment legacy trong migration window.
+  - [x] Test/verify:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/hr-recruitment-pipeline.api-flow.test.ts test/hr-recruitment.service.test.ts` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npx playwright test apps/web/e2e/tests/hr-recruitment-pipeline.spec.ts` ✅ (chạy bằng config tạm cổng `3110` vì `3100` bị process ngoài chiếm)
+  - [x] Runtime hotfix theo phản hồi user (Recruitment page lỗi `Cannot GET /api/v1/hr/recruitment/pipeline?limit=300&status=ACTIVE`):
+    - Root cause 1: API đang chạy process cũ (không reload code mới) nên thiếu route ATS pipeline.
+    - Root cause 2: DB local chưa sync schema ATS (`RecruitmentOffer` table missing).
+    - Fix đã áp dụng:
+      - restart API runtime để nạp route mới.
+      - chạy `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:push --workspace @erp/api`.
+      - nới validator endpoint pipeline bằng DTO riêng `RecruitmentPipelineQueryDto` (`limit` tối đa 500; hỗ trợ request `limit=300` từ web).
+    - Verify:
+      - `GET /api/v1/hr/recruitment/pipeline?limit=300&status=ACTIVE` => `200`.
+      - `npm run lint --workspace @erp/api` ✅
+  - [x] ADR:
+    - `docs/decisions/ADR-018-HR-ATS-PIPELINE-WORKFLOW-INTEGRATION.md`
+  - [ ] Chờ UAT nghiệp vụ tuyển dụng thực tế (board flow + approval + convert).
+
+### Task ID: RETAIL-HR-005
+- Tên: Nâng cấp trang Mục tiêu HR thành Goal Tracking Hub (KPI + Workflow + Hybrid realtime)
+- Mục tiêu:
+  - Đưa `/modules/hr/goals` thành trang mục tiêu chuyên dụng cho nhân viên/manager/director.
+  - Hỗ trợ lifecycle đăng ký -> submit duyệt -> active -> complete theo chuẩn ERP.
+  - Theo dõi tiến độ hybrid (`AUTO + MANUAL`) và theo dõi đa cấp `self|team|department|company`.
+- Tiến độ:
+  - [x] Mở rộng schema Goal tracking:
+    - thêm `trackingMode`, `autoCurrentValue`, `manualAdjustmentValue`.
+    - thêm liên kết workflow (`workflowDefinitionId`, `workflowInstanceId`) + mốc lifecycle (`submittedAt`, `approvedAt`, `rejectedAt`, `lastAutoSyncedAt`).
+    - bổ sung model `HrGoalMetricBinding` và `HrGoalTimeline`.
+  - [x] Mở rộng Sales Order để map KPI auto theo nhân viên:
+    - thêm `Order.employeeId` (nullable) + backfill best-effort từ `createdBy`.
+  - [x] API goals tracking chuyên dụng:
+    - `GET /api/v1/hr/goals/tracker`
+    - `GET /api/v1/hr/goals/overview`
+    - `GET /api/v1/hr/goals/:id/timeline`
+    - `POST /api/v1/hr/goals/:id/submit-approval`
+    - `POST /api/v1/hr/goals/:id/recompute-auto`
+    - `POST /api/v1/hr/goals/recompute-auto`
+  - [x] Luồng workflow + sync trạng thái goal:
+    - submit duyệt tạo workflow instance `targetType=HR_GOAL`.
+    - sync `PENDING -> ACTIVE/REJECTED` theo trạng thái workflow.
+  - [x] Hybrid progress engine:
+    - công thức cố định phase 1: `effectiveCurrent = autoCurrentValue + manualAdjustmentValue`.
+    - tự clamp `%` và auto complete khi đạt target.
+  - [x] Auto metric adapters phase 1:
+    - `HR_ATTENDANCE`: `on_time_days`, `attendance_days`, `overtime_minutes`.
+    - `HR_RECRUITMENT`: `hired_count`, `offer_approved_count`.
+    - `HR_PERFORMANCE`: `avg_score`.
+    - `SALES`: `order_count`, `order_amount_sum`.
+  - [x] UI goals chuyên dụng tại `/modules/hr/goals`:
+    - scope switch, global filters, status board, detail drawer timeline.
+    - tạo goal, submit duyệt, update manual adjustment.
+    - polling realtime 10s + pause/resume + manual refresh.
+  - [x] Test/verify:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test --workspace @erp/api -- test/hr-v1.api-flow.test.ts test/hr.service.test.ts` ✅
+    - `npx playwright test -c apps/web/e2e/playwright.goals.config.ts apps/web/e2e/tests/hr-goals-tracking-board.spec.ts` ✅ (chạy bằng config tạm cổng `3110`; đã xóa file config tạm sau verify)
+  - [x] ADR:
+    - `docs/decisions/ADR-019-HR-GOALS-TRACKING-WORKFLOW-HYBRID.md`
+  - [ ] Chờ UAT nghiệp vụ thực tế cho phân quyền scope self/team/department/company với dữ liệu vận hành thật.
+
 ### Task ID: RETAIL-CRM-004
 - Tên: Bảo mật hóa hệ thống Đa thuê (SaaS Hardening)
 - Mục tiêu:
@@ -15,13 +288,143 @@
   - Chuẩn hóa cấu hình bí mật (Secrets) tránh lộ lọt.
 - Tiến độ:
   - [x] Harden `resolveTenantIdFromRequest` (JWT priority)
-  - [x] Harden `JwtAuthGuard` (CLS context sync + default Auth true)
+  - [x] Harden `JwtAuthGuard` (CLS context sync + secure default theo tenancy mode)
   - [x] Harden Zalo Webhook signature verification (Strict mode)
   - [x] Harden Prisma extension (Payload override protection)
   - [x] Clean up `.env` and `docker-compose.yml` (Placeholders for secrets)
   - [x] Verify full pipeline `npm run quality:security` (35 tests pass)
   - [x] Initialize Git repository and Push to `https://github.com/thaihuutham/ERP_GOIUUDAI.git`
   - [x] Fix CI pipeline failure (missing Prisma Client generation)
+  - [x] Khóa MVP single-tenant:
+    - Thêm `TENANCY_MODE=single` (mặc định) và force tenant runtime về `DEFAULT_TENANT_ID`.
+    - Guard từ chối JWT tenant khác `GOIUUDAI` trong single mode.
+    - Reseed demo data và xác nhận toàn bộ bảng chỉ còn tenant `GOIUUDAI`.
+    - Bổ sung ADR-011 cho quyết định kiến trúc single-tenant tạm thời.
+  - [x] Fix triệt để lỗi UI `Request failed (401)`:
+    - Kiểm tra smoke toàn bộ 48 endpoint được web sử dụng -> trả `200` với tenant header `GOIUUDAI` (không token ở MVP).
+    - Chuẩn hóa mọi default tenant runtime/config về `GOIUUDAI` (`docker-compose`, `.env.example`, Prisma fallback, token script).
+
+### Task ID: RETAIL-WEB-006
+- Tên: Đồng bộ UI ERP theo phong cách TwentyCRM (giữ palette xanh lá hiện tại)
+- Mục tiêu:
+  - Chuẩn hóa shell layout trái/phải theo kiểu workspace.
+  - Làm mới bộ style table/form/button để nhất quán toàn hệ thống.
+  - Chỉ áp dụng các trường đã có trong ERP, không mở rộng business scope.
+- Tiến độ:
+  - [x] Refactor `AppShell` theo mô hình sidebar + workspace section + quick actions.
+  - [x] Apply theme overrides trong `globals.css` theo hướng tối giản, data-centric.
+  - [x] Refactor `StandardDataTable` để dùng class-based styling đồng nhất.
+  - [x] Tinh chỉnh dashboard trang chủ (`HomeDashboard`) theo ngôn ngữ mới.
+  - [x] Verify compile/lint web: `npm run lint --workspace @erp/web`, `npm run build --workspace @erp/web`.
+  - [x] Bỏ quick actions `Search` + `Settings` ở sidebar theo feedback UAT; chuyển ô tìm kiếm sang toolbar phải.
+  - [x] Tách nhóm menu Zalo riêng:
+    - Gom trang Zalo vào nhóm `ZALO Tự động`.
+    - Đặt nhóm ngay dưới `Dự án` trên sidebar.
+    - Link nhóm trỏ `'/modules/crm/conversations'` (Inbox hội thoại).
+  - [x] Seed lại dữ liệu demo liên kết chéo toàn hệ thống bằng `npm run seed:demo --workspace @erp/api` (100+ records/module chính).
+  - [x] Fix web tenant header để dashboard/module gọi đúng tenant seed data (`GOIUUDAI`) thay vì tenant rỗng.
+  - [x] Security follow-up audit và vá cấu hình:
+    - Chuẩn hóa `envFilePath` để API đọc đúng `.env` theo cwd.
+    - Harden tenant resolver (JWT priority + multi-header compatibility).
+    - Harden tenant resolver thêm lớp verify JWT chữ ký ở middleware (không tin bearer token giả trên route public).
+    - Khóa chặt Prisma extension không cho override `tenant_Id` ở where unique/upsert.
+    - Nâng secure defaults trong `config/.env.example` và `docker-compose.yml` (`JWT_SECRET` required).
+  - [x] Sửa UX click mở chi tiết bảng dữ liệu:
+    - Bỏ `onClick` trực tiếp trên toàn bộ `<tr>` để không chặn thao tác copy text/SĐT.
+    - Chỉ mở chi tiết khi bấm cột link chính ở `StandardDataTable` và các bảng custom CRM/Conversations.
+  - [x] Sửa khoảng trống lớn ở sidebar:
+    - Root cause: `.side-menu` dùng grid `auto auto 1fr`, phần title `WORKSPACE` bị rơi vào hàng `1fr` nên đẩy menu xuống dưới.
+    - Fix: đổi `.side-menu` sang flex-column và `.side-nav` chiếm phần còn lại bằng `flex: 1`.
+  - [x] Fix triệt để lỗi UI mất style tái phát (`/_next/static/css/app/layout.css` trả `404`):
+    - Root cause: nhiều `next dev` process dùng chung thư mục `.next` (web runtime + e2e runtime), gây collision static asset/manifest.
+    - Preventive fix: tách `distDir` theo dev instance trong `apps/web/next.config.mjs` (`.next-dev-web`, `.next-dev-e2e*`), chuẩn hóa script chạy bằng `NEXT_DEV_INSTANCE` (`apps/web/package.json`, `apps/web/e2e/playwright.config.ts`).
+    - Hygiene fix: ignore cache dev instance tại `.gitignore` (`apps/web/.next-dev-*/`).
+    - Verify: chạy song song runtime 3000 + 3110, CSS endpoint đều `200`.
+  - [x] Runtime follow-up theo phản hồi user (`ERR_CONNECTION_REFUSED` tại `localhost:3000`):
+    - Xác nhận root cause phiên vận hành: web process đã tắt, cổng `3000` không còn listener.
+    - Khởi động lại `npm run dev --workspace @erp/web` dưới `nohup`.
+    - Verify sau restart: `GET /` = `200`, CSS `/_next/static/css/app/layout.css?v=...` = `200`, log web ổn định.
+    - Bổ sung vận hành: do môi trường agent cleanup process nền sau mỗi lệnh, dùng phiên TTY live để giữ runtime (`session_id=28193`) và verify lại `3000`/CSS đều `200`.
+  - [ ] Chờ user UAT để chốt vòng fine-tune spacing/typography.
+
+### Task ID: RETAIL-SEARCH-002
+- Tên: Triển khai Level 2 Hybrid Search (Meilisearch + PostgreSQL fallback)
+- Mục tiêu:
+  - Nâng chất lượng tìm kiếm cho CRM/Sales/Catalog mà không đổi API contract hiện có.
+  - Bổ sung vận hành reindex + status endpoint để rollout an toàn theo feature flag.
+- Tiến độ:
+  - [x] Tạo ADR-012 cho quyết định kiến trúc Level 2 Hybrid Search.
+  - [x] Bổ sung SearchModule (`apps/api/src/modules/search`) với:
+    - index schema cho `customers`, `orders`, `products` (searchable/filterable/sortable).
+    - read-side search theo ranked IDs + filter tenant.
+    - write-side sync best-effort (không fail transaction chính khi Meili lỗi).
+    - reindex toàn phần theo entity (`customers|orders|products|all`).
+  - [x] Tích hợp hybrid search vào list API:
+    - `GET /crm/customers`
+    - `GET /sales/orders`
+    - `GET /catalog/products`
+    - Quy tắc: `q` + `SEARCH_ENGINE=meili_hybrid` + không có `cursor` => dùng Meili; lỗi/timeout => fallback SQL.
+  - [x] Tích hợp write-sync sau các luồng mutate chính:
+    - CRM customer create/update/merge và các điểm update stage/tag liên quan.
+    - Sales order create/update/approval decision.
+    - Catalog product create/update/archive/setPricePolicy.
+  - [x] Thêm API quản trị search trong Settings:
+    - `GET /settings/search/status`
+    - `POST /settings/search/reindex` với payload `{"entity":"customers|orders|products|all"}`
+  - [x] Thêm CLI reindex:
+    - `npm run search:reindex --workspace @erp/api -- --entity=all`
+  - [x] Cập nhật deploy/env:
+    - `.github/workflows/deploy-vm.yml`
+    - `scripts/deploy/deploy-from-runner.sh`
+    - `docker-compose.yml` (thêm service `meilisearch`)
+    - `config/.env.example`, `docs/deployment/VM_AUTODEPLOY.md`
+  - [x] Verify kỹ thuật:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/search.service.test.ts test/search-hybrid.api-flow.test.ts test/catalog.service.test.ts` ✅
+  - [ ] Chờ bật `SEARCH_ENGINE=meili_hybrid` ở môi trường deploy + theo dõi UAT 24-48h.
+
+### Task ID: RETAIL-SETTINGS-001
+- Tên: Triển khai Settings Center Enterprise theo domain policy
+- Mục tiêu:
+  - Tách cấu hình hệ thống theo domain chuẩn hóa `settings.<domain>.v1`.
+  - Bổ sung kiểm soát thay đổi enterprise: audit trail, snapshot/restore, validate/dry-run.
+  - Giữ tương thích endpoint/key cũ trong migration window.
+  - Bảo mật secret tuyệt đối: không persist plaintext trong DB.
+- Tiến độ:
+  - [x] Tạo `SettingsPolicyService` + domain registry/defaults cho 12 domain bắt buộc.
+  - [x] Bổ sung API Settings Center:
+    - `GET /settings/center`
+    - `GET|PUT /settings/domains/:domain`
+    - `POST /settings/domains/:domain/validate`
+    - `POST /settings/domains/:domain/test-connection`
+    - `GET /settings/audit`
+    - `POST /settings/snapshots`, `GET /settings/snapshots`, `POST /settings/snapshots/:id/restore`
+  - [x] Triển khai audit metadata (`who/when/domain/changedPaths/beforeHash/afterHash/reason/requestId`).
+  - [x] Triển khai snapshot + rollback theo domain.
+  - [x] Triển khai `dryRun` và validate flow trước commit.
+  - [x] Triển khai secret allowlist + runtime resolver env/secret store; sanitize plaintext secret.
+  - [x] Triển khai bridge tương thích key legacy:
+    - `system_config` <-> domain settings
+    - `order_settings` <-> `sales_crm_policies.orderSettings`
+    - `finance_period_locks` <-> `finance_controls.postingPeriods.lockedPeriods`
+  - [x] Chuyển consumer service:
+    - Sales đọc policy qua `SettingsPolicyService`
+    - Finance lock periods qua `SettingsPolicyService` (vẫn sync key cũ)
+  - [x] Tạo UI Settings Center chuyên biệt tại `/modules/settings` (không dùng generic module screen):
+    - domain navigation
+    - onboarding checklist
+    - diff preview + reason bắt buộc khi save
+    - validate/test connection
+    - audit timeline + snapshot/restore
+  - [x] Viết ADR kiến trúc: `docs/decisions/ADR-013-SETTINGS-CENTER-ENTERPRISE-DOMAIN-POLICY.md`
+  - [x] Verify kỹ thuật:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- finance.service.test.ts settings-policy.service.test.ts` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - [ ] Chờ UAT nghiệp vụ thực tế cho luồng cấu hình domain + rollback.
 
 ## Completed Tasks
 ### Task ID: RETAIL-CRM-002
@@ -34,6 +437,184 @@
 
 ## Next Up
 1. Set đầy đủ GitHub Secrets/Variables theo runbook mới, sau đó chạy `deploy-vm` (workflow_dispatch) để xác nhận rollout thực tế.
-2. Chạy `scripts/deploy/smoke-crm-conversations.sh` trên môi trường đã deploy để verify nghiệp vụ thật với hệ thống bảo mật mới.
-3. Theo dõi release upstream Nest/Prisma để gỡ dần `npm overrides` khi bản chính thức đã vá CVE.
-4. Nếu cần import/xuất chuẩn `.xlsx` (không qua CSV), bổ sung endpoint/import service chuyên dụng và worker validate dữ liệu theo batch.
+2. Reindex Meili lần đầu trên môi trường deploy:
+   - `npm run search:reindex --workspace @erp/api -- --entity=all`
+   - kiểm tra `GET /api/v1/settings/search/status`.
+3. Bật `SEARCH_ENGINE=meili_hybrid`, giữ `MEILI_ENABLE_WRITE_SYNC=false` trong giai đoạn theo dõi đầu; sau UAT ổn định thì bật write-sync.
+4. UAT Settings Center:
+   - cập nhật từng domain theo checklist vận hành
+   - verify audit trail + snapshot restore
+   - verify endpoint cũ (`/settings/config`, `/settings/search/*`, `/settings/bhtot/*`) còn tương thích.
+5. Chạy `scripts/deploy/smoke-crm-conversations.sh` trên môi trường đã deploy để verify nghiệp vụ CRM/Zalo thật.
+6. Theo dõi release upstream Nest/Prisma để gỡ dần `npm overrides` khi bản chính thức đã vá CVE.
+
+### Update 2026-03-30 20:38 (RETAIL-SETTINGS-001)
+- [x] Chuyển Settings Center UI từ JSON editor sang form nghiệp vụ no-JSON cho đủ 12 domain.
+- [x] Thêm mapper merge payload gốc để không mất unknown keys khi save từ form.
+- [x] Thêm save reason theo `reasonTemplate` + `reasonNote` (compose thành audit reason ở backend).
+- [x] Mở rộng `access_security` với `settingsEditorPolicy` (`domainRoleMap`, `userDomainMap`).
+- [x] Enforce quyền sửa domain theo policy ở `SettingsPolicyService` (ADMIN fallback, explicit grant cho non-admin, domain nhạy cảm require explicit).
+- [x] Bổ sung ADR: `docs/decisions/ADR-014-SETTINGS-CENTER-NO-JSON-UX-EDITOR-POLICY.md`.
+- [x] Verify:
+  - `npm --prefix apps/web run lint` ✅
+  - `npm --prefix apps/web run build` ✅
+  - `npm --prefix apps/api run lint` ✅
+  - `npm --prefix apps/api run test -- settings-policy.service.test.ts` ✅
+- [x] Follow-up: xử lý riêng batch integration test đang fail 401/token ngoài phạm vi task này.
+
+### Update 2026-03-30 20:56 (RETAIL-SETTINGS-001 Follow-up)
+- [x] Chuẩn hóa auth/tenant test harness cho integration API theo MVP single-tenant:
+  - thêm helper dùng chung `apps/api/test/auth-test.helper.ts`
+  - refactor 6 suite integration (`crm`, `scm`, `hr`, `conversations`, `conversation-quality`, `smoke`) dùng runtime tenant `GOIUUDAI`.
+- [x] Bổ sung regression test auth:
+  - `smoke.test.ts`: token tenant mismatch trong single-tenant trả `401`.
+- [x] Đồng bộ default deploy/smoke theo MVP:
+  - `.github/workflows/deploy-vm.yml`: mặc định `AUTH_ENABLED=false`, `DEFAULT_TENANT_ID=GOIUUDAI`, thêm `TENANCY_MODE=single`.
+  - `scripts/deploy/deploy-from-runner.sh`: nhận + ghi `TENANCY_MODE`; default runtime mvp-safe.
+  - `scripts/deploy/smoke-crm-conversations.sh`: default auth/tenant đọc từ env runtime (`AUTH_ENABLED`, `DEFAULT_TENANT_ID`) với fallback mvp-safe.
+- [x] Cập nhật tài liệu:
+  - `docs/deployment/VM_AUTODEPLOY.md` phản ánh default mới và cách override.
+- [x] Verify hoàn tất:
+  - `npm --prefix apps/api run test` ✅ (`18/18` files, `48/48` tests)
+  - `npm --prefix apps/api run lint` ✅
+  - `bash -n scripts/deploy/deploy-from-runner.sh` ✅
+  - `bash -n scripts/deploy/smoke-crm-conversations.sh` ✅
+- [ ] Bước external còn chờ môi trường:
+  - chạy `deploy-vm` trên GitHub Actions với secrets/vars thật.
+  - chạy smoke script trên VM sau deploy để xác nhận OA outbound/AI quality end-to-end.
+
+### Update 2026-03-30 21:06 (Hotfix Settings 404 UX)
+- [x] Điều tra lỗi người dùng báo: `Request failed (404)` khi chỉnh settings.
+- [x] Xác nhận nguyên nhân gốc:
+  - API process đang chạy là bản cũ chưa có endpoint Settings Center (`/settings/center`, `/settings/domains/*`).
+  - Request save từ UI form mới gọi đúng endpoint nhưng bị `404 Not Found`.
+- [x] Thao tác runtime:
+  - restart API local bằng source mới (`npm --prefix apps/api run dev`) để nạp route Settings Center.
+  - verify endpoint hoạt động: `GET /settings/center` trả `200`, `PUT /settings/domains/org_profile` trả `200`.
+- [x] Cải thiện UX lỗi ở web:
+  - `apps/web/lib/api-client.ts`: parse được nested error message (`error.message`, `error.details.message`) thay vì luôn fallback `Request failed (status)`.
+  - `apps/web/components/settings-center.tsx`: map lỗi `404` endpoint settings thành thông báo rõ ràng:
+    - "API backend chưa cập nhật Settings Center (404 endpoint). Vui lòng khởi động lại dịch vụ API và thử lại."
+- [x] Verify:
+  - `npm --prefix apps/web run lint` ✅
+  - `GET /api/v1/settings/center` (`x-tenant-id: GOIUUDAI`) ✅ `200`
+  - `PUT /api/v1/settings/domains/org_profile` ✅ `200`
+
+### Update 2026-03-30 22:05 (RETAIL-IAM-001)
+- [x] Triển khai backend IAM + Org Chart + Permission engine:
+  - thêm `AuthModule`:
+    - `POST /api/v1/auth/login`
+    - `POST /api/v1/auth/refresh`
+    - `POST /api/v1/auth/logout`
+    - `POST /api/v1/auth/change-password`
+  - mở rộng lifecycle account `User`:
+    - `isActive`, `mustChangePassword`, `lastLoginAt`, `passwordChangedAt`, `passwordResetAt`
+  - thêm model:
+    - `OrgUnit`, `PositionPermissionRule`, `UserPermissionOverride`
+  - thêm `PermissionGuard` global sau `JwtAuthGuard` với deny-first + fallback `@Roles`.
+- [x] Triển khai endpoint Settings Enterprise mới:
+  - IAM: list/create/update/reset password user
+  - Organization: tree/create/update/move org unit
+  - Permissions: get/put position rules, put user overrides, get effective permissions
+- [x] Mở rộng schema domain `access_security`:
+  - thêm `permissionPolicy` (`enabled`, `conflictPolicy`, `superAdminIds`, `superAdminEmails`)
+  - giữ tương thích `settingsEditorPolicy`.
+- [x] Cập nhật web:
+  - thêm auth runtime qua token thật khi `NEXT_PUBLIC_AUTH_ENABLED=true`:
+    - login gate
+    - bắt buộc đổi mật khẩu tạm lần đầu
+    - ẩn role switch localStorage ở auth mode
+  - Settings Center no-JSON thêm panel:
+    - org tree (create/move)
+    - tạo nhân viên + tài khoản IAM
+    - ma trận quyền vị trí + override user (5 action)
+- [x] Bổ sung ADR:
+  - `docs/decisions/ADR-015-SETTINGS-IAM-ORG-PERMISSION-ENGINE.md`
+- [x] Verify:
+  - `npm --prefix apps/api run lint` ✅
+  - `npm --prefix apps/api run build` ✅
+  - `npm --prefix apps/api run test` ✅ (`24/24` files, `61/61` tests)
+  - `npm --prefix apps/web run build` ✅
+  - `npm --prefix apps/web run lint` ✅
+  - `curl http://localhost:3000` ✅ (`200`)
+  - `curl http://localhost:3001/api/v1/health` ✅ (`200`)
+- [ ] Chờ UAT nghiệp vụ IAM/org/permission với dữ liệu thật trước khi bật auth/permission ở production.
+
+### Update 2026-03-30 22:49 (RETAIL-HR-003)
+- [x] Triển khai menu cây `Nhân sự` trong sidebar:
+  - parent click: toggle + điều hướng `/modules/hr`
+  - auto-open subtree khi ở nhánh `/modules/hr/*`
+  - đủ 9 child routes theo nhãn yêu cầu.
+- [x] Bổ sung route strategy HR:
+  - giữ nguyên `/modules/hr` là dashboard tổng quan
+  - thêm dynamic route `apps/web/app/modules/hr/[section]/page.tsx`
+  - thêm map section dùng chung `apps/web/lib/hr-sections.ts`.
+- [x] Bổ sung UI v1 cho 3 mục mới qua module definitions + workbench filter/action:
+  - `personal-income-tax`
+  - `goals`
+  - `employee-info`
+- [x] Bổ sung backend v1 cho 3 domain mới:
+  - Prisma: `PersonalIncomeTaxProfile`, `PersonalIncomeTaxRecord`, `HrGoal`
+  - APIs:
+    - `GET/POST/PATCH /api/v1/hr/personal-income-tax/profiles`
+    - `GET/POST/PATCH /api/v1/hr/personal-income-tax/records`
+    - `POST /api/v1/hr/personal-income-tax/records/generate`
+    - `GET/POST/PATCH /api/v1/hr/goals`
+    - `PATCH /api/v1/hr/goals/:id/progress`
+    - `GET /api/v1/hr/employee-info`
+    - `GET/PATCH /api/v1/hr/employee-info/:id`
+- [x] Seed dữ liệu demo mới:
+  - PIT profiles/records + goals.
+- [x] Test/verify:
+  - `npm run prisma:generate --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- hr.service.test.ts hr-v1.api-flow.test.ts hr.api-flow.test.ts` ✅
+  - `npm run test --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+- [x] Tài liệu quyết định:
+  - thêm ADR `docs/decisions/ADR-016-HR-SIDEBAR-TREE-PIT-GOALS-EMPLOYEE-INFO-V1.md`.
+- [ ] Chờ UAT nghiệp vụ HR nội bộ cho 3 màn hình mới trước khi mở rộng workflow phê duyệt/compliance.
+
+### Update 2026-03-31 09:22 (Runtime Hotfix - localhost client exception)
+- [x] Điều tra lỗi runtime web user report:
+  - thông báo: `Application error: a client-side exception has occurred while loading localhost`.
+- [x] Reproduce và xác định root cause:
+  - Playwright bắt được `Loading chunk ... failed` (chunk JS 404).
+  - nguyên nhân: web server cổng `3000` đang phục vụ bundle stale/không đồng bộ.
+- [x] Xử lý runtime:
+  - restart web server bằng `npm run dev --workspace @erp/web`.
+  - verify routes `/`, `/modules/hr`, `/modules/hr/personal-income-tax` đều `200`, không còn `pageerror`.
+- [x] Follow-up API để tránh lỗi phụ ở trang HR mới:
+  - phát hiện API `3001` trả `404/500` endpoint PIT do DB local thiếu bảng mới.
+  - restart API `npm run dev --workspace @erp/api`.
+  - sync schema local bằng `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:push --workspace @erp/api`.
+  - verify `GET /api/v1/hr/personal-income-tax/records?limit=20` trả `200`.
+
+### Update 2026-03-31 11:12 (Runtime Hotfix - SCM page unstyled)
+- [x] Điều tra report giao diện thô tại `http://localhost:3000/modules/scm`.
+- [x] Xác nhận root cause runtime:
+  - HTML render đúng nhưng CSS không được áp tại thời điểm lỗi (dev build stale).
+- [x] Xử lý:
+  - clear `apps/web/.next`, restart web dev server.
+  - verify `GET /_next/static/css/app/layout.css` trả `200`.
+  - verify UI bằng Playwright screenshot (`/tmp/scm-fixed.png`) hiển thị đúng style/layout.
+- [x] Scope session: không thay đổi source code, chỉ runtime recovery.
+
+### Update 2026-03-31 13:18 (RETAIL-HR-004)
+- [x] Hoàn thiện ATS pipeline tuyển dụng thực tế cho module HR:
+  - bổ sung schema + migration/backfill ATS.
+  - thêm API recruitment pipeline/metrics/stage/status/interview/offer/convert.
+  - tích hợp workflow approval cho offer.
+  - thêm UI Kanban chuyên dụng tại trang tuyển dụng HR.
+- [x] Sửa toàn bộ lỗi TypeScript sau khi mở rộng ATS (`hr.service.ts` enum narrowing + approval payload typing).
+- [x] Verify kỹ thuật:
+  - `npm run prisma:generate --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/hr-recruitment-pipeline.api-flow.test.ts test/hr-recruitment.service.test.ts` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+- [x] Chốt ADR kiến trúc:
+  - `docs/decisions/ADR-018-HR-ATS-PIPELINE-WORKFLOW-INTEGRATION.md`.

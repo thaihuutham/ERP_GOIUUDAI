@@ -46,9 +46,27 @@ function makePrismaMock() {
   };
 }
 
+function makeRuntimeSettingsMock() {
+  return {
+    getCatalogScmPolicyRuntime: vi.fn().mockResolvedValue({
+      uomDefault: 'PCS',
+      priceListDefault: 'STANDARD',
+      warehouseDefault: 'MAIN',
+      replenishment: {
+        enabled: true,
+        minStockThreshold: 10
+      },
+      receiving: {
+        allowOverReceivePercent: 5
+      }
+    })
+  };
+}
+
 describe('ScmService', () => {
   it('rejects submit transition when PO is not in DRAFT', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
     prisma.client.purchaseOrder.findFirst.mockResolvedValue({
       id: 'po_1',
       lifecycleStatus: 'SUBMITTED',
@@ -56,7 +74,7 @@ describe('ScmService', () => {
       vendor: null,
       receipts: []
     });
-    const service = new ScmService(prisma as any);
+    const service = new ScmService(prisma as any, runtimeSettings as any);
 
     await expect(
       service.submitPurchaseOrder('po_1', { note: 'submit again' })
@@ -65,6 +83,7 @@ describe('ScmService', () => {
 
   it('marks PO as fully received when receipt sum reaches total amount', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
     prisma.client.purchaseOrder.findFirst.mockResolvedValue({
       id: 'po_2',
       lifecycleStatus: 'APPROVED',
@@ -78,7 +97,7 @@ describe('ScmService', () => {
       _sum: { receivedAmount: 100 }
     });
 
-    const service = new ScmService(prisma as any);
+    const service = new ScmService(prisma as any, runtimeSettings as any);
     const result = await service.receivePurchaseOrder('po_2', {
       receivedAmount: 100
     });
@@ -96,6 +115,7 @@ describe('ScmService', () => {
 
   it('returns 3-way match summary with expected variance', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
     prisma.client.purchaseOrder.findFirst.mockResolvedValue({
       id: 'po_3',
       poNo: 'PO-003',
@@ -112,7 +132,7 @@ describe('ScmService', () => {
       { totalAmount: 70 }
     ]);
 
-    const service = new ScmService(prisma as any);
+    const service = new ScmService(prisma as any, runtimeSettings as any);
     const result = await service.getPurchaseOrderThreeWayMatch('po_3');
 
     expect(result.variance.poVsReceipt).toBe(20);
@@ -121,6 +141,7 @@ describe('ScmService', () => {
 
   it('marks delivered shipment with on-time flag', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
     prisma.client.shipment.findFirst.mockResolvedValue({
       id: 'sh_1',
       lifecycleStatus: 'IN_TRANSIT',
@@ -129,7 +150,7 @@ describe('ScmService', () => {
       purchaseOrder: null
     });
 
-    const service = new ScmService(prisma as any);
+    const service = new ScmService(prisma as any, runtimeSettings as any);
     await service.deliverShipment('sh_1', { note: 'delivered' });
 
     expect(prisma.client.shipment.updateMany).toHaveBeenCalledWith(

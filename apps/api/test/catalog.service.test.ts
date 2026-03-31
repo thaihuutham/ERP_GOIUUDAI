@@ -19,6 +19,7 @@ function makePrismaMock() {
 describe('CatalogService', () => {
   it('archives product with soft-delete fields', async () => {
     const prisma = makePrismaMock();
+    const search = { syncProductUpsert: vi.fn().mockResolvedValue(undefined) };
     prisma.client.product.findFirst
       .mockResolvedValueOnce({
         id: 'prod_1',
@@ -31,7 +32,7 @@ describe('CatalogService', () => {
         archivedAt: new Date('2026-03-28T01:00:00.000Z')
       });
 
-    const service = new CatalogService(prisma as any);
+    const service = new CatalogService(prisma as any, search as any);
     const result = await service.archiveProduct('prod_1', {});
 
     expect(prisma.client.product.updateMany).toHaveBeenCalledWith(
@@ -44,10 +45,12 @@ describe('CatalogService', () => {
     );
     expect(result.status).toBe(GenericStatus.ARCHIVED);
     expect(result.archivedAt).toBeTruthy();
+    expect(search.syncProductUpsert).toHaveBeenCalled();
   });
 
   it('updates product pricing policy', async () => {
     const prisma = makePrismaMock();
+    const search = { syncProductUpsert: vi.fn().mockResolvedValue(undefined) };
     prisma.client.product.findFirst
       .mockResolvedValueOnce({
         id: 'prod_2',
@@ -61,7 +64,7 @@ describe('CatalogService', () => {
         pricePolicyCode: 'RETAIL_V2'
       });
 
-    const service = new CatalogService(prisma as any);
+    const service = new CatalogService(prisma as any, search as any);
     const result = await service.setPricePolicy('prod_2', {
       policyCode: 'RETAIL_V2',
       unitPrice: 149000
@@ -76,5 +79,6 @@ describe('CatalogService', () => {
       })
     );
     expect(result.pricePolicyCode).toBe('RETAIL_V2');
+    expect(search.syncProductUpsert).toHaveBeenCalled();
   });
 });

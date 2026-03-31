@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "NEXT_DEV_INSTANCE=${NEXT_DEV_INSTANCE:-web} next dev --port ${PORT:-3000}",
     "build": "next build",
     "start": "next start --port 3000",
     "lint": "tsc --noEmit"
@@ -12,6 +12,8 @@
   "dependencies": {
     "@erp/shared": "file:../../packages/shared",
     "@erp/ui": "file:../../packages/ui",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

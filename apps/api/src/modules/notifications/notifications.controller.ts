@@ -20,6 +20,11 @@ export class NotificationsController {
     return this.notificationsService.create(body);
   }
 
+  @Post('dispatch/run-due')
+  runDueDispatch(@Body() body: Record<string, unknown>) {
+    return this.notificationsService.runDueDispatch(body);
+  }
+
   @Post(':id/read')
   markRead(@Param('id') id: string) {
     return this.notificationsService.markRead(id);

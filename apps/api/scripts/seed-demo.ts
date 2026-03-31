@@ -47,6 +47,9 @@ const COUNTS = {
   trainings: 120,
   performances: 120,
   benefits: 120,
+  personalIncomeTaxProfiles: 120,
+  personalIncomeTaxRecords: 120,
+  goals: 120,
   accounts: 100,
   journalEntries: 120,
   budgetPlans: 120,
@@ -140,6 +143,9 @@ async function ensureTenant() {
 async function resetTenantData(tenantId: string) {
   const where: WithTenant = { tenant_Id: tenantId };
 
+  await prisma.hrGoal.deleteMany({ where });
+  await prisma.personalIncomeTaxRecord.deleteMany({ where });
+  await prisma.personalIncomeTaxProfile.deleteMany({ where });
   await prisma.hrEvent.deleteMany({ where });
   await prisma.payrollLineItem.deleteMany({ where });
   await prisma.customerMergeLog.deleteMany({ where });
@@ -179,6 +185,7 @@ async function resetTenantData(tenantId: string) {
   await prisma.performance.deleteMany({ where });
   await prisma.benefit.deleteMany({ where });
   await prisma.report.deleteMany({ where });
+  await prisma.notificationDispatch.deleteMany({ where });
   await prisma.notification.deleteMany({ where });
   await prisma.setting.deleteMany({ where });
   await prisma.user.deleteMany({ where });
@@ -212,6 +219,7 @@ async function seed() {
   const workflowTargets = ['ORDER', 'INVOICE', 'PROJECT'];
   const workflowSteps = ['TiepNhan', 'KiemTra', 'PheDuyet', 'HoanTat'];
   const reportTypes = ['doanh_thu', 'nhan_su', 'tai_chinh', 'ton_kho', 'du_an'];
+  const runtimeEnabledModules = modules.filter((moduleKey) => moduleKey !== 'settings');
   const employmentTypes = [EmploymentType.FULL_TIME, EmploymentType.PART_TIME, EmploymentType.CONTRACT, EmploymentType.INTERN];
   const contractTypes = ['XAC_DINH_THOI_HAN', 'KHONG_XAC_DINH_THOI_HAN', 'THU_VIEC'];
   const shiftTemplates = [
@@ -771,6 +779,108 @@ async function seed() {
   });
   await prisma.benefit.createMany({ data: benefitRows });
 
+  const taxProfileRows = Array.from({ length: COUNTS.personalIncomeTaxProfiles }, (_, idx) => {
+    const employee = employees[idx % employees.length];
+    const dependentCount = idx % 4;
+    return {
+      tenant_Id: TENANT_ID,
+      employeeId: employee.id,
+      taxCode: `MST${String(1300000000 + idx).slice(-10)}`,
+      personalDeduction: decimal(11_000_000),
+      dependentCount,
+      dependentDeduction: decimal(4_400_000),
+      insuranceDeduction: decimal(intBetween(200_000, 1_300_000)),
+      otherDeduction: decimal(intBetween(0, 400_000)),
+      taxRate: decimal(0.1),
+      status: idx % 18 === 0 ? GenericStatus.INACTIVE : GenericStatus.ACTIVE,
+      note: 'Hồ sơ thuế TNCN demo',
+      createdAt: randomPastDate(180),
+      updatedAt: new Date()
+    };
+  });
+  await prisma.personalIncomeTaxProfile.createMany({ data: taxProfileRows });
+  const taxProfiles = await prisma.personalIncomeTaxProfile.findMany({
+    where: { tenant_Id: TENANT_ID },
+    orderBy: { createdAt: 'asc' }
+  });
+  const taxProfileByEmployeeId = new Map(taxProfiles.map((profile) => [profile.employeeId, profile]));
+
+  const grossTaxableByPayrollId = new Map<string, number>();
+  for (const line of payrollLineRows) {
+    if (line.componentType !== PayrollComponentType.EARNING || !line.isTaxable) continue;
+    const amount = Number(line.amount ?? 0);
+    grossTaxableByPayrollId.set(line.payrollId, (grossTaxableByPayrollId.get(line.payrollId) ?? 0) + amount);
+  }
+
+  const taxRecordRows = payrollEntities.slice(0, COUNTS.personalIncomeTaxRecords).map((payroll, idx) => {
+    const profile = taxProfileByEmployeeId.get(payroll.employeeId) ?? null;
+    const grossTaxable = grossTaxableByPayrollId.get(payroll.id) ?? Number(payroll.grossSalary ?? 0);
+    const personalDeduction = Number(profile?.personalDeduction ?? 11_000_000);
+    const dependentCount = profile?.dependentCount ?? 0;
+    const dependentDeduction = Number(profile?.dependentDeduction ?? 4_400_000);
+    const insuranceDeduction = Number(profile?.insuranceDeduction ?? 0);
+    const otherDeduction = Number(profile?.otherDeduction ?? 0);
+    const deduction = personalDeduction + dependentCount * dependentDeduction + insuranceDeduction + otherDeduction;
+    const taxableIncome = Math.max(0, grossTaxable - deduction);
+    const taxRate = Number(profile?.taxRate ?? 0.1);
+    const taxAmount = taxableIncome * taxRate;
+    return {
+      tenant_Id: TENANT_ID,
+      employeeId: payroll.employeeId,
+      payrollId: payroll.id,
+      taxProfileId: profile?.id ?? null,
+      taxMonth: payroll.payMonth,
+      taxYear: payroll.payYear,
+      grossTaxable: decimal(grossTaxable),
+      deduction: decimal(deduction),
+      taxableIncome: decimal(taxableIncome),
+      taxRate: decimal(taxRate),
+      taxAmount: decimal(taxAmount),
+      status: idx % 3 === 0 ? GenericStatus.PENDING : GenericStatus.DRAFT,
+      note: 'Bản ghi thuế TNCN demo',
+      lockedAt: idx % 7 === 0 ? randomPastDate(45) : null,
+      createdAt: randomPastDate(80),
+      updatedAt: new Date()
+    };
+  });
+  await prisma.personalIncomeTaxRecord.createMany({ data: taxRecordRows });
+
+  const goalRows = Array.from({ length: COUNTS.goals }, (_, idx) => {
+    const employee = employees[idx % employees.length];
+    const targetValue = intBetween(80, 140);
+    const currentValue = intBetween(0, targetValue + 30);
+    const progressPercent = Math.min(100, Number(((currentValue / targetValue) * 100).toFixed(2)));
+    const startDate = new Date(2026, 0, 1);
+    const endDate = new Date(2026, 2, 31);
+    const status =
+      progressPercent >= 100
+        ? GenericStatus.APPROVED
+        : progressPercent > 0
+          ? GenericStatus.ACTIVE
+          : GenericStatus.PENDING;
+    return {
+      tenant_Id: TENANT_ID,
+      employeeId: employee.id,
+      goalCode: code(`${DEMO}-GOAL-`, idx + 1, 5),
+      title: `Mục tiêu nhân sự demo ${idx + 1}`,
+      description: `Theo dõi mục tiêu nhân sự kỳ Q${(idx % 4) + 1}/2026`,
+      period: pick(['Q1-2026', 'Q2-2026', 'Q3-2026', 'Q4-2026']),
+      targetValue: decimal(targetValue),
+      currentValue: decimal(currentValue),
+      progressPercent,
+      weight: Number((0.8 + random() * 0.7).toFixed(2)),
+      startDate,
+      endDate,
+      completedAt: progressPercent >= 100 ? randomPastDate(25) : null,
+      status,
+      note: 'Mục tiêu nhân sự demo',
+      createdBy: pick(approvers).id,
+      createdAt: randomPastDate(120),
+      updatedAt: new Date()
+    };
+  });
+  await prisma.hrGoal.createMany({ data: goalRows });
+
   const hrEventRows = Array.from({ length: COUNTS.hrEvents }, (_, idx) => {
     const employee = employees[idx % employees.length];
     const eventType = pick([
@@ -1255,7 +1365,7 @@ async function seed() {
     address: 'Thành phố Hồ Chí Minh',
     currency: 'VND',
     dateFormat: 'DD/MM/YYYY',
-    enabledModules: modules,
+    enabledModules: runtimeEnabledModules,
     orderSettings: {
       allowIncreaseWithoutApproval: true,
       requireApprovalForDecrease: true,
@@ -1304,6 +1414,107 @@ async function seed() {
         tenant_Id: TENANT_ID,
         settingKey: 'ui_theme',
         settingValue: { primaryColor: 'green', textWeight: 'light', language: 'vi' } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.org_profile.v1',
+        settingValue: {
+          companyName: systemConfig.companyName,
+          taxCode: systemConfig.taxCode,
+          address: systemConfig.address,
+          enabledModules: runtimeEnabledModules,
+          branding: { logoUrl: '', primaryColor: '#3f8f50' },
+          documentLayout: { invoiceTemplate: 'retail', showCompanySeal: true }
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.locale_calendar.v1',
+        settingValue: {
+          timezone: 'Asia/Ho_Chi_Minh',
+          dateFormat: 'DD/MM/YYYY',
+          numberFormat: 'vi-VN',
+          currency: 'VND',
+          firstDayOfWeek: 'monday',
+          fiscalYearStartMonth: 1
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.approval_matrix.v1',
+        settingValue: {
+          rules: [
+            { module: 'sales', minAmount: 0, approverRole: 'MANAGER' },
+            { module: 'finance', minAmount: 0, approverRole: 'MANAGER' },
+            { module: 'scm', minAmount: 0, approverRole: 'MANAGER' },
+            { module: 'hr', minAmount: 0, approverRole: 'MANAGER' }
+          ],
+          escalation: { enabled: true, slaHours: 24, escalateToRole: 'ADMIN' },
+          delegation: { enabled: true, maxDays: 14 }
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.finance_controls.v1',
+        settingValue: {
+          postingPeriods: {
+            lockedPeriods: ['2025-12'],
+            allowBackdateDays: 3
+          },
+          documentNumbering: {
+            invoicePrefix: 'INV',
+            orderPrefix: 'SO',
+            autoNumber: true
+          },
+          transactionCutoffHour: 23
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.catalog_scm_policies.v1',
+        settingValue: {
+          uomDefault: 'PCS',
+          priceListDefault: 'STANDARD',
+          warehouseDefault: 'MAIN',
+          replenishment: { enabled: true, minStockThreshold: 10 },
+          receiving: { allowOverReceivePercent: 5 }
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.notifications_templates.v1',
+        settingValue: {
+          templatesVersion: 'v1',
+          channelPolicy: { email: true, sms: false, zalo: true, inApp: true },
+          retry: { maxAttempts: 3, backoffSeconds: 30 }
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.data_governance_backup.v1',
+        settingValue: {
+          retentionDays: 365,
+          archiveAfterDays: 180,
+          backupCadence: 'daily',
+          lastBackupAt: new Date().toISOString(),
+          exportPolicy: { allowPiiExport: false, requireAdminApproval: true }
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.numbering.invoice.INV.counter',
+        settingValue: {
+          value: COUNTS.invoices + 1000,
+          updatedAt: new Date().toISOString()
+        } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.numbering.entry.JE.counter',
+        settingValue: {
+          value: COUNTS.journalEntries + 2000,
+          updatedAt: new Date().toISOString()
+        } as any
       }
     ]
   });
@@ -1313,11 +1524,67 @@ async function seed() {
     userId: pick(users).id,
     title: `Thông báo Demo ${idx + 1}`,
     content: `Nội dung thông báo demo #${idx + 1} cho kiểm thử phân hệ ERP.`,
+    templateVersion: idx % 2 === 0 ? 'v1' : 'v1-hotfix',
     isRead: idx % 3 === 0,
     createdAt: randomPastDate(80),
     updatedAt: new Date()
   }));
   await prisma.notification.createMany({ data: notificationRows });
+
+  const seededNotifications = await prisma.notification.findMany({
+    where: {
+      tenant_Id: TENANT_ID,
+      title: { startsWith: 'Thông báo Demo ' }
+    },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      userId: true,
+      templateVersion: true
+    }
+  });
+
+  if (seededNotifications.length > 0) {
+    const dispatchRows = seededNotifications.flatMap((notification, idx) => {
+      const basePayload = {
+        title: notification.title,
+        content: notification.content,
+        userId: notification.userId,
+        templateVersion: notification.templateVersion
+      } as const;
+      const primary = {
+        id: `ndp-${idx + 1}-inapp`,
+        tenant_Id: TENANT_ID,
+        notificationId: notification.id,
+        channel: 'IN_APP',
+        status: 'PENDING',
+        attemptCount: 0,
+        maxAttempts: 3,
+        nextRetryAt: null,
+        payloadJson: basePayload as any,
+        createdAt: randomPastDate(40),
+        updatedAt: new Date()
+      };
+      const secondary = {
+        id: `ndp-${idx + 1}-zalo`,
+        tenant_Id: TENANT_ID,
+        notificationId: notification.id,
+        channel: 'ZALO',
+        status: idx % 5 === 0 ? 'RETRY' : 'PENDING',
+        attemptCount: idx % 5 === 0 ? 1 : 0,
+        maxAttempts: 3,
+        nextRetryAt: idx % 5 === 0 ? randomFutureDate(new Date(), 2) : null,
+        payloadJson: basePayload as any,
+        createdAt: randomPastDate(40),
+        updatedAt: new Date()
+      };
+      return [primary, secondary];
+    });
+
+    await prisma.notificationDispatch.createMany({ data: dispatchRows as any });
+  }
 
   const customerOrderAggregate = new Map<
     string,
@@ -1396,6 +1663,9 @@ async function seed() {
     trainings: await prisma.training.count({ where: { tenant_Id: TENANT_ID } }),
     performances: await prisma.performance.count({ where: { tenant_Id: TENANT_ID } }),
     benefits: await prisma.benefit.count({ where: { tenant_Id: TENANT_ID } }),
+    personalIncomeTaxProfiles: await prisma.personalIncomeTaxProfile.count({ where: { tenant_Id: TENANT_ID } }),
+    personalIncomeTaxRecords: await prisma.personalIncomeTaxRecord.count({ where: { tenant_Id: TENANT_ID } }),
+    goals: await prisma.hrGoal.count({ where: { tenant_Id: TENANT_ID } }),
     attendance: await prisma.attendance.count({ where: { tenant_Id: TENANT_ID } }),
     leaveRequests: await prisma.leaveRequest.count({ where: { tenant_Id: TENANT_ID } }),
     payrolls: await prisma.payroll.count({ where: { tenant_Id: TENANT_ID } }),

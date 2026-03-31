@@ -66,7 +66,7 @@ export const createTenantPrismaExtension = (resolveTenantId: TenantResolver) =>
               const where = (nextArgs.where as Record<string, unknown> | undefined) ?? {};
               nextArgs.where = {
                 ...where,
-                tenant_Id: (where.tenant_Id as string | undefined) ?? tenantId
+                tenant_Id: tenantId
               };
             }
 
@@ -74,7 +74,7 @@ export const createTenantPrismaExtension = (resolveTenantId: TenantResolver) =>
               const where = (nextArgs.where as Record<string, unknown> | undefined) ?? {};
               nextArgs.where = {
                 ...where,
-                tenant_Id: (where.tenant_Id as string | undefined) ?? tenantId
+                tenant_Id: tenantId
               };
             }
 

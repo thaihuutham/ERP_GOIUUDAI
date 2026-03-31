@@ -1,12 +1,18 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { assertValidVietnamPhone, normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SearchService } from '../search/search.service';
 
 @Injectable()
 export class CrmService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(SearchService) private readonly search: SearchService,
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+  ) {}
 
   async listCustomers(
     query: PaginationQueryDto,
@@ -17,17 +23,54 @@ export class CrmService {
     const normalizedTag = this.cleanString(filters.tag).toLowerCase();
 
     const where: Prisma.CustomerWhereInput = {};
+    const normalizedStage = filters.stage ? this.cleanString(filters.stage).toUpperCase() : undefined;
+    const normalizedStatus = filters.status && filters.status !== 'ALL' ? filters.status : undefined;
 
-    if (filters.status && filters.status !== 'ALL') {
-      where.status = filters.status;
+    if (normalizedStatus) {
+      where.status = normalizedStatus;
     }
 
-    if (filters.stage) {
-      where.customerStage = this.cleanString(filters.stage).toUpperCase();
+    if (normalizedStage) {
+      where.customerStage = normalizedStage;
     }
 
     if (normalizedTag) {
       where.tags = { has: normalizedTag };
+    }
+
+    if (keyword && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
+      const rankedIds = await this.search.searchCustomerIds(
+        keyword,
+        this.prisma.getTenantId(),
+        take + 1,
+        {
+          status: normalizedStatus,
+          stage: normalizedStage,
+          tag: normalizedTag || undefined
+        }
+      );
+
+      if (rankedIds !== null) {
+        const lookupIds = rankedIds.slice(0, take + 1);
+        const rankedRows = lookupIds.length > 0
+          ? await this.prisma.client.customer.findMany({
+              where: {
+                ...where,
+                id: { in: lookupIds }
+              }
+            })
+          : [];
+
+        const orderedRows = this.rankByIds(rankedRows, lookupIds);
+        const hasMore = rankedIds.length > take;
+        const items = hasMore ? orderedRows.slice(0, take) : orderedRows;
+
+        return {
+          items,
+          nextCursor: null,
+          limit: take
+        };
+      }
     }
 
     if (keyword) {
@@ -55,6 +98,16 @@ export class CrmService {
     };
   }
 
+  async getCustomerTaxonomy() {
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    return {
+      customerTaxonomy: {
+        stages: salesPolicy.customerTaxonomy.stages,
+        sources: salesPolicy.customerTaxonomy.sources
+      }
+    };
+  }
+
   async createCustomer(payload: Record<string, unknown>) {
     const phone = normalizeVietnamPhone(this.optionalString(payload.phone));
     const email = this.normalizeEmail(this.optionalString(payload.email));
@@ -62,6 +115,12 @@ export class CrmService {
 
     assertValidVietnamPhone(phone);
     this.assertValidEmail(email);
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    this.assertCustomerTaxonomy(
+      this.optionalString(payload.customerStage)?.toUpperCase(),
+      this.optionalString(payload.source)?.toUpperCase(),
+      salesPolicy.customerTaxonomy
+    );
 
     const duplicate = await this.findDuplicateCustomer(phone, email);
     if (duplicate) {
@@ -85,6 +144,9 @@ export class CrmService {
       });
 
       const customer = await this.prisma.client.customer.findFirst({ where: { id: duplicate.id } });
+      if (customer) {
+        await this.search.syncCustomerUpsert(customer);
+      }
       return {
         deduplicated: true,
         message: 'Khách hàng đã tồn tại, hệ thống đã tự động gộp thông tin.',
@@ -110,6 +172,7 @@ export class CrmService {
         tags
       }
     });
+    await this.search.syncCustomerUpsert(created);
 
     return {
       deduplicated: false,
@@ -133,6 +196,12 @@ export class CrmService {
 
     assertValidVietnamPhone(nextPhone);
     this.assertValidEmail(nextEmail);
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    this.assertCustomerTaxonomy(
+      payload.customerStage !== undefined ? this.cleanString(payload.customerStage).toUpperCase() : undefined,
+      payload.source !== undefined ? this.cleanString(payload.source).toUpperCase() : undefined,
+      salesPolicy.customerTaxonomy
+    );
 
     const duplicate = await this.findDuplicateCustomer(nextPhone, nextEmail, current.id);
     if (duplicate) {
@@ -171,7 +240,11 @@ export class CrmService {
       }
     });
 
-    return this.prisma.client.customer.findFirst({ where: { id } });
+    const customer = await this.prisma.client.customer.findFirst({ where: { id } });
+    if (customer) {
+      await this.search.syncCustomerUpsert(customer);
+    }
+    return customer;
   }
 
   async listInteractions(query: PaginationQueryDto, customerId?: string) {
@@ -229,6 +302,12 @@ export class CrmService {
     const extraTags = this.parseTags(payload.tags);
     const interactionAt = payload.interactionAt ? this.parseDate(payload.interactionAt, 'interactionAt') : new Date();
     const nextActionAt = payload.nextActionAt ? this.parseDate(payload.nextActionAt, 'nextActionAt') : null;
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    this.assertCustomerTaxonomy(
+      this.optionalString(payload.customerStage)?.toUpperCase(),
+      undefined,
+      salesPolicy.customerTaxonomy
+    );
 
     const interaction = await this.prisma.client.customerInteraction.create({
       data: {
@@ -254,6 +333,10 @@ export class CrmService {
         customerStage: this.optionalString(payload.customerStage)?.toUpperCase() ?? undefined
       }
     });
+    const updatedCustomer = await this.prisma.client.customer.findFirst({ where: { id: customer.id } });
+    if (updatedCustomer) {
+      await this.search.syncCustomerUpsert(updatedCustomer);
+    }
 
     return interaction;
   }
@@ -377,6 +460,13 @@ export class CrmService {
         });
       }
     });
+
+    if (row.customerId) {
+      const updatedCustomer = await this.prisma.client.customer.findFirst({ where: { id: row.customerId } });
+      if (updatedCustomer) {
+        await this.search.syncCustomerUpsert(updatedCustomer);
+      }
+    }
 
     return this.prisma.client.paymentRequest.findFirst({ where: { id: row.id } });
   }
@@ -507,6 +597,10 @@ export class CrmService {
     });
 
     const customer = await this.prisma.client.customer.findFirst({ where: { id: primary.id } });
+    if (customer) {
+      await this.search.syncCustomerUpsert(customer);
+    }
+    await this.search.syncCustomerDelete(merged.id, merged.tenant_Id);
     return {
       message: 'Đã gộp hồ sơ khách hàng thành công.',
       customer,
@@ -595,6 +689,19 @@ export class CrmService {
     );
   }
 
+  private assertCustomerTaxonomy(
+    stage: string | undefined,
+    source: string | undefined,
+    policy: { stages: string[]; sources: string[] }
+  ) {
+    if (stage && policy.stages.length > 0 && !policy.stages.includes(stage)) {
+      throw new BadRequestException(`customerStage '${stage}' không nằm trong taxonomy đã cấu hình.`);
+    }
+    if (source && policy.sources.length > 0 && !policy.sources.includes(source)) {
+      throw new BadRequestException(`source '${source}' không nằm trong taxonomy đã cấu hình.`);
+    }
+  }
+
   private parseStatus(input: unknown, fallback: GenericStatus): GenericStatus {
     const candidate = this.cleanString(input).toUpperCase();
     if (
@@ -676,5 +783,14 @@ export class CrmService {
     if (!left) return right ?? null;
     if (!right) return left;
     return left >= right ? left : right;
+  }
+
+  private rankByIds<T extends { id: string }>(rows: T[], orderedIds: string[]) {
+    const rankMap = new Map(orderedIds.map((id, index) => [id, index]));
+    return [...rows].sort((left, right) => {
+      const leftRank = rankMap.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = rankMap.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+      return leftRank - rightRank;
+    });
   }
 }

@@ -117,6 +117,11 @@ export class CreatePurchaseOrderDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(40)
+  warehouseCode?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(500)
   notes?: string;
 }
@@ -152,6 +157,11 @@ export class UpdatePurchaseOrderDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(40)
+  warehouseCode?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(500)
   notes?: string;
 }
@@ -175,6 +185,11 @@ export class CreateShipmentDto {
   @IsString()
   @MaxLength(120)
   carrier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  warehouseCode?: string;
 
   @IsOptional()
   @IsEnum(GenericStatus)
@@ -221,6 +236,11 @@ export class UpdateShipmentDto {
   @IsString()
   @MaxLength(120)
   carrier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  warehouseCode?: string;
 
   @IsOptional()
   @IsEnum(GenericStatus)

@@ -13,6 +13,26 @@ enum UserRole {
   STAFF
 }
 
+enum PermissionAction {
+  VIEW
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+enum OrgUnitType {
+  COMPANY
+  BRANCH
+  DEPARTMENT
+  TEAM
+}
+
 enum GenericStatus {
   ACTIVE
   INACTIVE
@@ -28,6 +48,12 @@ enum EmploymentType {
   PART_TIME
   CONTRACT
   INTERN
+}
+
+enum HrGoalTrackingMode {
+  MANUAL
+  AUTO
+  HYBRID
 }
 
 enum PayrollComponentType {
@@ -60,6 +86,61 @@ enum ConversationEvaluationVerdict {
   ERROR
 }
 
+enum AuditOperationType {
+  READ
+  WRITE
+}
+
+enum AuditArchiveStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  NOOP
+}
+
+enum RecruitmentStage {
+  APPLIED
+  SCREENING
+  INTERVIEW
+  ASSESSMENT
+  OFFER
+  HIRED
+}
+
+enum RecruitmentApplicationStatus {
+  ACTIVE
+  REJECTED
+  WITHDRAWN
+  HIRED
+}
+
+enum RecruitmentSource {
+  REFERRAL
+  JOB_BOARD
+  SOCIAL_MEDIA
+  CAREER_SITE
+  AGENCY
+  CAMPUS
+  OTHER
+}
+
+enum RecruitmentInterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum RecruitmentOfferStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  ACCEPTED
+  DECLINED
+  CANCELED
+}
+
 model Tenant {
   id         String   @id @default(cuid())
   tenant_Id  String   @unique
@@ -79,11 +160,22 @@ model User {
   passwordHash String?
   role         UserRole @default(STAFF)
   employeeId   String?
+  isActive     Boolean  @default(true)
+  mustChangePassword Boolean @default(false)
+  failedLoginAttempts Int @default(0)
+  lockedUntil DateTime?
+  mfaEnabled Boolean @default(false)
+  mfaSecretEnc String?
+  mfaEnrolledAt DateTime?
+  lastLoginAt  DateTime?
+  passwordChangedAt DateTime?
+  passwordResetAt DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@unique([tenant_Id, email])
   @@index([tenant_Id])
+  @@index([tenant_Id, employeeId])
 }
 
 model Employee {
@@ -102,6 +194,7 @@ model Employee {
   taxCode      String?
   department   String?
   departmentId String?
+  orgUnitId    String?
   position     String?
   positionId   String?
   managerId    String?
@@ -115,10 +208,34 @@ model Employee {
 
   @@unique([tenant_Id, code])
   @@index([tenant_Id])
+  @@index([tenant_Id, orgUnitId])
   @@index([tenant_Id, departmentId])
   @@index([tenant_Id, positionId])
   @@index([tenant_Id, managerId])
   @@index([tenant_Id, workShiftId])
+}
+
+model OrgUnit {
+  id                String      @id @default(cuid())
+  tenant_Id         String
+  code              String?
+  name              String
+  type              OrgUnitType
+  parentId          String?
+  managerEmployeeId String?
+  description       String?
+  orderNo           Int?        @default(0)
+  status            GenericStatus @default(ACTIVE)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  parent   OrgUnit?  @relation("OrgUnitHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children OrgUnit[] @relation("OrgUnitHierarchy")
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, type])
+  @@index([tenant_Id, parentId])
 }
 
 model Department {
@@ -152,6 +269,42 @@ model Position {
   @@unique([tenant_Id, code])
   @@index([tenant_Id])
   @@index([tenant_Id, departmentId])
+}
+
+model PositionPermissionRule {
+  id         String           @id @default(cuid())
+  tenant_Id  String
+  positionId String
+  moduleKey  String
+  action     PermissionAction
+  effect     PermissionEffect
+  createdBy  String?
+  reason     String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([tenant_Id, positionId, moduleKey, action])
+  @@index([tenant_Id])
+  @@index([tenant_Id, positionId])
+  @@index([tenant_Id, moduleKey, action])
+}
+
+model UserPermissionOverride {
+  id         String           @id @default(cuid())
+  tenant_Id  String
+  userId     String
+  moduleKey  String
+  action     PermissionAction
+  effect     PermissionEffect
+  createdBy  String?
+  reason     String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([tenant_Id, userId, moduleKey, action])
+  @@index([tenant_Id])
+  @@index([tenant_Id, userId])
+  @@index([tenant_Id, moduleKey, action])
 }
 
 model WorkShift {
@@ -329,6 +482,7 @@ model Order {
   orderNo       String?
   customerId    String?
   customerName  String?
+  employeeId    String?
   totalAmount   Decimal? @db.Decimal(18, 2)
   status        GenericStatus @default(PENDING)
   createdBy     String?
@@ -337,10 +491,12 @@ model Order {
 
   customer      Customer? @relation(fields: [customerId], references: [id])
   items         OrderItem[]
+  invoices      Invoice[]
 
   @@unique([tenant_Id, orderNo])
   @@index([tenant_Id])
   @@index([tenant_Id, createdAt])
+  @@index([tenant_Id, employeeId])
 }
 
 model OrderItem {
@@ -491,6 +647,133 @@ model PayrollLineItem {
   @@index([tenant_Id, employeeId, createdAt])
 }
 
+model PersonalIncomeTaxProfile {
+  id                 String   @id @default(cuid())
+  tenant_Id          String
+  employeeId         String
+  taxCode            String?
+  personalDeduction  Decimal? @db.Decimal(18, 2)
+  dependentCount     Int      @default(0)
+  dependentDeduction Decimal? @db.Decimal(18, 2)
+  insuranceDeduction Decimal? @db.Decimal(18, 2)
+  otherDeduction     Decimal? @db.Decimal(18, 2)
+  taxRate            Decimal? @db.Decimal(7, 4)
+  status             GenericStatus @default(ACTIVE)
+  note               String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([tenant_Id, employeeId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, taxCode])
+}
+
+model PersonalIncomeTaxRecord {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  employeeId    String
+  payrollId     String?
+  taxProfileId  String?
+  taxMonth      Int
+  taxYear       Int
+  grossTaxable  Decimal  @db.Decimal(18, 2)
+  deduction     Decimal  @db.Decimal(18, 2)
+  taxableIncome Decimal  @db.Decimal(18, 2)
+  taxRate       Decimal  @db.Decimal(7, 4)
+  taxAmount     Decimal  @db.Decimal(18, 2)
+  status        GenericStatus @default(DRAFT)
+  note          String?
+  lockedAt      DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenant_Id, employeeId, taxYear, taxMonth])
+  @@index([tenant_Id])
+  @@index([tenant_Id, payrollId])
+  @@index([tenant_Id, taxYear, taxMonth])
+}
+
+model HrGoal {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  employeeId      String
+  goalCode        String?
+  title           String
+  description     String?
+  period          String
+  targetValue     Decimal? @db.Decimal(18, 2)
+  currentValue    Decimal? @db.Decimal(18, 2)
+  trackingMode    HrGoalTrackingMode @default(MANUAL)
+  autoCurrentValue Decimal @default(0) @db.Decimal(18, 2)
+  manualAdjustmentValue Decimal @default(0) @db.Decimal(18, 2)
+  progressPercent Float?   @default(0)
+  weight          Float?   @default(1)
+  startDate       DateTime?
+  endDate         DateTime?
+  workflowDefinitionId String?
+  workflowInstanceId String?
+  submittedAt     DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  lastAutoSyncedAt DateTime?
+  completedAt     DateTime?
+  status          GenericStatus @default(DRAFT)
+  note            String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  metricBindings  HrGoalMetricBinding[]
+  timelines       HrGoalTimeline[]
+
+  @@unique([tenant_Id, goalCode])
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId, period])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, trackingMode])
+  @@index([tenant_Id, workflowInstanceId])
+}
+
+model HrGoalMetricBinding {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  goalId          String
+  sourceSystem    String
+  metricKey       String
+  configJson      Json?
+  weight          Float    @default(1)
+  lastComputedValue Decimal? @db.Decimal(18, 2)
+  lastComputedAt  DateTime?
+  status          GenericStatus @default(ACTIVE)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  goal HrGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, goalId])
+  @@index([tenant_Id, sourceSystem, metricKey])
+}
+
+model HrGoalTimeline {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  goalId        String
+  eventType     String
+  actorId       String?
+  fromStatus    GenericStatus?
+  toStatus      GenericStatus?
+  progressPercent Float?
+  note          String?
+  payload       Json?
+  createdAt     DateTime @default(now())
+
+  goal HrGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, goalId, createdAt])
+}
+
 model HrEvent {
   id            String   @id @default(cuid())
   tenant_Id     String
@@ -510,8 +793,12 @@ model Invoice {
   id            String   @id @default(cuid())
   tenant_Id     String
   invoiceNo     String?
+  numberingSeries String?
+  numberingSeq Int?
+  documentLayout String?
   invoiceType   String
   partnerName   String?
+  orderId       String?
   totalAmount   Decimal? @db.Decimal(18, 2)
   paidAmount    Decimal? @default(0) @db.Decimal(18, 2)
   dueAt         DateTime?
@@ -520,10 +807,13 @@ model Invoice {
   status        GenericStatus @default(PENDING)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  order         Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
   allocations   PaymentAllocation[]
 
   @@unique([tenant_Id, invoiceNo])
+  @@unique([tenant_Id, orderId])
   @@index([tenant_Id])
+  @@index([tenant_Id, orderId])
 }
 
 model Account {
@@ -544,6 +834,9 @@ model JournalEntry {
   id          String   @id @default(cuid())
   tenant_Id   String
   entryNo     String?
+  numberingSeries String?
+  numberingSeq Int?
+  documentLayout String?
   entryDate   DateTime
   description String?
   status      GenericStatus @default(DRAFT)
@@ -622,6 +915,7 @@ model PurchaseOrder {
   id                 String   @id @default(cuid())
   tenant_Id          String
   poNo               String?
+  warehouseCode      String?
   vendorId           String?
   relatedSalesOrderNo String?
   totalAmount        Decimal? @db.Decimal(18, 2)
@@ -648,6 +942,7 @@ model Shipment {
   id                 String   @id @default(cuid())
   tenant_Id          String
   shipmentNo         String?
+  warehouseCode      String?
   orderRef           String?
   purchaseOrderId    String?
   carrier            String?
@@ -804,6 +1099,163 @@ model AssetDepreciationEntry {
 
   @@index([tenant_Id])
   @@index([tenant_Id, assetId, postedAt])
+}
+
+model RecruitmentRequisition {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  code            String?
+  title           String
+  department      String?
+  positionId      String?
+  recruiterId     String?
+  hiringManagerId String?
+  openings        Int      @default(1)
+  description     String?
+  status          GenericStatus @default(ACTIVE)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  applications RecruitmentApplication[]
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, recruiterId])
+}
+
+model RecruitmentCandidate {
+  id             String   @id @default(cuid())
+  tenant_Id      String
+  fullName       String
+  email          String?
+  phone          String?
+  source         RecruitmentSource @default(OTHER)
+  cvExternalUrl  String?
+  currentCompany String?
+  yearsExperience Float?
+  note           String?
+  status         GenericStatus @default(ACTIVE)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  applications RecruitmentApplication[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, source])
+  @@index([tenant_Id, email])
+  @@index([tenant_Id, phone])
+}
+
+model RecruitmentApplication {
+  id                String   @id @default(cuid())
+  tenant_Id         String
+  requisitionId     String
+  candidateId       String
+  recruiterId       String?
+  currentStage      RecruitmentStage @default(APPLIED)
+  status            RecruitmentApplicationStatus @default(ACTIVE)
+  appliedAt         DateTime @default(now())
+  stageEnteredAt    DateTime @default(now())
+  lastActivityAt    DateTime @default(now())
+  hiredAt           DateTime?
+  convertedEmployeeId String?
+  rejectedReason    String?
+  withdrawnReason   String?
+  note              String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  requisition   RecruitmentRequisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  candidate     RecruitmentCandidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  stageHistories RecruitmentStageHistory[]
+  interviews    RecruitmentInterview[]
+  offers        RecruitmentOffer[]
+
+  @@unique([tenant_Id, requisitionId, candidateId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, currentStage])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, recruiterId])
+  @@index([tenant_Id, requisitionId])
+  @@index([tenant_Id, candidateId])
+  @@index([tenant_Id, convertedEmployeeId])
+}
+
+model RecruitmentStageHistory {
+  id          String   @id @default(cuid())
+  tenant_Id   String
+  applicationId String
+  fromStage   RecruitmentStage?
+  toStage     RecruitmentStage?
+  fromStatus  RecruitmentApplicationStatus?
+  toStatus    RecruitmentApplicationStatus?
+  actionType  String
+  reason      String?
+  actorId     String?
+  createdAt   DateTime @default(now())
+
+  application RecruitmentApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, applicationId, createdAt])
+}
+
+model RecruitmentInterview {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  applicationId String
+  stage         RecruitmentStage @default(INTERVIEW)
+  interviewerId String?
+  interviewerName String?
+  scheduledAt   DateTime
+  durationMinutes Int @default(60)
+  mode          String?
+  location      String?
+  meetingUrl    String?
+  feedback      String?
+  score         Float?
+  status        RecruitmentInterviewStatus @default(SCHEDULED)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  application RecruitmentApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, applicationId, scheduledAt])
+  @@index([tenant_Id, status])
+}
+
+model RecruitmentOffer {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  applicationId   String
+  offeredPosition String?
+  offeredLevel    String?
+  offeredSalary   Decimal? @db.Decimal(18, 2)
+  currency        String?
+  proposedStartDate DateTime?
+  note            String?
+  status          RecruitmentOfferStatus @default(DRAFT)
+  workflowInstanceId String?
+  workflowDefinitionId String?
+  offeredAt       DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  acceptedAt      DateTime?
+  declinedAt      DateTime?
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  application RecruitmentApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, applicationId])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, workflowInstanceId])
 }
 
 model Recruitment {
@@ -1037,11 +1489,35 @@ model Notification {
   userId      String?
   title       String
   content     String?
+  templateVersion String?
   isRead      Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  dispatches  NotificationDispatch[]
 
   @@index([tenant_Id])
+}
+
+model NotificationDispatch {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  notificationId String
+  channel       String
+  status        String   @default("PENDING")
+  attemptCount  Int      @default(0)
+  maxAttempts   Int      @default(3)
+  nextRetryAt   DateTime?
+  dispatchedAt  DateTime?
+  lastError     String?
+  payloadJson   Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, status, nextRetryAt])
+  @@index([tenant_Id, notificationId])
 }
 
 model Report {
@@ -1094,6 +1570,77 @@ model Setting {
 
   @@unique([tenant_Id, settingKey])
   @@index([tenant_Id])
+}
+
+model AuditLog {
+  id            String             @id @default(cuid())
+  tenant_Id     String
+  module        String
+  entityType    String
+  entityId      String?
+  action        String
+  operationType AuditOperationType
+  actorId       String?
+  actorRole     String?
+  requestId     String?
+  route         String?
+  method        String?
+  statusCode    Int?
+  ip            String?
+  userAgent     String?
+  beforeData    Json?
+  afterData     Json?
+  changedFields Json?
+  metadata      Json?
+  prevHash      String?
+  hash          String
+  createdAt     DateTime           @default(now())
+
+  @@index([tenant_Id, entityType, entityId, createdAt])
+  @@index([tenant_Id, action, createdAt])
+  @@index([tenant_Id, actorId, createdAt])
+  @@index([tenant_Id, module, createdAt])
+  @@index([tenant_Id, requestId])
+  @@index([tenant_Id, operationType, createdAt])
+  @@map("audit_logs")
+}
+
+model AuditChainState {
+  id          String   @id @default(cuid())
+  tenant_Id   String   @unique
+  lastLogId   String?
+  lastHash    String?
+  lastEventAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@map("audit_chain_state")
+}
+
+model AuditArchiveManifest {
+  id               String            @id @default(cuid())
+  tenant_Id        String
+  windowStart      DateTime
+  windowEnd        DateTime
+  objectKey        String?
+  objectVersion    String?
+  rowCount         Int               @default(0)
+  checksumSha256   String?
+  gzChecksumSha256 String?
+  firstHash        String?
+  lastHash         String?
+  status           AuditArchiveStatus @default(PENDING)
+  errorMessage     String?
+  archivedAt       DateTime?
+  prunedAt         DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([tenant_Id, windowStart, windowEnd])
+  @@index([tenant_Id, status, windowStart])
+  @@index([tenant_Id, windowStart, windowEnd])
+  @@map("audit_archive_manifests")
 }
 
 model ZaloAccount {

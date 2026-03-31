@@ -33,9 +33,27 @@ function makePrismaMock() {
   };
 }
 
+function makeRuntimeSettingsMock() {
+  return {
+    getApprovalMatrixRuntime: vi.fn().mockResolvedValue({
+      rules: [],
+      escalation: {
+        enabled: true,
+        slaHours: 24,
+        escalateToRole: 'ADMIN'
+      },
+      delegation: {
+        enabled: true,
+        maxDays: 14
+      }
+    })
+  };
+}
+
 describe('WorkflowsService', () => {
   it('submits workflow and resolves dynamic approver from VALUE_RULE', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
     prisma.client.workflowDefinition.findFirst.mockResolvedValue({
       id: 'def_1',
       module: 'finance',
@@ -83,7 +101,7 @@ describe('WorkflowsService', () => {
       actionLogs: []
     });
 
-    const service = new WorkflowsService(prisma as any);
+    const service = new WorkflowsService(prisma as any, runtimeSettings as any);
     await service.submitInstance({
       definitionId: 'def_1',
       targetType: 'ORDER',
@@ -107,6 +125,7 @@ describe('WorkflowsService', () => {
 
   it('advances to next step when the last approval is approved', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
 
     prisma.client.workflowDefinition.findFirst.mockResolvedValue({
       id: 'def_2',
@@ -168,7 +187,7 @@ describe('WorkflowsService', () => {
 
     prisma.client.approval.findMany.mockResolvedValue([]);
 
-    const service = new WorkflowsService(prisma as any);
+    const service = new WorkflowsService(prisma as any, runtimeSettings as any);
     await service.approveInstance('wf_2', { actorId: 'manager_1', note: 'approved' });
 
     expect(prisma.client.workflowInstance.updateMany).toHaveBeenCalledWith(
@@ -194,6 +213,7 @@ describe('WorkflowsService', () => {
 
   it('cancels workflow instance and archives it', async () => {
     const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
 
     prisma.client.workflowInstance.findFirst.mockImplementation(async (args: any) => {
       if (args?.include) {
@@ -224,7 +244,7 @@ describe('WorkflowsService', () => {
       };
     });
 
-    const service = new WorkflowsService(prisma as any);
+    const service = new WorkflowsService(prisma as any, runtimeSettings as any);
     await service.cancelInstance('wf_3', {
       actorId: 'manager_2',
       note: 'cancelled by manager'

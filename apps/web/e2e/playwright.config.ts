@@ -24,7 +24,7 @@ export default defineConfig({
   },
   webServer: {
     cwd: repoRoot,
-    command: 'npm run dev --workspace @erp/web -- --port 3100',
+    command: 'NEXT_DEV_INSTANCE=e2e PORT=3100 npm run dev --workspace @erp/web',
     url: 'http://127.0.0.1:3100',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000

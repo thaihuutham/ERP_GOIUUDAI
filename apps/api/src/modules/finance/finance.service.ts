@@ -1,10 +1,13 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SettingsPolicyService } from '../settings/settings-policy.service';
 import {
   CreateAccountDto,
   CreateBudgetPlanDto,
   CreateInvoiceDto,
+  CreateInvoiceFromOrderDto,
   CreateJournalEntryDto,
   CreatePaymentAllocationDto,
   FinanceListQueryDto,
@@ -30,7 +33,11 @@ const INVOICE_TRANSITIONS: Record<InvoiceAction, { from: GenericStatus[]; to: Ge
 
 @Injectable()
 export class FinanceService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(SettingsPolicyService) private readonly settingsPolicy: SettingsPolicyService,
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+  ) {}
 
   async listInvoices(query: FinanceListQueryDto) {
     const where: Prisma.InvoiceWhereInput = {
@@ -48,6 +55,14 @@ export class FinanceService {
 
     const invoices = await this.prisma.client.invoice.findMany({
       where,
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNo: true
+          }
+        }
+      },
       orderBy: { createdAt: 'desc' },
       take: this.take(query.limit)
     });
@@ -57,6 +72,8 @@ export class FinanceService {
       const paid = Number(invoice.paidAmount ?? 0);
       return {
         ...invoice,
+        orderId: invoice.order?.id ?? invoice.orderId ?? null,
+        orderNo: invoice.order?.orderNo ?? null,
         outstandingAmount: Math.max(0, total - paid)
       };
     });
@@ -68,21 +85,94 @@ export class FinanceService {
       throw new BadRequestException('Hóa đơn mới chỉ được khởi tạo ở trạng thái DRAFT.');
     }
 
+    const linkedOrder = body.orderId
+      ? await this.assertOrderReadyForInvoice(body.orderId, { requireApproved: true })
+      : null;
     const dueAt = body.dueAt ? this.parseDate(body.dueAt, 'dueAt') : undefined;
-    await this.assertPeriodUnlockedByDate(dueAt, 'tạo hóa đơn');
+    await this.assertPeriodUnlockedByDate(dueAt ?? new Date(), 'tạo hóa đơn');
+    const numbering = await this.resolveDocumentNumbering('invoice', body.invoiceNo);
+    const totalAmount = body.totalAmount ?? Number(linkedOrder?.totalAmount ?? 0);
+    if (!Number.isFinite(Number(totalAmount)) || Number(totalAmount) <= 0) {
+      throw new BadRequestException('totalAmount phải lớn hơn 0.');
+    }
+    const partnerName = body.partnerName ?? linkedOrder?.customerName ?? null;
 
-    return this.prisma.client.invoice.create({
+    const invoice = await this.prisma.client.invoice.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
-        invoiceNo: body.invoiceNo ?? null,
+        invoiceNo: numbering.documentNo,
+        numberingSeries: numbering.numberingSeries,
+        numberingSeq: numbering.numberingSeq,
+        documentLayout: numbering.documentLayout,
         invoiceType: body.invoiceType,
-        partnerName: body.partnerName ?? null,
-        totalAmount: body.totalAmount,
+        partnerName,
+        orderId: linkedOrder?.id ?? null,
+        totalAmount: Number(totalAmount),
         paidAmount: 0,
         dueAt: dueAt ?? null,
         status
+      },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNo: true
+          }
+        }
       }
     });
+
+    return {
+      ...invoice,
+      orderId: invoice.order?.id ?? invoice.orderId ?? null,
+      orderNo: invoice.order?.orderNo ?? null
+    };
+  }
+
+  async createInvoiceFromOrder(body: CreateInvoiceFromOrderDto) {
+    const order = await this.assertOrderReadyForInvoice(body.orderId, { requireApproved: true });
+    const totalAmount = Number(order.totalAmount ?? 0);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      throw new BadRequestException('Đơn hàng chưa có tổng tiền hợp lệ để xuất hóa đơn.');
+    }
+
+    const dueAt = body.dueAt ? this.parseDate(body.dueAt, 'dueAt') : undefined;
+    await this.assertPeriodUnlockedByDate(dueAt ?? new Date(), 'xuất hóa đơn từ đơn hàng');
+    const numbering = await this.resolveDocumentNumbering('invoice');
+
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        invoiceNo: numbering.documentNo,
+        numberingSeries: numbering.numberingSeries,
+        numberingSeq: numbering.numberingSeq,
+        documentLayout: numbering.documentLayout,
+        invoiceType: body.invoiceType ?? 'SALES',
+        partnerName: order.customerName ?? null,
+        orderId: order.id,
+        totalAmount,
+        paidAmount: 0,
+        dueAt: dueAt ?? null,
+        status: GenericStatus.DRAFT
+      },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNo: true
+          }
+        }
+      }
+    });
+
+    return {
+      ...invoice,
+      orderNo: invoice.order?.orderNo ?? null,
+      transition: {
+        action: 'CREATE_FROM_ORDER',
+        note: body.note ?? null
+      }
+    };
   }
 
   async updateInvoice(id: string, body: UpdateInvoiceDto) {
@@ -96,16 +186,21 @@ export class FinanceService {
       throw new BadRequestException('Không cập nhật status qua PATCH. Dùng endpoint transition hóa đơn.');
     }
 
-    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? undefined, 'sửa hóa đơn');
+    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? new Date(), 'sửa hóa đơn');
     const nextDueAt = body.dueAt ? this.parseDate(body.dueAt, 'dueAt') : body.dueAt === undefined ? undefined : null;
     if (nextDueAt instanceof Date) {
       await this.assertPeriodUnlockedByDate(nextDueAt, 'đổi kỳ hóa đơn');
     }
 
+    const normalizedInvoiceNo = body.invoiceNo ? String(body.invoiceNo).trim() : undefined;
+    const invoiceNoMeta = normalizedInvoiceNo ? this.parseNumberingMeta(normalizedInvoiceNo) : null;
+
     await this.prisma.client.invoice.updateMany({
       where: { id: invoice.id },
       data: {
-        invoiceNo: body.invoiceNo,
+        invoiceNo: normalizedInvoiceNo,
+        numberingSeries: invoiceNoMeta?.series,
+        numberingSeq: invoiceNoMeta?.seq,
         invoiceType: body.invoiceType,
         partnerName: body.partnerName,
         totalAmount: body.totalAmount,
@@ -215,7 +310,7 @@ export class FinanceService {
       throw new BadRequestException('Hóa đơn chưa sẵn sàng để ghi nhận thanh toán.');
     }
 
-    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? undefined, 'ghi nhận thanh toán hóa đơn');
+    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? new Date(), 'ghi nhận thanh toán hóa đơn');
     const allocatedAt = body.allocatedAt ? this.parseDate(body.allocatedAt, 'allocatedAt') : new Date();
     await this.assertPeriodUnlockedByDate(allocatedAt, 'ghi nhận thanh toán hóa đơn');
 
@@ -315,6 +410,7 @@ export class FinanceService {
     await this.assertPeriodUnlockedByDate(entryDate, 'tạo bút toán');
 
     const journalSummary = this.validateBalancedJournalLines(body.lines);
+    const numbering = await this.resolveDocumentNumbering('journal', body.entryNo);
 
     const tenantId = this.prisma.getTenantId();
 
@@ -322,7 +418,10 @@ export class FinanceService {
       const entry = await tx.journalEntry.create({
         data: {
           tenant_Id: tenantId,
-          entryNo: body.entryNo ?? null,
+          entryNo: numbering.documentNo,
+          numberingSeries: numbering.numberingSeries,
+          numberingSeq: numbering.numberingSeq,
+          documentLayout: numbering.documentLayout,
           entryDate,
           description: this.buildJournalDescription(body.description, journalSummary),
           status: body.status ?? GenericStatus.DRAFT
@@ -366,6 +465,8 @@ export class FinanceService {
     }
 
     const journalSummary = body.lines ? this.validateBalancedJournalLines(body.lines) : null;
+    const normalizedEntryNo = body.entryNo ? String(body.entryNo).trim() : undefined;
+    const entryNoMeta = normalizedEntryNo ? this.parseNumberingMeta(normalizedEntryNo) : null;
 
     const tenantId = this.prisma.getTenantId();
 
@@ -373,7 +474,9 @@ export class FinanceService {
       await tx.journalEntry.updateMany({
         where: { id },
         data: {
-          entryNo: body.entryNo,
+          entryNo: normalizedEntryNo,
+          numberingSeries: entryNoMeta?.series,
+          numberingSeq: entryNoMeta?.seq,
           entryDate: nextEntryDate,
           description:
             journalSummary
@@ -459,21 +562,15 @@ export class FinanceService {
 
   async closePeriod(period: string, closedBy?: string) {
     const normalizedPeriod = this.normalizePeriod(period);
-    const existing = await this.prisma.client.setting.findFirst({
-      where: { settingKey: PERIOD_LOCK_SETTING_KEY }
-    });
-    const payload = this.ensureRecord(existing?.settingValue);
+    const periods = await this.settingsPolicy.lockFinancePeriod(normalizedPeriod, closedBy);
 
-    const periodSet = new Set(this.parseLockedPeriods(payload.periods));
-    periodSet.add(normalizedPeriod);
-    const periods = [...periodSet].sort();
-
+    // Backward compatibility: keep legacy key in sync during migration window.
+    const existing = await this.prisma.client.setting.findFirst({ where: { settingKey: PERIOD_LOCK_SETTING_KEY } });
     const nextPayload = {
       periods,
       updatedAt: new Date().toISOString(),
       updatedBy: closedBy ?? 'system'
     };
-
     if (existing) {
       await this.prisma.client.setting.updateMany({
         where: { id: existing.id },
@@ -506,7 +603,7 @@ export class FinanceService {
       );
     }
 
-    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? undefined, `chuyển trạng thái hóa đơn (${action})`);
+    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? new Date(), `chuyển trạng thái hóa đơn (${action})`);
 
     await this.prisma.client.invoice.updateMany({
       where: { id: invoice.id },
@@ -521,6 +618,8 @@ export class FinanceService {
     const updated = await this.getInvoiceOrThrow(id);
     return {
       ...updated,
+      orderId: updated.order?.id ?? updated.orderId ?? null,
+      orderNo: updated.order?.orderNo ?? null,
       transition: {
         action,
         from: invoice.status,
@@ -531,11 +630,45 @@ export class FinanceService {
   }
 
   private async getInvoiceOrThrow(id: string) {
-    const invoice = await this.prisma.client.invoice.findFirst({ where: { id } });
+    const invoice = await this.prisma.client.invoice.findFirst({
+      where: { id },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNo: true
+          }
+        }
+      }
+    });
     if (!invoice) {
       throw new NotFoundException('Không tìm thấy hóa đơn.');
     }
     return invoice;
+  }
+
+  private async assertOrderReadyForInvoice(orderId: string, options: { requireApproved: boolean }) {
+    const order = await this.prisma.client.order.findFirst({
+      where: { id: orderId }
+    });
+    if (!order) {
+      throw new NotFoundException('Không tìm thấy đơn hàng để xuất hóa đơn.');
+    }
+
+    if (options.requireApproved && order.status !== GenericStatus.APPROVED) {
+      throw new BadRequestException(`Chỉ được xuất hóa đơn từ đơn hàng APPROVED. Current=${order.status}`);
+    }
+
+    const existingInvoice = await this.prisma.client.invoice.findFirst({
+      where: {
+        orderId: order.id
+      }
+    });
+    if (existingInvoice) {
+      throw new BadRequestException('Đơn hàng này đã có hóa đơn liên kết.');
+    }
+
+    return order;
   }
 
   private async ensureEntityExists(model: 'account', id: string) {
@@ -598,9 +731,8 @@ export class FinanceService {
   }
 
   private async assertPeriodUnlockedByDate(date: Date | undefined, actionLabel: string) {
-    if (!date) {
-      return;
-    }
+    await this.assertPostingWindowAllowed(date ?? new Date(), actionLabel);
+    if (!date) return;
 
     const period = this.toPeriod(date);
     await this.assertPeriodUnlocked(period, actionLabel);
@@ -625,7 +757,160 @@ export class FinanceService {
     }
   }
 
+  private async assertPostingWindowAllowed(targetAt: Date, actionLabel: string) {
+    const [financeRuntime, webRuntime] = await Promise.all([
+      this.runtimeSettings.getFinanceControlsRuntime(),
+      this.runtimeSettings.getWebRuntime()
+    ]);
+
+    const timezone = String(webRuntime.locale.timezone || 'Asia/Ho_Chi_Minh');
+    const allowBackdateDays = Number(financeRuntime.postingPeriods.allowBackdateDays ?? 0);
+    const cutoffHour = Number(financeRuntime.transactionCutoffHour ?? 23);
+    const now = new Date();
+
+    const nowDay = this.dayStamp(now, timezone);
+    const targetDay = this.dayStamp(targetAt, timezone);
+    const dayDiff = this.dayDiffFromStamp(nowDay, targetDay);
+
+    if (dayDiff > allowBackdateDays) {
+      throw new BadRequestException(
+        `Không thể ${actionLabel}: ngày hạch toán lùi ${dayDiff} ngày, vượt policy allowBackdateDays=${allowBackdateDays}.`
+      );
+    }
+
+    const currentHour = this.hourInTimezone(now, timezone);
+    if (this.isSameDay(nowDay, targetDay) && currentHour > cutoffHour) {
+      throw new BadRequestException(
+        `Không thể ${actionLabel}: đã qua giờ cut-off ${cutoffHour}:00 theo timezone ${timezone}.`
+      );
+    }
+  }
+
+  private async resolveDocumentNumbering(type: 'invoice' | 'journal', inputNo?: string | null) {
+    const provided = String(inputNo ?? '').trim();
+    const financeRuntime = await this.runtimeSettings.getFinanceControlsRuntime();
+    const webRuntime = await this.runtimeSettings.getWebRuntime();
+    const prefix = type === 'invoice'
+      ? String(financeRuntime.documentNumbering.invoicePrefix || 'INV').toUpperCase()
+      : 'JE';
+
+    if (provided) {
+      const parsed = this.parseNumberingMeta(provided);
+      return {
+        documentNo: provided,
+        numberingSeries: parsed?.series ?? prefix,
+        numberingSeq: parsed?.seq ?? null,
+        documentLayout: String(webRuntime.documentLayout.invoiceTemplate || 'standard')
+      };
+    }
+
+    if (!financeRuntime.documentNumbering.autoNumber) {
+      return {
+        documentNo: null,
+        numberingSeries: prefix,
+        numberingSeq: null,
+        documentLayout: String(webRuntime.documentLayout.invoiceTemplate || 'standard')
+      };
+    }
+
+    const key = `settings.numbering.${type}.${prefix}`;
+    const sequence = await this.nextNumberingSequence(key);
+    const year = new Date().getUTCFullYear();
+    const documentNo = `${prefix}-${year}-${String(sequence).padStart(6, '0')}`;
+
+    return {
+      documentNo,
+      numberingSeries: prefix,
+      numberingSeq: sequence,
+      documentLayout: String(webRuntime.documentLayout.invoiceTemplate || 'standard')
+    };
+  }
+
+  private async nextNumberingSequence(settingKey: string) {
+    const existing = await this.prisma.client.setting.findFirst({
+      where: { settingKey }
+    });
+
+    const payload = this.ensureRecord(existing?.settingValue);
+    const current = Number(payload.nextSeq ?? 1);
+    const sequence = Number.isFinite(current) && current > 0 ? Math.trunc(current) : 1;
+    const nextSeq = sequence + 1;
+
+    const nextPayload = {
+      nextSeq,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (existing) {
+      await this.prisma.client.setting.updateMany({
+        where: { id: existing.id },
+        data: { settingValue: nextPayload as Prisma.InputJsonValue }
+      });
+    } else {
+      await this.prisma.client.setting.create({
+        data: {
+          tenant_Id: this.prisma.getTenantId(),
+          settingKey,
+          settingValue: nextPayload as Prisma.InputJsonValue
+        }
+      });
+    }
+
+    return sequence;
+  }
+
+  private parseNumberingMeta(documentNo: string) {
+    const normalized = String(documentNo).trim().toUpperCase();
+    if (!normalized) return null;
+    const match = normalized.match(/^([A-Z0-9_\\-]+?)-\\d{4}-(\\d{1,10})$/);
+    if (!match) {
+      return { series: normalized.slice(0, 24), seq: null };
+    }
+    return {
+      series: match[1],
+      seq: Number(match[2])
+    };
+  }
+
+  private dayStamp(date: Date, timezone: string) {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(date);
+  }
+
+  private isSameDay(left: string, right: string) {
+    return left === right;
+  }
+
+  private hourInTimezone(date: Date, timezone: string) {
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      hour12: false
+    });
+    return Number(formatter.format(date));
+  }
+
+  private dayDiffFromStamp(currentDay: string, targetDay: string) {
+    const nowDate = new Date(`${currentDay}T00:00:00.000Z`);
+    const targetDate = new Date(`${targetDay}T00:00:00.000Z`);
+    return this.dateDiffInDays(nowDate, targetDate);
+  }
+
   private async getLockedPeriods() {
+    try {
+      const periods = await this.settingsPolicy.listFinanceLockedPeriods();
+      if (periods.length > 0) {
+        return { periods };
+      }
+    } catch {
+      // fallback legacy key
+    }
+
     const row = await this.prisma.client.setting.findFirst({
       where: { settingKey: PERIOD_LOCK_SETTING_KEY }
     });

@@ -16,8 +16,9 @@ jobs:
         env:
           DEPLOY_WORKDIR: /opt/erp-retail
           DEPLOY_ENV_FILE: /opt/erp-retail/.deploy.env
-          AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'true' }}
-          DEFAULT_TENANT_ID: ${{ vars.DEFAULT_TENANT_ID || 'tenant_demo_company' }}
+          AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'false' }}
+          DEFAULT_TENANT_ID: ${{ vars.DEFAULT_TENANT_ID || 'GOIUUDAI' }}
+          TENANCY_MODE: ${{ vars.TENANCY_MODE || 'single' }}
           API_PORT: ${{ vars.API_PORT || '3001' }}
           WEB_PORT: ${{ vars.WEB_PORT || '3000' }}
           NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL || 'http://api:3001/api/v1' }}
@@ -33,6 +34,27 @@ jobs:
           ZALO_OA_ACCESS_TOKEN: ${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           ZALO_OA_API_BASE_URL: ${{ vars.ZALO_OA_API_BASE_URL || 'https://openapi.zalo.me/v3.0/oa' }}
           ZALO_OA_OUTBOUND_TIMEOUT_MS: ${{ vars.ZALO_OA_OUTBOUND_TIMEOUT_MS || '20000' }}
+          SEARCH_ENGINE: ${{ vars.SEARCH_ENGINE || 'sql' }}
+          MEILI_HOST: ${{ vars.MEILI_HOST || 'http://meilisearch:7700' }}
+          MEILI_MASTER_KEY: ${{ secrets.MEILI_MASTER_KEY }}
+          MEILI_INDEX_PREFIX: ${{ vars.MEILI_INDEX_PREFIX || 'erp' }}
+          MEILI_TIMEOUT_MS: ${{ vars.MEILI_TIMEOUT_MS || '45000' }}
+          MEILI_ENABLE_WRITE_SYNC: ${{ vars.MEILI_ENABLE_WRITE_SYNC || 'false' }}
+          MEILI_PORT: ${{ vars.MEILI_PORT || '7700' }}
+          AUDIT_ARCHIVE_S3_ENDPOINT: ${{ vars.AUDIT_ARCHIVE_S3_ENDPOINT || 'http://minio:9000' }}
+          AUDIT_ARCHIVE_S3_BUCKET: ${{ vars.AUDIT_ARCHIVE_S3_BUCKET || 'erp-audit-archive' }}
+          AUDIT_ARCHIVE_S3_REGION: ${{ vars.AUDIT_ARCHIVE_S3_REGION || 'us-east-1' }}
+          AUDIT_ARCHIVE_S3_ACCESS_KEY: ${{ vars.AUDIT_ARCHIVE_S3_ACCESS_KEY || vars.MINIO_ROOT_USER || 'erpminio' }}
+          AUDIT_ARCHIVE_S3_SECRET_KEY: ${{ secrets.AUDIT_ARCHIVE_S3_SECRET_KEY || secrets.MINIO_ROOT_PASSWORD }}
+          AUDIT_ARCHIVE_S3_FORCE_PATH_STYLE: ${{ vars.AUDIT_ARCHIVE_S3_FORCE_PATH_STYLE || 'true' }}
+          AUDIT_ARCHIVE_S3_TLS_ENABLED: ${{ vars.AUDIT_ARCHIVE_S3_TLS_ENABLED || 'false' }}
+          AUDIT_MAINTENANCE_SCHEDULER_ENABLED: ${{ vars.AUDIT_MAINTENANCE_SCHEDULER_ENABLED || 'true' }}
+          AUDIT_MAINTENANCE_SCHEDULER_UTC_HOUR: ${{ vars.AUDIT_MAINTENANCE_SCHEDULER_UTC_HOUR || '19' }}
+          AUDIT_COLD_QUERY_MAX_DAYS: ${{ vars.AUDIT_COLD_QUERY_MAX_DAYS || '31' }}
+          MINIO_PORT: ${{ vars.MINIO_PORT || '9000' }}
+          MINIO_CONSOLE_PORT: ${{ vars.MINIO_CONSOLE_PORT || '9001' }}
+          MINIO_ROOT_USER: ${{ vars.MINIO_ROOT_USER || 'erpminio' }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
         run: |
           chmod +x scripts/deploy/deploy-from-runner.sh
           scripts/deploy/deploy-from-runner.sh

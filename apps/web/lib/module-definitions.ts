@@ -943,6 +943,226 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         ]
       },
       {
+        key: 'personal-income-tax',
+        title: 'Thuế TNCN',
+        description: 'Quản lý hồ sơ và bản ghi thuế TNCN theo kỳ tháng/năm.',
+        listEndpoint: '/hr/personal-income-tax/records',
+        columns: [
+          'id',
+          'employeeCode',
+          'employeeName',
+          'taxMonth',
+          'taxYear',
+          'grossTaxable',
+          'deduction',
+          'taxableIncome',
+          'taxRate',
+          'taxAmount',
+          'status',
+          'lockedAt'
+        ],
+        filters: [
+          { key: 'month', label: 'Tháng', type: 'number', placeholder: 'Tháng', queryParam: 'month' },
+          { key: 'year', label: 'Năm', type: 'number', placeholder: 'Năm', queryParam: 'year' },
+          { key: 'employeeId', label: 'Mã nhân viên', type: 'text', placeholder: 'EMP-0001', queryParam: 'employeeId' }
+        ],
+        actions: [
+          {
+            key: 'generate-personal-income-tax-records',
+            label: 'Generate kỳ thuế',
+            method: 'POST',
+            endpoint: '/hr/personal-income-tax/records/generate',
+            fields: [
+              { name: 'taxMonth', label: 'Tháng', type: 'number', required: true, defaultValue: 3 },
+              { name: 'taxYear', label: 'Năm', type: 'number', required: true, defaultValue: 2026 },
+              { name: 'employeeId', label: 'Mã nhân viên (tùy chọn)' },
+              { name: 'taxRate', label: 'Thuế suất override', type: 'number', placeholder: '0.1' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'DRAFT' }
+            ]
+          },
+          {
+            key: 'create-personal-income-tax-profile',
+            label: 'Tạo hồ sơ thuế',
+            method: 'POST',
+            endpoint: '/hr/personal-income-tax/profiles',
+            fields: [
+              { name: 'employeeId', label: 'Mã nhân viên', required: true },
+              { name: 'taxCode', label: 'Mã số thuế' },
+              { name: 'personalDeduction', label: 'Giảm trừ bản thân', type: 'number', defaultValue: 11000000 },
+              { name: 'dependentCount', label: 'Số người phụ thuộc', type: 'number', defaultValue: 0 },
+              { name: 'dependentDeduction', label: 'Giảm trừ người phụ thuộc', type: 'number', defaultValue: 4400000 },
+              { name: 'insuranceDeduction', label: 'Giảm trừ bảo hiểm', type: 'number', defaultValue: 0 },
+              { name: 'otherDeduction', label: 'Giảm trừ khác', type: 'number', defaultValue: 0 },
+              { name: 'taxRate', label: 'Thuế suất', type: 'number', defaultValue: 0.1 },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
+            ]
+          },
+          {
+            key: 'create-personal-income-tax-record',
+            label: 'Tạo bản ghi thuế',
+            method: 'POST',
+            endpoint: '/hr/personal-income-tax/records',
+            fields: [
+              { name: 'employeeId', label: 'Mã nhân viên', required: true },
+              { name: 'payrollId', label: 'Mã bảng lương (tùy chọn)' },
+              { name: 'taxMonth', label: 'Tháng', type: 'number', required: true },
+              { name: 'taxYear', label: 'Năm', type: 'number', required: true },
+              { name: 'grossTaxable', label: 'Thu nhập chịu thuế', type: 'number' },
+              { name: 'deduction', label: 'Tổng giảm trừ', type: 'number' },
+              { name: 'taxableIncome', label: 'Thu nhập tính thuế', type: 'number' },
+              { name: 'taxRate', label: 'Thuế suất', type: 'number', defaultValue: 0.1 },
+              { name: 'taxAmount', label: 'Tiền thuế', type: 'number' },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
+            ]
+          },
+          {
+            key: 'update-personal-income-tax-record',
+            label: 'Cập nhật bản ghi thuế',
+            method: 'PATCH',
+            endpoint: '/hr/personal-income-tax/records/:id',
+            fields: [
+              { name: 'id', label: 'Mã bản ghi', required: true },
+              { name: 'employeeId', label: 'Mã nhân viên' },
+              { name: 'payrollId', label: 'Mã bảng lương' },
+              { name: 'taxMonth', label: 'Tháng', type: 'number' },
+              { name: 'taxYear', label: 'Năm', type: 'number' },
+              { name: 'grossTaxable', label: 'Thu nhập chịu thuế', type: 'number' },
+              { name: 'deduction', label: 'Tổng giảm trừ', type: 'number' },
+              { name: 'taxableIncome', label: 'Thu nhập tính thuế', type: 'number' },
+              { name: 'taxRate', label: 'Thuế suất', type: 'number' },
+              { name: 'taxAmount', label: 'Tiền thuế', type: 'number' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
+            ]
+          }
+        ]
+      },
+      {
+        key: 'goals',
+        title: 'Mục tiêu nhân sự',
+        description: 'Thiết lập mục tiêu theo nhân viên/kỳ và theo dõi tiến độ thực hiện.',
+        listEndpoint: '/hr/goals',
+        columns: [
+          'id',
+          'goalCode',
+          'title',
+          'employeeCode',
+          'employeeName',
+          'period',
+          'targetValue',
+          'currentValue',
+          'progressPercent',
+          'status',
+          'endDate'
+        ],
+        filters: [
+          { key: 'employeeId', label: 'Mã nhân viên', type: 'text', placeholder: 'EMP-0001', queryParam: 'employeeId' },
+          { key: 'period', label: 'Kỳ', type: 'text', placeholder: 'Q1-2026', queryParam: 'period' },
+          { key: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, queryParam: 'status' }
+        ],
+        actions: [
+          {
+            key: 'create-goal',
+            label: 'Tạo mục tiêu',
+            method: 'POST',
+            endpoint: '/hr/goals',
+            fields: [
+              { name: 'employeeId', label: 'Mã nhân viên', required: true },
+              { name: 'goalCode', label: 'Mã mục tiêu' },
+              { name: 'title', label: 'Tên mục tiêu', required: true },
+              { name: 'description', label: 'Mô tả', type: 'textarea' },
+              { name: 'period', label: 'Kỳ', required: true, placeholder: 'Q1-2026' },
+              { name: 'targetValue', label: 'Giá trị mục tiêu', type: 'number' },
+              { name: 'currentValue', label: 'Giá trị hiện tại', type: 'number', defaultValue: 0 },
+              { name: 'weight', label: 'Trọng số', type: 'number', defaultValue: 1 },
+              { name: 'startDate', label: 'Ngày bắt đầu', type: 'date' },
+              { name: 'endDate', label: 'Ngày kết thúc', type: 'date' },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'PENDING' }
+            ]
+          },
+          {
+            key: 'update-goal',
+            label: 'Cập nhật mục tiêu',
+            method: 'PATCH',
+            endpoint: '/hr/goals/:id',
+            fields: [
+              { name: 'id', label: 'Mã mục tiêu', required: true },
+              { name: 'title', label: 'Tên mục tiêu' },
+              { name: 'description', label: 'Mô tả', type: 'textarea' },
+              { name: 'period', label: 'Kỳ' },
+              { name: 'targetValue', label: 'Giá trị mục tiêu', type: 'number' },
+              { name: 'currentValue', label: 'Giá trị hiện tại', type: 'number' },
+              { name: 'weight', label: 'Trọng số', type: 'number' },
+              { name: 'startDate', label: 'Ngày bắt đầu', type: 'date' },
+              { name: 'endDate', label: 'Ngày kết thúc', type: 'date' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
+            ]
+          },
+          {
+            key: 'update-goal-progress',
+            label: 'Cập nhật tiến độ',
+            method: 'PATCH',
+            endpoint: '/hr/goals/:id/progress',
+            fields: [
+              { name: 'id', label: 'Mã mục tiêu', required: true },
+              { name: 'currentValue', label: 'Giá trị hiện tại', type: 'number', required: true },
+              { name: 'progressPercent', label: 'Tiến độ (%)', type: 'number' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
+            ]
+          }
+        ]
+      },
+      {
+        key: 'employee-info',
+        title: 'Thông tin nhân sự',
+        description: 'Danh sách hồ sơ nhân sự tổng hợp và cập nhật thông tin chi tiết.',
+        listEndpoint: '/hr/employee-info',
+        columns: [
+          'id',
+          'code',
+          'fullName',
+          'department',
+          'position',
+          'employmentType',
+          'status',
+          'benefitCount',
+          'joinDate'
+        ],
+        actions: [
+          {
+            key: 'get-employee-info-detail',
+            label: 'Xem hồ sơ chi tiết',
+            method: 'GET',
+            endpoint: '/hr/employee-info/:id',
+            fields: [{ name: 'id', label: 'Mã nhân viên', required: true }]
+          },
+          {
+            key: 'update-employee-info',
+            label: 'Cập nhật thông tin nhân sự',
+            method: 'PATCH',
+            endpoint: '/hr/employee-info/:id',
+            fields: [
+              { name: 'id', label: 'Mã nhân viên', required: true },
+              { name: 'code', label: 'Mã nhân viên mới' },
+              { name: 'fullName', label: 'Họ tên' },
+              { name: 'email', label: 'Email' },
+              { name: 'phone', label: 'Số điện thoại' },
+              { name: 'department', label: 'Phòng ban' },
+              { name: 'position', label: 'Chức danh' },
+              { name: 'joinDate', label: 'Ngày vào làm', type: 'date' },
+              { name: 'baseSalary', label: 'Lương cơ bản', type: 'number' },
+              { name: 'taxCode', label: 'Mã số thuế' },
+              { name: 'bankName', label: 'Ngân hàng' },
+              { name: 'bankAccountNo', label: 'Số tài khoản' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
+            ]
+          }
+        ]
+      },
+      {
         key: 'hr-events',
         title: 'Lịch sử vòng đời nhân sự',
         description: 'Theo dõi sự kiện HR (onboard, đổi vị trí, nghỉ việc, duyệt phép...).',

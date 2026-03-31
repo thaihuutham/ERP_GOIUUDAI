@@ -22,6 +22,7 @@ const MODULE_MIN_ROLE: Record<string, UserRole> = {
   projects: 'STAFF',
   workflows: 'MANAGER',
   reports: 'STAFF',
+  audit: 'MANAGER',
   settings: 'ADMIN',
   notifications: 'STAFF'
 };

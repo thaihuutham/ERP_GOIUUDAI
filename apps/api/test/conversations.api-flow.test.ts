@@ -2,36 +2,20 @@ import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConversationChannel, ConversationSenderType } from '@prisma/client';
-import { sign } from 'jsonwebtoken';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { ConversationsService } from '../src/modules/conversations/conversations.service';
 import { ZaloService } from '../src/modules/zalo/zalo.service';
+import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('Conversations API flow integration', () => {
   let app: INestApplication;
   let conversationsService: ConversationsService;
   let zaloService: ZaloService;
 
-  const makeToken = (role: 'ADMIN' | 'MANAGER' | 'STAFF') =>
-    sign(
-      {
-        sub: `test_${role.toLowerCase()}`,
-        userId: `test_${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@example.com`,
-        role,
-        tenantId: 'tenant_demo_company'
-      },
-      process.env.JWT_SECRET as string,
-      { algorithm: 'HS256', expiresIn: '1h' }
-    );
-
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.AUTH_ENABLED = 'true';
-    process.env.JWT_SECRET = 'phase-crm-conversations-flow-secret';
-    process.env.PRISMA_SKIP_CONNECT = 'true';
+    setupSingleTenantAuthTestEnv('phase-crm-conversations-flow-secret');
 
     app = await NestFactory.create(AppModule, {
       logger: false,
@@ -61,7 +45,7 @@ describe('Conversations API flow integration', () => {
   });
 
   it('executes conversations inbox flow: list -> create thread -> list/append messages -> latest evaluation', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
 
     vi.spyOn(conversationsService, 'listThreads').mockResolvedValue({
       items: [
@@ -169,7 +153,7 @@ describe('Conversations API flow integration', () => {
   });
 
   it('executes OA outbound send route via Zalo API endpoint', async () => {
-    const managerToken = makeToken('MANAGER');
+    const managerToken = makeAuthToken('MANAGER');
 
     vi.spyOn(zaloService, 'sendOaMessage').mockResolvedValue({
       success: true,

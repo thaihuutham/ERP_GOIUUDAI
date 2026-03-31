@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
+import { AuditAction } from '../../common/audit/audit.decorators';
 import {
   CreateDemandForecastDto,
   CreateDistributionDto,
@@ -51,36 +52,42 @@ export class ScmController {
 
   @Post('purchase-orders')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CREATE_PURCHASE_ORDER', entityType: 'PurchaseOrder' })
   createPurchaseOrder(@Body() body: CreatePurchaseOrderDto) {
     return this.scmService.createPurchaseOrder(body);
   }
 
   @Patch('purchase-orders/:id')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
   updatePurchaseOrder(@Param('id') id: string, @Body() body: UpdatePurchaseOrderDto) {
     return this.scmService.updatePurchaseOrder(id, body);
   }
 
   @Post('purchase-orders/:id/submit')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'SUBMIT_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
   submitPurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
     return this.scmService.submitPurchaseOrder(id, body);
   }
 
   @Post('purchase-orders/:id/approve')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'APPROVE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
   approvePurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
     return this.scmService.approvePurchaseOrder(id, body);
   }
 
   @Post('purchase-orders/:id/cancel')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CANCEL_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
   cancelPurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
     return this.scmService.cancelPurchaseOrder(id, body);
   }
 
   @Post('purchase-orders/:id/close')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CLOSE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
   closePurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
     return this.scmService.closePurchaseOrder(id, body);
   }
@@ -93,6 +100,7 @@ export class ScmController {
 
   @Post('purchase-orders/:id/receive')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'RECEIVE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
   receivePurchaseOrder(@Param('id') id: string, @Body() body: CreatePurchaseReceiptDto) {
     return this.scmService.receivePurchaseOrder(id, body);
   }
@@ -123,12 +131,14 @@ export class ScmController {
 
   @Post('shipments/:id/ship')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'SHIP_SHIPMENT', entityType: 'Shipment', entityIdParam: 'id' })
   shipShipment(@Param('id') id: string, @Body() body: PoTransitionDto) {
     return this.scmService.shipShipment(id, body);
   }
 
   @Post('shipments/:id/deliver')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'DELIVER_SHIPMENT', entityType: 'Shipment', entityIdParam: 'id' })
   deliverShipment(@Param('id') id: string, @Body() body: PoTransitionDto) {
     return this.scmService.deliverShipment(id, body);
   }

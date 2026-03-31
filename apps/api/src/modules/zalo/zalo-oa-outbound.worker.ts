@@ -11,16 +11,22 @@ type SendOaMessageInput = {
   externalThreadId: string;
   content: string;
   recipientId?: string;
+  runtimeConfig?: {
+    outboundUrl?: string;
+    apiBaseUrl?: string;
+    outboundTimeoutMs?: number;
+    accessToken?: string;
+  };
 };
 
 @Injectable()
 export class ZaloOaOutboundWorkerService {
   async sendTextMessage(input: SendOaMessageInput) {
     const metadata = this.asRecord(input.account.metadataJson);
-    const accessToken = this.resolveAccessToken(input.account.accessTokenEnc, metadata);
-    const requestUrl = this.resolveRequestUrl(metadata);
+    const accessToken = this.resolveAccessToken(input.account.accessTokenEnc, metadata, input.runtimeConfig);
+    const requestUrl = this.resolveRequestUrl(metadata, input.runtimeConfig);
     const recipientId = this.requiredString(input.recipientId ?? input.externalThreadId, 'Thiếu recipientId/externalThreadId cho OA outbound.');
-    const timeoutMs = this.parseInt(process.env.ZALO_OA_OUTBOUND_TIMEOUT_MS, 20_000, 2_000, 180_000);
+    const timeoutMs = this.parseInt(input.runtimeConfig?.outboundTimeoutMs ?? process.env.ZALO_OA_OUTBOUND_TIMEOUT_MS, 20_000, 2_000, 180_000);
 
     const requestBody = {
       recipient: {
@@ -72,8 +78,12 @@ export class ZaloOaOutboundWorkerService {
     }
   }
 
-  private resolveRequestUrl(metadata: Record<string, unknown>) {
-    const explicitUrl = this.readString(metadata.outboundUrl)
+  private resolveRequestUrl(
+    metadata: Record<string, unknown>,
+    runtimeConfig?: { outboundUrl?: string; apiBaseUrl?: string }
+  ) {
+    const explicitUrl = this.readString(runtimeConfig?.outboundUrl)
+      ?? this.readString(metadata.outboundUrl)
       ?? this.readString(metadata.oaOutboundUrl)
       ?? this.readString(process.env.ZALO_OA_OUTBOUND_URL);
 
@@ -81,12 +91,19 @@ export class ZaloOaOutboundWorkerService {
       return explicitUrl;
     }
 
-    const baseUrl = this.readString(process.env.ZALO_OA_API_BASE_URL) ?? 'https://openapi.zalo.me/v3.0/oa';
+    const baseUrl = this.readString(runtimeConfig?.apiBaseUrl)
+      ?? this.readString(process.env.ZALO_OA_API_BASE_URL)
+      ?? 'https://openapi.zalo.me/v3.0/oa';
     return `${baseUrl.replace(/\/$/, '')}/message/cs`;
   }
 
-  private resolveAccessToken(accessTokenEnc: string | null, metadata: Record<string, unknown>) {
-    const token = this.readString(accessTokenEnc)
+  private resolveAccessToken(
+    accessTokenEnc: string | null,
+    metadata: Record<string, unknown>,
+    runtimeConfig?: { accessToken?: string }
+  ) {
+    const token = this.readString(runtimeConfig?.accessToken)
+      ?? this.readString(accessTokenEnc)
       ?? this.readString(metadata.accessToken)
       ?? this.readString(metadata.oaAccessToken)
       ?? this.readString(process.env.ZALO_OA_ACCESS_TOKEN);

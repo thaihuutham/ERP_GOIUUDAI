@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
+import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
 import {
   CreateApprovalDto,
   CreateWorkflowDefinitionDto,
@@ -47,60 +48,70 @@ export class WorkflowsController {
 
   @Get('instances/:id')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditRead({ action: 'READ_WORKFLOW_INSTANCE_DETAIL', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   getInstanceDetail(@Param('id') id: string) {
     return this.workflowsService.getInstanceDetail(id);
   }
 
   @Post('instances')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CREATE_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance' })
   createInstance(@Body() body: CreateWorkflowInstanceDto) {
     return this.workflowsService.createInstance(body);
   }
 
   @Patch('instances/:id')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   updateInstance(@Param('id') id: string, @Body() body: UpdateWorkflowInstanceDto) {
     return this.workflowsService.updateInstance(id, body);
   }
 
   @Post('instances/submit')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'SUBMIT_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance' })
   submitInstance(@Body() body: SubmitWorkflowDto) {
     return this.workflowsService.submitInstance(body);
   }
 
   @Post('instances/:id/approve')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'APPROVE_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   approveInstance(@Param('id') id: string, @Body() body: WorkflowDecisionDto) {
     return this.workflowsService.approveInstance(id, body);
   }
 
   @Post('instances/:id/reject')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'REJECT_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   rejectInstance(@Param('id') id: string, @Body() body: WorkflowDecisionDto) {
     return this.workflowsService.rejectInstance(id, body);
   }
 
   @Post('instances/:id/cancel')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CANCEL_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   cancelInstance(@Param('id') id: string, @Body() body: WorkflowDecisionDto) {
     return this.workflowsService.cancelInstance(id, body);
   }
 
   @Post('instances/:id/reassign')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'REASSIGN_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   reassignInstance(@Param('id') id: string, @Body() body: ReassignWorkflowDto) {
     return this.workflowsService.reassignInstance(id, body);
   }
 
   @Post('instances/:id/delegate')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'DELEGATE_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   delegateInstance(@Param('id') id: string, @Body() body: DelegateWorkflowDto) {
     return this.workflowsService.delegateInstance(id, body);
   }
 
   @Post('instances/:id/escalate')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'ESCALATE_WORKFLOW_INSTANCE', entityType: 'WorkflowInstance', entityIdParam: 'id' })
   escalateInstance(@Param('id') id: string, @Body() body: EscalateWorkflowDto) {
     return this.workflowsService.escalateInstance(id, body);
   }

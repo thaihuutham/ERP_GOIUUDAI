@@ -9,6 +9,10 @@
 2. Prisma schema chuẩn shared-schema, tất cả model có `tenant_Id`.
 3. Lọc tenant toàn cục qua Prisma query extension để tránh quên filter ở từng service.
 4. CRM list dùng cursor pagination (`cursor + take`) thay vì tải toàn bộ rồi slice.
+5. Audit log dùng kiến trúc tiered storage:
+   - `Hot`: PostgreSQL (12 tháng gần nhất, query nhanh).
+   - `Cold`: MinIO object storage trên VM (dữ liệu >12 tháng, query chậm hơn có kiểm soát).
+   - API/UI tra cứu audit hợp nhất hot+cold, bắt buộc query thời gian cụ thể khi chạm cold tier.
 
 ## Mở rộng tương lai
 - Tách read-model/reporting khi dữ liệu lớn (materialized views, warehouse).

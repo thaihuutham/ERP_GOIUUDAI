@@ -22,6 +22,12 @@ describe('ZaloService OA outbound', () => {
   } as any;
 
   const personalPool = {} as any;
+  const oaOutboundWorker = {
+    sendTextMessage: vi.fn()
+  } as any;
+  const runtimeSettings = {
+    getIntegrationRuntime: vi.fn()
+  } as any;
 
   let service: ZaloService;
 
@@ -29,8 +35,18 @@ describe('ZaloService OA outbound', () => {
     vi.restoreAllMocks();
     prisma.client.zaloAccount.findFirst.mockReset();
     conversationsService.ingestExternalMessage.mockReset();
+    oaOutboundWorker.sendTextMessage.mockReset();
+    runtimeSettings.getIntegrationRuntime.mockReset();
+    runtimeSettings.getIntegrationRuntime.mockResolvedValue({
+      zalo: {
+        outboundUrl: '',
+        apiBaseUrl: 'https://openapi.zalo.me/v3.0/oa',
+        outboundTimeoutMs: 20000,
+        accessToken: 'token_runtime'
+      }
+    });
 
-    service = new ZaloService(prisma, config, conversationsService, personalPool);
+    service = new ZaloService(prisma, config, conversationsService, personalPool, oaOutboundWorker, runtimeSettings);
   });
 
   it('sends OA message and ingests outbound message into thread', async () => {
@@ -45,7 +61,7 @@ describe('ZaloService OA outbound', () => {
 
     vi.spyOn(service as any, 'parseDate');
 
-    vi.spyOn((service as any).oaOutboundWorker, 'sendTextMessage').mockResolvedValue({
+    oaOutboundWorker.sendTextMessage.mockResolvedValue({
       requestUrl: 'https://example.test/zalo/oa/send',
       response: { error: 0, data: { message_id: 'oa_msg_123' } },
       externalMessageId: 'oa_msg_123'
@@ -60,16 +76,23 @@ describe('ZaloService OA outbound', () => {
       content: 'Xin chao tu OA'
     });
 
-    expect((service as any).oaOutboundWorker.sendTextMessage).toHaveBeenCalledWith({
-      account: {
-        id: 'oa_account_1',
-        accessTokenEnc: 'token_oa',
-        metadataJson: { outboundUrl: 'https://example.test/zalo/oa/send' }
-      },
-      externalThreadId: 'oa_user_123',
-      content: 'Xin chao tu OA',
-      recipientId: undefined
-    });
+    expect(oaOutboundWorker.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: {
+          id: 'oa_account_1',
+          accessTokenEnc: 'token_oa',
+          metadataJson: { outboundUrl: 'https://example.test/zalo/oa/send' }
+        },
+        externalThreadId: 'oa_user_123',
+        content: 'Xin chao tu OA',
+        recipientId: undefined,
+        runtimeConfig: expect.objectContaining({
+          apiBaseUrl: 'https://openapi.zalo.me/v3.0/oa',
+          outboundTimeoutMs: 20000,
+          accessToken: 'token_runtime'
+        })
+      })
+    );
 
     expect(conversationsService.ingestExternalMessage).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma, UserRole } from '@prisma/client';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateApprovalDto,
@@ -77,7 +78,10 @@ const TERMINAL_STATUSES: GenericStatus[] = [
 
 @Injectable()
 export class WorkflowsService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+  ) {}
 
   async listDefinitions(query: WorkflowsListQueryDto) {
     return this.prisma.client.workflowDefinition.findMany({
@@ -382,9 +386,21 @@ export class WorkflowsService {
   async delegateInstance(instanceId: string, body: DelegateWorkflowDto) {
     const instance = await this.ensureInstance(instanceId);
     this.assertPendingInstance(instance);
+    const approvalPolicy = await this.runtimeSettings.getApprovalMatrixRuntime();
+
+    if (approvalPolicy.delegation.enabled === false) {
+      throw new BadRequestException('Tính năng delegation đang tắt theo approval_matrix.delegation.enabled.');
+    }
 
     const currentStepKey = this.getCurrentStep(instance);
     const approval = await this.pickPendingApproval(instance.id, currentStepKey, body.approvalId, body.actorId);
+
+    if (approval.delegatedAt) {
+      const maxMs = Number(approvalPolicy.delegation.maxDays || 14) * 24 * 60 * 60 * 1000;
+      if (Date.now() - approval.delegatedAt.getTime() > maxMs) {
+        throw new BadRequestException('Không thể delegate: đã vượt quá approval_matrix.delegation.maxDays.');
+      }
+    }
 
     await this.prisma.client.approval.updateMany({
       where: { id: approval.id },
@@ -414,6 +430,21 @@ export class WorkflowsService {
   async escalateInstance(instanceId: string, body: EscalateWorkflowDto) {
     const instance = await this.ensureInstance(instanceId);
     this.assertPendingInstance(instance);
+    const approvalPolicy = await this.runtimeSettings.getApprovalMatrixRuntime();
+
+    if (approvalPolicy.escalation.enabled === false) {
+      throw new BadRequestException('Tính năng escalation đang tắt theo approval_matrix.escalation.enabled.');
+    }
+
+    const expectedEscalateRole = String(approvalPolicy.escalation.escalateToRole || '').toUpperCase();
+    if (body.escalatedTo.toUpperCase().startsWith('ROLE:')) {
+      const roleToken = body.escalatedTo.toUpperCase().slice('ROLE:'.length);
+      if (expectedEscalateRole && roleToken !== expectedEscalateRole) {
+        throw new BadRequestException(
+          `Escalate target role '${roleToken}' không khớp policy escalateToRole='${expectedEscalateRole}'.`
+        );
+      }
+    }
 
     const currentStepKey = this.getCurrentStep(instance);
     const approval = await this.pickPendingApproval(instance.id, currentStepKey, body.approvalId, body.actorId);
@@ -575,7 +606,14 @@ export class WorkflowsService {
       throw new BadRequestException('Workflow graph depth exceeded safe limit (20).');
     }
 
-    const approvers = this.resolveApprovers(step, instance.contextJson as Record<string, unknown> | null);
+    const context = (instance.contextJson as Record<string, unknown> | null) ?? null;
+    let approvers = this.resolveApprovers(step, context);
+    const approvalPolicy = await this.runtimeSettings.getApprovalMatrixRuntime();
+
+    if (approvers.length === 0) {
+      approvers = this.resolveApproversByMatrix(instance.targetType, context, approvalPolicy);
+    }
+
     if (approvers.length === 0) {
       if (step.autoApprove) {
         await this.advanceByDecision(instance.id, 'APPROVE', requesterId, `Auto-approved step ${step.key}`);
@@ -584,7 +622,8 @@ export class WorkflowsService {
       throw new BadRequestException(`No approvers resolved for workflow step: ${step.key}`);
     }
 
-    const dueAt = this.computeDueAt(step.slaHours);
+    const effectiveSlaHours = step.slaHours ?? (approvalPolicy.escalation.enabled ? approvalPolicy.escalation.slaHours : undefined);
+    const dueAt = this.computeDueAt(effectiveSlaHours);
     await this.prisma.client.approval.createMany({
       data: approvers.map((approverId) => ({
         tenant_Id: this.prisma.getTenantId(),
@@ -595,9 +634,40 @@ export class WorkflowsService {
         approverId,
         stepKey: step.key,
         dueAt,
+        escalatedTo: approvalPolicy.escalation.enabled ? approvalPolicy.escalation.escalateToRole : null,
         status: GenericStatus.PENDING
       }))
     });
+  }
+
+  private resolveApproversByMatrix(
+    targetType: string,
+    context: Record<string, unknown> | null,
+    policy: { rules: Array<{ module: string; minAmount: number; approverRole: string }> }
+  ) {
+    const moduleKey = this.mapTargetTypeToModule(targetType);
+    if (!moduleKey) return [];
+
+    const amount = Number(this.getFieldValue(context, 'amount') ?? this.getFieldValue(context, 'totalAmount') ?? 0);
+    const matchedRules = policy.rules
+      .filter((rule) => rule.module === moduleKey && amount >= Number(rule.minAmount ?? 0))
+      .sort((a, b) => Number(b.minAmount ?? 0) - Number(a.minAmount ?? 0));
+
+    const topRule = matchedRules[0];
+    if (!topRule?.approverRole) {
+      return [];
+    }
+    return [`ROLE:${String(topRule.approverRole).toUpperCase()}`];
+  }
+
+  private mapTargetTypeToModule(targetType: string) {
+    const normalized = String(targetType || '').trim().toLowerCase();
+    if (!normalized) return null;
+    if (normalized.includes('order')) return 'sales';
+    if (normalized.includes('invoice') || normalized.includes('journal') || normalized.includes('payment')) return 'finance';
+    if (normalized.includes('purchase') || normalized.includes('shipment') || normalized.includes('scm')) return 'scm';
+    if (normalized.includes('leave') || normalized.includes('payroll') || normalized.includes('hr')) return 'hr';
+    return normalized;
   }
 
   private resolveApprovers(step: WorkflowStep, context: Record<string, unknown> | null): string[] {
