@@ -9,7 +9,8 @@ import {
   Wallet,
   TrendingUp,
   Clock,
-  CheckCircle2
+  CheckCircle2,
+  Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
@@ -145,6 +146,7 @@ export function FinanceOperationsBoard() {
 
   const [isTransitioningInvoice, setIsTransitioningInvoice] = useState(false);
   const [isAllocatingPayment, setIsAllocatingPayment] = useState(false);
+  const [isArchivingInvoice, setIsArchivingInvoice] = useState(false);
   const [paymentForm, setPaymentForm] = useState<PaymentFormState>(buildInitialPaymentForm());
 
   const loadInvoices = async () => {
@@ -367,6 +369,30 @@ export function FinanceOperationsBoard() {
     }
   };
 
+  const handleArchiveInvoice = async () => {
+    if (!selectedInvoice || !canMutate || isArchivingInvoice) return;
+    if (!window.confirm(`Lưu trữ hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}?`)) {
+      return;
+    }
+
+    setIsArchivingInvoice(true);
+    try {
+      await apiRequest(`/finance/invoices/${selectedInvoice.id}`, {
+        method: 'DELETE'
+      });
+      setResultMessage(`Đã lưu trữ hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}.`);
+      setErrorMessage(null);
+      setSelectedInvoice(null);
+      setPaymentForm(buildInitialPaymentForm());
+      await loadInvoices();
+      await loadAging();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể lưu trữ hóa đơn');
+    } finally {
+      setIsArchivingInvoice(false);
+    }
+  };
+
   return (
     <div className="finance-board">
       {errorMessage && (
@@ -541,6 +567,14 @@ export function FinanceOperationsBoard() {
               <a className="btn btn-ghost" href={buildAuditObjectHref('Invoice', selectedInvoice.id)}>
                 <History size={16} /> Xem audit log
               </a>
+
+              <button
+                className="btn btn-danger"
+                disabled={!canMutate || isArchivingInvoice || normalizedInvoiceStatus === 'ARCHIVED'}
+                onClick={handleArchiveInvoice}
+              >
+                <Trash2 size={16} /> {isArchivingInvoice ? 'Đang lưu trữ...' : 'Lưu trữ hóa đơn'}
+              </button>
 
               <form onSubmit={handleAllocatePayment} style={{ display: 'grid', gap: '0.5rem', padding: '0.75rem', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
                 <label style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.2rem' }}>Ghi nhận thanh toán</label>

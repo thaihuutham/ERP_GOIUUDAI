@@ -1,9 +1,270 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-03-31 22:38 +07
+- Time: 2026-04-01 15:36 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-03-31_2238_codex.md`
+- Session Log: `.agent/sessions/2026-04-01_1536_codex.md`
+
+## Persistent Rule (System Stability Gate)
+- Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
+- Không được kết thúc task khi chưa verify hệ thống ổn định.
+- Checklist bắt buộc trước khi trả lời "xong":
+  1. Docker/DB:
+     - `docker ps` phải có `erp-postgres` ở trạng thái `Up`.
+     - Cổng DB local phải lắng nghe (`localhost:55432` cho profile hiện tại).
+  2. Prisma migration:
+     - `npm run prisma:migrate:status --workspace @erp/api` phải `Database schema is up to date`.
+     - Nếu có pending migration: chạy `npm run prisma:migrate:deploy --workspace @erp/api` rồi kiểm tra lại status.
+  3. Backend quality gate:
+     - tối thiểu chạy `npm run lint --workspace @erp/api` và `npm run build --workspace @erp/api`.
+     - chạy test mục tiêu theo phạm vi thay đổi (không bỏ qua nếu có test liên quan).
+  4. Frontend quality gate (khi có thay đổi web/UI/CSS):
+     - `npm run lint --workspace @erp/web`
+     - `npm run build --workspace @erp/web`
+     - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
+  5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-01 15:10 (Runtime recovery cho EADDRINUSE + Failed to fetch)
+- User báo:
+  - `npm run dev:web` lỗi `EADDRINUSE :3000`.
+  - UI vẫn mở được nhưng dashboard báo `Failed to fetch`.
+- Chẩn đoán:
+  - Cổng `3000` bị process `next dev` cũ chiếm (`PID 59516/59515`).
+  - API backend ở `3001` chưa chạy nên web gọi API thất bại.
+- Đã xử lý runtime:
+  - kill process web cũ chiếm `:3000`.
+  - khởi chạy lại:
+    - `npm run dev:api` (NestJS, `http://localhost:3001`).
+    - `npm run dev:web` (Next.js, `http://localhost:3000`).
+- Verify:
+  - `curl http://localhost:3001/api/v1/health` ✅ (`{"ok":true,...}`)
+  - `curl http://localhost:3001/api/v1/reports/overview` ✅ (trả JSON dashboard)
+  - `curl -I http://localhost:3000` ✅ (`HTTP/1.1 200 OK`)
+
+## Update 2026-04-01 15:36 (Enable xóa mềm/Archive cho CRM-Sales-Finance-HR)
+- User yêu cầu thao tác xóa cho: nhân viên, bảng lương, tuyển dụng, khách hàng, hóa đơn, đơn hàng.
+- Chẩn đoán:
+  - API trước đó chưa expose endpoint xóa cho các entity trên.
+  - UI custom boards tương ứng cũng chưa có nút thao tác lưu trữ.
+- Đã triển khai:
+  - Backend API thêm `DELETE` (xóa mềm -> `status=ARCHIVED`):
+    - CRM: `DELETE /crm/customers/:id`, `DELETE /crm/customer-360/:id`
+    - Sales: `DELETE /sales/orders/:id`
+    - Finance: `DELETE /finance/invoices/:id`
+    - HR: `DELETE /hr/employees/:id`, `DELETE /hr/payrolls/:id`, `DELETE /hr/payroll-components/:id`, `DELETE /hr/recruitment/:id`
+  - Bổ sung guard an toàn:
+    - Sales order: chặn archive khi còn hóa đơn liên kết chưa đóng.
+    - Finance invoice: chặn archive khi đã có thanh toán/đối soát.
+  - Frontend thêm nút thao tác trực tiếp:
+    - `apps/web/components/crm-customers-board.tsx`
+    - `apps/web/components/sales-operations-board.tsx`
+    - `apps/web/components/finance-operations-board.tsx`
+    - `apps/web/components/hr-operations-board.tsx`
+  - `apps/web/lib/module-definitions.ts` bổ sung action `DELETE` cho:
+    - customer-360, orders, employees, payroll-components, payroll, recruitment, invoices.
+- Verify:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/sales.service.test.ts test/finance.service.test.ts test/hr.service.test.ts test/crm.api-flow.test.ts` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts` ✅
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/hr-recruitment-pipeline.spec.ts` ✅
+  - `docker ps` có `erp-postgres` `Up` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Update 2026-04-01 15:02 (Hydration hotfix v2 cho lỗi Load failed còn sót)
+- User phản hồi vẫn gặp `Load failed` sau patch đầu tiên.
+- Đã tăng mức bảo vệ hydration tại root:
+  - `apps/web/app/layout.tsx`
+    - giữ `suppressHydrationWarning` trên `<html>`
+    - thêm `suppressHydrationWarning` trên `<body>`
+- Mục tiêu:
+  - bao phủ trường hợp extension chèn class/attribute ở cả `html` lẫn `body` trước khi React hydrate.
+- Verify:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - rebuild sạch cache:
+    - `chmod -R u+w apps/web/.next && rm -rf apps/web/.next && npm run build --workspace @erp/web` ✅
+
+## Update 2026-04-01 14:56 (Hotfix hydration mismatch do extension chèn attribute HTML)
+- User báo lỗi console Next.js:
+  - `A tree hydrated but some attributes of the server rendered HTML didn't match the client properties`.
+  - Diff tại root `<html>` có attribute lạ `data-yd-content-ready="true"`.
+- Root cause:
+  - HTML bị mutate phía client bởi browser extension trước lúc React hydrate; server HTML không chứa attribute này nên phát sinh mismatch.
+- Đã triển khai:
+  - cập nhật `apps/web/app/layout.tsx`:
+    - thêm `suppressHydrationWarning` cho thẻ `<html lang="vi">`.
+  - mục tiêu: chặn warning hydration giả (không phải bug business logic của ERP app) khi client bị extension inject attribute.
+- Verify:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+
+## Update 2026-04-01 14:15 (Workflow Builder UX hardening theo yêu cầu vận hành)
+- User báo lỗi: nút `+ Tạo definition mới` không hoạt động rõ ràng và yêu cầu bỏ nhập tay các trường bắt buộc chính xác.
+- Đã triển khai:
+  - Fix hành vi `+ Tạo definition mới` trong `apps/web/components/workflows-operations-board.tsx`:
+    - luôn tạo draft mới bằng factory state mới,
+    - reset simulation/result state,
+    - hiển thị thông báo xác nhận tạo draft mới.
+  - Chuyển các trường bắt buộc sang dropdown/select:
+    - module, initial step, step template/key,
+    - danh sách approver (role/user) cho Builder,
+    - approve/reject transition targets,
+    - simulate actions,
+    - delegate/reassign target approver tại Inbox action panel.
+  - Bỏ yêu cầu nhập tay cú pháp approver nhiều dòng để tránh sai format.
+  - Bổ sung E2E mới xác nhận nút `+ Tạo definition mới` thực sự reset về draft mới:
+    - `apps/web/e2e/tests/workflows-module.spec.ts`.
+  - Cập nhật nguyên tắc toàn dự án (áp dụng cho các module về sau):
+    - `docs/specs/CONVENTIONS.md`
+    - `docs/specs/PROJECT_OVERVIEW.md`
+    - chuẩn: trường bắt buộc cần giá trị chính xác phải chọn từ danh mục chuẩn hóa, không cho nhập tay tự do.
+- Verify:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (sau khi regenerate `.next/types` bằng build)
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/workflows-module.spec.ts` ✅ (`5 passed`)
+  - Stability gate:
+    - `docker compose up -d postgres` (khôi phục `erp-postgres` sau khi Docker restart)
+    - `docker ps` có `erp-postgres` `Up`
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+
+## Update 2026-04-01 11:48 (RETAIL-WORKFLOWS-001 - ERP-ready acceptance closure)
+- User yêu cầu chốt checklist ERP-ready cho module Quy trình:
+  - benchmark inbox `p95 < 300ms`,
+  - bổ sung E2E nhánh `delegate/reassign/error-path`,
+  - xác nhận luồng tạo Quy trình hoạt động,
+  - biên soạn sổ tay người dùng non-IT.
+- Kết quả triển khai trong session:
+  - Benchmark script mới:
+    - `apps/api/scripts/benchmark-workflows-inbox.ts`
+    - npm script: `benchmark:workflows:inbox` trong `apps/api/package.json`.
+  - Smoke script lifecycle định nghĩa workflow:
+    - `apps/api/scripts/smoke-workflow-definition-lifecycle.ts`
+    - npm script: `smoke:workflows:lifecycle`.
+  - E2E workflows mở rộng:
+    - `apps/web/e2e/tests/workflows-module.spec.ts` có 4 case:
+      - builder + approve + monitor,
+      - delegate success,
+      - reassign success,
+      - error-path Validation+Policy (assert banner lỗi user nhìn thấy).
+  - Evidence + tài liệu:
+    - Evidence: `planning/WORKFLOWS_ERP_READY_EVIDENCE_2026-04-01.md`.
+    - Sổ tay người dùng: `Huong dan su dung/So tay module Quy trinh.md`.
+- Runtime verification date:
+  - **April 1, 2026** đã chạy pass chuỗi `create -> validate -> simulate -> publish -> archive`.
+- Verify commands đã pass:
+  - `docker ps` (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN`
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api`
+  - `npm run lint --workspace @erp/api`
+  - `npm run build --workspace @erp/api`
+  - `npm run build --workspace @erp/web`
+  - `npm run lint --workspace @erp/web` (pass sau khi regenerate `.next/types` bằng `next build`)
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/workflows-module.spec.ts` (4 passed)
+  - `npm run benchmark:workflows:inbox --workspace @erp/api` với:
+    - `concurrency=50`, `requests=1000`, `warmup=30`, `approverId=cmncwcixz009it3xxabg1uxu1`
+    - kết quả `p95=65.46ms`, pass ngưỡng `<300ms`.
+  - `npm run smoke:workflows:lifecycle --workspace @erp/api`:
+    - `definitionId=cmnfk8t1s000kt3zg9jbu5wk2`, pass toàn bộ bước lifecycle.
+
+## Update 2026-04-01 11:02 (RETAIL-WORKFLOWS-001 - Workflow ERP hardening + full low-code board)
+- User yêu cầu implement full plan nâng cấp module Quy Trình theo chuẩn ERP (SoD nghiêm ngặt, low-code đầy đủ, SLA auto-escalation).
+- Kết quả triển khai:
+  - Backend workflow engine:
+    - hardening actor resolution ưu tiên auth context; `actorId` body giữ backward-compat.
+    - loại bỏ fallback duyệt “pending bất kỳ”; enforce đúng assignee.
+    - SoD mặc định: requester không được tự approve.
+    - bổ sung approval policy `ANY/ALL/MIN_N`, normalize assignment về user cụ thể, audit fields mở rộng.
+    - thêm APIs nghiệp vụ:
+      - `GET /workflows/inbox`
+      - `GET /workflows/requests`
+      - `POST /workflows/definitions/:id/validate|simulate|publish|archive`
+      - `POST /workflows/tasks/:id/approve|reject|delegate|reassign`
+  - Runtime automation:
+    - thêm scheduler `apps/api/src/modules/workflows/workflow-escalation-scheduler.service.ts`.
+    - quét SLA định kỳ 5 phút, escalation idempotent.
+  - Tích hợp liên module:
+    - Sales order edit ưu tiên submit vào workflow engine (fallback legacy khi thiếu definition).
+  - Web low-code operations board:
+    - tạo `apps/web/components/workflows-operations-board.tsx` với 4 tab nghiệp vụ:
+      - Inbox
+      - Requests
+      - Builder
+      - Monitor
+    - Builder có save draft + validate + simulate + publish/archive.
+  - Migration + env:
+    - migration mới `apps/api/prisma/migrations/20260401094000_workflow_assignment_policy_hardening`.
+    - env scheduler bổ sung trong `config/.env.example`.
+  - Governance:
+    - ADR mới: `docs/decisions/ADR-024-WORKFLOW-ERP-HARDENING-SOD-LOWCODE-SLA.md`.
+- Verify:
+  - `docker ps` có `erp-postgres` trạng thái `Up` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npx prisma migrate status --schema apps/api/prisma/schema.prisma` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/workflows.service.test.ts` ✅
+  - `npm run test --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/workflows-module.spec.ts` ✅
+- Ghi chú:
+  - `npm run prisma:migrate:status --workspace @erp/api` hiện trả kết quả không đồng nhất trong local workspace runner; đã kiểm tra trạng thái chuẩn bằng lệnh `npx prisma migrate status --schema apps/api/prisma/schema.prisma` với `DATABASE_URL` explicit.
+
+## Update 2026-04-01 06:45 (RETAIL-AUDIT-003 - Ma trận ủy quyền Audit Log theo cấp quản lý)
+- User yêu cầu triển khai full plan phân quyền xem audit theo cấp quản lý:
+  - Giám đốc xem toàn công ty.
+  - Trưởng chi nhánh xem trong phạm vi chi nhánh.
+  - Trưởng phòng xem trong phạm vi phòng ban.
+  - Admin có thể bật/tắt từng nhóm; nhóm tắt thì toàn bộ user nhóm đó bị chặn.
+- Kết quả triển khai:
+  - Backend scope service mới:
+    - thêm `apps/api/src/modules/audit/audit-access-scope.service.ts`.
+    - resolve scope từ auth context + `OrgUnit.managerEmployeeId`:
+      - `ADMIN` luôn `company`.
+      - `MANAGER`:
+        - quản lý `COMPANY` + group `DIRECTOR` enabled => `company`.
+        - quản lý `BRANCH` + group `BRANCH_MANAGER` enabled => `branch` + descendants.
+        - quản lý `DEPARTMENT` + group `DEPARTMENT_MANAGER` enabled => `department` + descendants.
+      - `MANAGER` không có group hiệu lực bị `403` khi `denyIfUngroupedManager=true`.
+  - Enforce scope trực tiếp trong audit service:
+    - `apps/api/src/modules/audit/audit.service.ts`:
+      - hot query lọc `actorId` theo scope.
+      - cold matcher lọc cùng actor scope.
+      - `GET /audit/actions` lọc count/taxonomy theo scope.
+      - `pageInfo` bổ sung `accessScope` (`company|branch|department`).
+    - `apps/api/src/modules/audit/audit.module.ts` register provider mới.
+  - Settings runtime/policy:
+    - thêm default `access_security.auditViewPolicy` trong `settings-policy.types.ts`.
+    - normalize + validate `auditViewPolicy` trong `settings-policy.service.ts`.
+    - expose runtime `auditViewPolicy` trong `runtime-settings.service.ts`.
+  - Settings Center Enterprise:
+    - thêm section `Ma trận ủy quyền Audit Log theo cấp quản lý` trong domain `access_security`.
+    - thêm module `audit` vào bảng permission matrix.
+    - thêm UI gán `managerEmployeeId` cho org unit:
+      - khi tạo node tổ chức.
+      - cập nhật manager cho node hiện hữu.
+  - Audit module UI:
+    - hiển thị banner phạm vi xem theo `pageInfo.accessScope`.
+    - map lỗi policy 403 thành thông báo thân thiện cho user.
+  - Test cập nhật:
+    - API unit mới: `apps/api/test/audit-access-scope.service.test.ts`.
+    - mở rộng `apps/api/test/audit.service.test.ts` (scope filter hot/cold + actions scope).
+    - mở rộng `apps/api/test/settings-policy.service.test.ts` cho `auditViewPolicy`.
+    - E2E mới: `apps/web/e2e/tests/settings-center-audit-scope.spec.ts`.
+    - E2E audit: thêm case friendly error khi bị chặn policy.
+- Verify:
+  - `npm run test --workspace @erp/api -- test/audit.service.test.ts test/audit-access-scope.service.test.ts test/settings-policy.service.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/audit-module.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts` ✅
 
 ## Update 2026-03-31 22:38 (RETAIL-AUDIT-002 - Hot/Cold Audit 7 năm với MinIO VM)
 - User yêu cầu triển khai full kế hoạch tối ưu audit log:

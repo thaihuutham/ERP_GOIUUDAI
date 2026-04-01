@@ -211,6 +211,47 @@ export class FinanceService {
     return this.getInvoiceOrThrow(id);
   }
 
+  async archiveInvoice(id: string) {
+    const invoice = await this.getInvoiceOrThrow(id);
+
+    if (invoice.status === GenericStatus.ARCHIVED) {
+      return {
+        ...invoice,
+        orderId: invoice.order?.id ?? invoice.orderId ?? null,
+        orderNo: invoice.order?.orderNo ?? null
+      };
+    }
+
+    const allocationCount = await this.prisma.client.paymentAllocation.count({
+      where: { invoiceId: invoice.id }
+    });
+
+    if (allocationCount > 0 || Number(invoice.paidAmount ?? 0) > 0) {
+      throw new BadRequestException('Hóa đơn đã có thanh toán/đối soát, không thể lưu trữ thủ công.');
+    }
+
+    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? new Date(), 'lưu trữ hóa đơn');
+    await this.prisma.client.invoice.updateMany({
+      where: { id: invoice.id },
+      data: {
+        status: GenericStatus.ARCHIVED,
+        closedAt: new Date()
+      }
+    });
+
+    const updated = await this.getInvoiceOrThrow(id);
+    return {
+      ...updated,
+      orderId: updated.order?.id ?? updated.orderId ?? null,
+      orderNo: updated.order?.orderNo ?? null,
+      transition: {
+        action: 'ARCHIVE',
+        from: invoice.status,
+        to: GenericStatus.ARCHIVED
+      }
+    };
+  }
+
   async issueInvoice(id: string, payload: InvoiceTransitionDto) {
     return this.transitionInvoice(id, 'ISSUE', payload);
   }

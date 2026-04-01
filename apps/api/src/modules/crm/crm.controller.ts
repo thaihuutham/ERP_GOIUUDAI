@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -35,6 +35,12 @@ export class CrmController {
     return this.crmService.updateCustomer(id, body);
   }
 
+  @Delete('customers/:id')
+  @AuditAction({ action: 'ARCHIVE_CUSTOMER', entityType: 'Customer', entityIdParam: 'id' })
+  archiveCustomer(@Param('id') id: string) {
+    return this.crmService.archiveCustomer(id);
+  }
+
   @Get('customer-360')
   listCustomer360(
     @Query() query: PaginationQueryDto,
@@ -53,6 +59,11 @@ export class CrmController {
   @Patch('customer-360/:id')
   updateCustomer360(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.crmService.updateCustomer(id, body);
+  }
+
+  @Delete('customer-360/:id')
+  archiveCustomer360(@Param('id') id: string) {
+    return this.crmService.archiveCustomer(id);
   }
 
   @Get('interactions')

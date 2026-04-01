@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -22,6 +22,12 @@ export class HrController {
   @Patch('employees/:id')
   updateEmployee(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.hrService.updateEmployee(id, body);
+  }
+
+  @Delete('employees/:id')
+  @AuditAction({ action: 'ARCHIVE_EMPLOYEE', entityType: 'Employee', entityIdParam: 'id' })
+  archiveEmployee(@Param('id') id: string) {
+    return this.hrService.archiveEmployee(id);
   }
 
   @Get('departments')
@@ -114,6 +120,12 @@ export class HrController {
     return this.hrService.updatePayrollComponent(id, body);
   }
 
+  @Delete('payroll-components/:id')
+  @AuditAction({ action: 'ARCHIVE_PAYROLL_COMPONENT', entityType: 'PayrollComponent', entityIdParam: 'id' })
+  archivePayrollComponent(@Param('id') id: string) {
+    return this.hrService.archivePayrollComponent(id);
+  }
+
   @Get('attendance')
   listAttendance(
     @Query() query: PaginationQueryDto,
@@ -190,6 +202,12 @@ export class HrController {
   @AuditAction({ action: 'PAY_PAYROLL', entityType: 'Payroll', entityIdParam: 'id' })
   payPayroll(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.hrService.payPayroll(id, body?.approverId ? String(body.approverId) : undefined);
+  }
+
+  @Delete('payrolls/:id')
+  @AuditAction({ action: 'ARCHIVE_PAYROLL', entityType: 'Payroll', entityIdParam: 'id' })
+  archivePayroll(@Param('id') id: string) {
+    return this.hrService.archivePayroll(id);
   }
 
   @Get('recruitment')
@@ -290,6 +308,12 @@ export class HrController {
   @Patch('recruitment/:id')
   updateRecruitment(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.hrService.updateRecruitment(id, body);
+  }
+
+  @Delete('recruitment/:id')
+  @AuditAction({ action: 'ARCHIVE_RECRUITMENT', entityType: 'Recruitment', entityIdParam: 'id' })
+  archiveRecruitment(@Param('id') id: string) {
+    return this.hrService.archiveRecruitment(id);
   }
 
   @Get('training')

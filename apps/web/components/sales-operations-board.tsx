@@ -151,6 +151,7 @@ export function SalesOperationsBoard() {
   const [decisionNote, setDecisionNote] = useState('');
   const [isHandlingDecision, setIsHandlingDecision] = useState(false);
   const [isExportingInvoice, setIsExportingInvoice] = useState(false);
+  const [isArchivingOrder, setIsArchivingOrder] = useState(false);
 
   const loadData = async () => {
     if (!canView) return;
@@ -372,6 +373,29 @@ export function SalesOperationsBoard() {
     }
   };
 
+  const handleArchiveOrder = async () => {
+    if (!selectedOrder || !canMutate || isArchivingOrder) return;
+    if (!window.confirm(`Lưu trữ đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}?`)) {
+      return;
+    }
+
+    setIsArchivingOrder(true);
+    try {
+      await apiRequest(`/sales/orders/${selectedOrder.id}`, {
+        method: 'DELETE'
+      });
+      setResultMessage(`Đã lưu trữ đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}.`);
+      setErrorMessage(null);
+      setSelectedOrder(null);
+      setDecisionNote('');
+      await loadData();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể lưu trữ đơn hàng');
+    } finally {
+      setIsArchivingOrder(false);
+    }
+  };
+
   return (
     <div className="sales-board">
       {errorMessage && (
@@ -585,6 +609,13 @@ export function SalesOperationsBoard() {
               <a className="btn btn-ghost" href={buildAuditObjectHref('Order', selectedOrder.id)}>
                 <History size={16} /> Xem audit log
               </a>
+              <button
+                className="btn btn-danger"
+                disabled={!canMutate || isArchivingOrder || String(selectedOrder.status || '').toUpperCase() === 'ARCHIVED'}
+                onClick={handleArchiveOrder}
+              >
+                <Trash2 size={16} /> {isArchivingOrder ? 'Đang lưu trữ...' : 'Lưu trữ đơn hàng'}
+              </button>
             </div>
           </div>
         )}

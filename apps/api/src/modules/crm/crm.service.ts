@@ -247,6 +247,28 @@ export class CrmService {
     return customer;
   }
 
+  async archiveCustomer(id: string) {
+    const current = await this.prisma.client.customer.findFirst({ where: { id } });
+    if (!current) {
+      throw new NotFoundException('Không tìm thấy khách hàng.');
+    }
+
+    if (current.status !== GenericStatus.ARCHIVED) {
+      await this.prisma.client.customer.updateMany({
+        where: { id },
+        data: {
+          status: GenericStatus.ARCHIVED
+        }
+      });
+    }
+
+    const customer = await this.prisma.client.customer.findFirst({ where: { id } });
+    if (customer) {
+      await this.search.syncCustomerUpsert(customer);
+    }
+    return customer;
+  }
+
   async listInteractions(query: PaginationQueryDto, customerId?: string) {
     const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
     const keyword = query.q?.trim();

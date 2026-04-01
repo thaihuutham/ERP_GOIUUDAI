@@ -200,6 +200,19 @@ export class HrService {
     return this.prisma.client.employee.findFirst({ where: { id } });
   }
 
+  async archiveEmployee(id: string) {
+    const employee = await this.ensureEmployeeExists(id);
+    if (employee.status !== GenericStatus.ARCHIVED) {
+      await this.prisma.client.employee.updateMany({
+        where: { id },
+        data: {
+          status: GenericStatus.ARCHIVED
+        }
+      });
+    }
+    return this.prisma.client.employee.findFirst({ where: { id } });
+  }
+
   async listDepartments(query: PaginationQueryDto) {
     const keyword = query.q?.trim();
     const where: Prisma.DepartmentWhereInput = keyword
@@ -555,6 +568,19 @@ export class HrService {
       }
     });
 
+    return this.prisma.client.payrollComponent.findFirst({ where: { id } });
+  }
+
+  async archivePayrollComponent(id: string) {
+    const component = await this.ensurePayrollComponentExists(id);
+    if (component.status !== GenericStatus.ARCHIVED) {
+      await this.prisma.client.payrollComponent.updateMany({
+        where: { id },
+        data: {
+          status: GenericStatus.ARCHIVED
+        }
+      });
+    }
     return this.prisma.client.payrollComponent.findFirst({ where: { id } });
   }
 
@@ -1133,6 +1159,23 @@ export class HrService {
         lockedAt: new Date()
       }
     });
+    return this.prisma.client.payroll.findFirst({ where: { id } });
+  }
+
+  async archivePayroll(id: string) {
+    const payroll = await this.prisma.client.payroll.findFirst({ where: { id } });
+    if (!payroll) {
+      throw new NotFoundException('Không tìm thấy bảng lương.');
+    }
+    if (payroll.status !== GenericStatus.ARCHIVED) {
+      await this.prisma.client.payroll.updateMany({
+        where: { id },
+        data: {
+          status: GenericStatus.ARCHIVED,
+          lockedAt: payroll.lockedAt ?? new Date()
+        }
+      });
+    }
     return this.prisma.client.payroll.findFirst({ where: { id } });
   }
 
@@ -1960,6 +2003,19 @@ export class HrService {
       }
     });
 
+    return this.prisma.client.recruitment.findFirst({ where: { id } });
+  }
+
+  async archiveRecruitment(id: string) {
+    const recruitment = await this.ensureRecruitmentExists(id);
+    if (recruitment.status !== GenericStatus.ARCHIVED) {
+      await this.prisma.client.recruitment.updateMany({
+        where: { id },
+        data: {
+          status: GenericStatus.ARCHIVED
+        }
+      });
+    }
     return this.prisma.client.recruitment.findFirst({ where: { id } });
   }
 

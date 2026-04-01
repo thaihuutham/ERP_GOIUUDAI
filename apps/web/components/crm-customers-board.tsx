@@ -13,6 +13,7 @@ import {
   Target,
   Globe,
   History,
+  Trash2,
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
@@ -147,6 +148,7 @@ export function CrmCustomersBoard() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isDetailEditing, setIsDetailEditing] = useState(false);
   const [isSavingDetail, setIsSavingDetail] = useState(false);
+  const [isArchivingCustomer, setIsArchivingCustomer] = useState(false);
   const [detailForm, setDetailForm] = useState<DetailCustomerFormState>(buildDetailForm(null));
   const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -297,6 +299,30 @@ export function CrmCustomersBoard() {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi cập nhật hồ sơ khách hàng');
     } finally {
       setIsSavingDetail(false);
+    }
+  };
+
+  const handleArchiveCustomer = async () => {
+    if (!selectedCustomer || !canMutate || isArchivingCustomer) return;
+    if (!window.confirm(`Lưu trữ khách hàng ${selectedCustomer.fullName || selectedCustomer.id}?`)) {
+      return;
+    }
+
+    setIsArchivingCustomer(true);
+    try {
+      await apiRequest(`/crm/customers/${selectedCustomer.id}`, {
+        method: 'DELETE'
+      });
+      setResultMessage(`Đã lưu trữ khách hàng ${selectedCustomer.fullName || selectedCustomer.id}.`);
+      setErrorMessage(null);
+      setSelectedCustomer(null);
+      setIsDetailEditing(false);
+      setDetailForm(buildDetailForm(null));
+      await loadCustomers();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi lưu trữ khách hàng');
+    } finally {
+      setIsArchivingCustomer(false);
     }
   };
 
@@ -594,6 +620,14 @@ export function CrmCustomersBoard() {
                   </button>
                   <button className="btn btn-ghost" style={{ flex: 1 }} disabled>
                     Gửi thông báo
+                  </button>
+                  <button
+                    className="btn btn-danger"
+                    style={{ flex: 1 }}
+                    onClick={handleArchiveCustomer}
+                    disabled={!canMutate || isArchivingCustomer || String(selectedCustomer.status || '').toUpperCase() === 'ARCHIVED'}
+                  >
+                    <Trash2 size={16} /> {isArchivingCustomer ? 'Đang lưu trữ...' : 'Lưu trữ'}
                   </button>
                 </>
               )}

@@ -18,6 +18,7 @@ import {
   XCircle,
   TrendingUp,
   FileText,
+  Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
@@ -97,6 +98,9 @@ export function HrOperationsBoard() {
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
+  const [isArchivingEmployee, setIsArchivingEmployee] = useState(false);
 
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
@@ -109,7 +113,9 @@ export function HrOperationsBoard() {
     try {
       const payload = await apiRequest<any>('/hr/employees', { query: { q: search, limit: 100 } });
       setEmployees(Array.isArray(payload) ? payload : payload?.items || []);
+      setErrorMessage(null);
     } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : 'Không thể tải danh sách nhân sự');
     } finally {
       setIsLoading(false);
     }
@@ -127,8 +133,31 @@ export function HrOperationsBoard() {
       setLeaves(Array.isArray(lve) ? lve : lve?.items || []);
       setPayrolls(Array.isArray(pay) ? pay : pay?.items || []);
     } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : 'Không thể tải chi tiết nhân sự');
     } finally {
       setIsLoadingDetails(false);
+    }
+  };
+
+  const handleArchiveEmployee = async () => {
+    if (!selectedEmployee || !canMutate || isArchivingEmployee) return;
+    if (!window.confirm(`Lưu trữ nhân viên ${selectedEmployee.fullName || selectedEmployee.id}?`)) {
+      return;
+    }
+
+    setIsArchivingEmployee(true);
+    try {
+      await apiRequest(`/hr/employees/${selectedEmployee.id}`, {
+        method: 'DELETE'
+      });
+      setResultMessage(`Đã lưu trữ nhân viên ${selectedEmployee.fullName || selectedEmployee.id}.`);
+      setErrorMessage(null);
+      setSelectedEmployee(null);
+      await loadEmployees();
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : 'Không thể lưu trữ nhân viên');
+    } finally {
+      setIsArchivingEmployee(false);
     }
   };
 
@@ -154,6 +183,19 @@ export function HrOperationsBoard() {
 
   return (
     <div className="hr-board">
+      {errorMessage && (
+        <div className="finance-alert finance-alert-danger" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span><strong>Lỗi:</strong> {errorMessage}</span>
+          <button onClick={() => setErrorMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
+        </div>
+      )}
+      {resultMessage && (
+        <div className="finance-alert finance-alert-success" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span><strong>Thành công:</strong> {resultMessage}</span>
+          <button onClick={() => setResultMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
+        </div>
+      )}
+
       {/* Metrics */}
       <div className="metrics-grid" style={{ marginBottom: '2rem', gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <div className="finance-status-card" style={{ borderLeft: '4px solid var(--primary)' }}>
@@ -282,6 +324,14 @@ export function HrOperationsBoard() {
             <div style={{ display: 'flex', gap: '1rem', paddingTop: '1.5rem', borderTop: '1px solid var(--line)' }}>
               <button className="btn btn-primary" style={{ flex: 1 }}><CheckCircle2 size={16} /> Phê duyệt phép</button>
               <button className="btn btn-ghost" style={{ flex: 1 }}><FileText size={16} /> Bảng lương</button>
+              <button
+                className="btn btn-danger"
+                style={{ flex: 1 }}
+                onClick={handleArchiveEmployee}
+                disabled={!canMutate || isArchivingEmployee || String(selectedEmployee.status || '').toUpperCase() === 'ARCHIVED'}
+              >
+                <Trash2 size={16} /> {isArchivingEmployee ? 'Đang lưu trữ...' : 'Lưu trữ nhân viên'}
+              </button>
             </div>
           </div>
         )}

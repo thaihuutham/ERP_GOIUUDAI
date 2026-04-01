@@ -1,10 +1,11 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SearchService } from '../search/search.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { WorkflowsService } from '../workflows/workflows.service';
 import { CreateSalesOrderDto, OrderDecisionDto, UpdateSalesOrderDto } from './dto/sales.dto';
 
 type OrderItemInput = {
@@ -27,7 +28,8 @@ export class SalesService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SearchService) private readonly search: SearchService,
     @Inject(SettingsPolicyService) private readonly settingsPolicy: SettingsPolicyService,
-    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
+    @Optional() @Inject(WorkflowsService) private readonly workflowsService?: WorkflowsService
   ) {}
 
   async listOrders(query: PaginationQueryDto, status?: GenericStatus | 'ALL') {
@@ -232,6 +234,53 @@ export class SalesService {
       const resolved = await this.resolveApproverByAmount('sales', newTotalAmount, settings.approverId);
       if (!resolved.approverId) throw new BadRequestException('Chưa cấu hình người phê duyệt đơn hàng.');
 
+      const workflowDefinition = await this.resolveOrderEditWorkflowDefinition();
+      if (workflowDefinition && this.workflowsService) {
+        const workflowInstance = await this.workflowsService.submitInstance({
+          definitionId: workflowDefinition.id,
+          targetType: 'ORDER_EDIT',
+          targetId: order.id,
+          requestedBy: requesterId,
+          contextJson: {
+            requesterName,
+            originalAmount: oldTotalAmount,
+            totalAmount: newTotalAmount,
+            escalationRole: resolved.escalateToRole,
+            employeeId: nextEmployeeId ?? order.employeeId ?? null,
+            items: mappedItems
+          }
+        });
+
+        await this.prisma.client.order.updateMany({
+          where: { id: order.id },
+          data: { status: GenericStatus.PENDING }
+        });
+
+        const pendingOrder = await this.prisma.client.order.findFirst({
+          where: { id: order.id },
+          include: {
+            items: true,
+            invoices: {
+              select: {
+                id: true,
+                invoiceNo: true,
+                status: true,
+                createdAt: true
+              }
+            }
+          }
+        });
+        if (pendingOrder) {
+          await this.search.syncOrderUpsert(pendingOrder);
+        }
+
+        return {
+          message: 'Yêu cầu chỉnh sửa đã được gửi vào Workflow Engine.',
+          needsApproval: true,
+          workflowInstanceId: workflowInstance.id
+        };
+      }
+
       await this.prisma.client.approval.create({
         data: {
           tenant_Id: tenantId,
@@ -320,6 +369,85 @@ export class SalesService {
       await this.search.syncOrderUpsert(updated);
     }
     return updated;
+  }
+
+  async archiveOrder(orderId: string) {
+    const order = await this.prisma.client.order.findFirst({
+      where: { id: orderId },
+      include: {
+        items: true,
+        invoices: {
+          select: {
+            id: true,
+            invoiceNo: true,
+            status: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    if (!order) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+
+    if (order.status === GenericStatus.ARCHIVED) {
+      return order;
+    }
+
+    const blockingInvoice = order.invoices.find((invoice) => {
+      const invoiceStatus = String(invoice.status ?? '').toUpperCase();
+      return invoiceStatus !== GenericStatus.ARCHIVED && invoiceStatus !== GenericStatus.REJECTED;
+    });
+
+    if (blockingInvoice) {
+      throw new BadRequestException(
+        `Đơn hàng đã liên kết hóa đơn ${blockingInvoice.invoiceNo ?? blockingInvoice.id} chưa đóng. Vui lòng xử lý hóa đơn trước khi lưu trữ đơn hàng.`
+      );
+    }
+
+    await this.prisma.client.$transaction(async (tx) => {
+      await tx.order.updateMany({
+        where: { id: order.id },
+        data: {
+          status: GenericStatus.ARCHIVED
+        }
+      });
+
+      await tx.approval.updateMany({
+        where: {
+          targetType: 'ORDER_EDIT',
+          targetId: order.id,
+          status: GenericStatus.PENDING
+        },
+        data: {
+          status: GenericStatus.REJECTED,
+          decisionNote: 'Order was archived',
+          decidedAt: new Date()
+        }
+      });
+    });
+
+    const archived = await this.prisma.client.order.findFirst({
+      where: { id: order.id },
+      include: {
+        items: true,
+        invoices: {
+          select: {
+            id: true,
+            invoiceNo: true,
+            status: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    if (archived) {
+      await this.search.syncOrderUpsert(archived);
+    }
+
+    return archived;
   }
 
   async listApprovals() {
@@ -657,6 +785,21 @@ export class SalesService {
           : defaultValue.requireApprovalForDecrease,
       approverId: typeof payload.approverId === 'string' ? payload.approverId : undefined
     };
+  }
+
+  private async resolveOrderEditWorkflowDefinition() {
+    return this.prisma.client.workflowDefinition.findFirst({
+      where: {
+        module: 'sales',
+        status: GenericStatus.ACTIVE,
+        OR: [
+          { code: 'SALES_ORDER_EDIT' },
+          { code: 'ORDER_EDIT_APPROVAL' },
+          { code: 'ORDER_EDIT' }
+        ]
+      },
+      orderBy: [{ version: 'desc' }, { createdAt: 'desc' }]
+    });
   }
 
   private normalizeOrderItems(

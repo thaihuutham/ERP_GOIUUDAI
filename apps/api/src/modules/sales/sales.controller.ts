@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -27,6 +27,12 @@ export class SalesController {
   @AuditAction({ action: 'UPDATE_ORDER', entityType: 'Order', entityIdParam: 'id' })
   updateOrder(@Param('id') id: string, @Body() body: UpdateSalesOrderDto) {
     return this.salesService.updateOrder(id, body);
+  }
+
+  @Delete('orders/:id')
+  @AuditAction({ action: 'ARCHIVE_ORDER', entityType: 'Order', entityIdParam: 'id' })
+  archiveOrder(@Param('id') id: string) {
+    return this.salesService.archiveOrder(id);
   }
 
   @Post('orders/:id/approve')

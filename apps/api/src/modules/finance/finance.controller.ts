@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
@@ -47,6 +47,13 @@ export class FinanceController {
   @AuditAction({ action: 'UPDATE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   updateInvoice(@Param('id') id: string, @Body() body: UpdateInvoiceDto) {
     return this.financeService.updateInvoice(id, body);
+  }
+
+  @Delete('invoices/:id')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'ARCHIVE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
+  archiveInvoice(@Param('id') id: string) {
+    return this.financeService.archiveInvoice(id);
   }
 
   @Post('invoices/:id/issue')

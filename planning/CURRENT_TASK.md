@@ -1,11 +1,137 @@
 # CURRENT_TASK
 
 ## Trạng thái tổng quan
-- Phase: Global Audit Log Hardening + Audit Hot/Cold Tier + HR/Sales/Finance stabilization
-- Last updated: 2026-03-31 22:38 +07
+- Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization
+- Last updated: 2026-04-01 15:36 +07
 - Owner: Codex session
+- Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-01 15:10
+- Runtime recovery (không đổi business logic):
+  - xử lý `EADDRINUSE` do process `next dev` cũ chiếm cổng `3000`.
+  - xử lý `Failed to fetch` do API `3001` chưa chạy.
+- Actions:
+  - kill process web cũ ở port 3000.
+  - khởi chạy lại `npm run dev:api` và `npm run dev:web`.
+- Verify:
+  - `curl http://localhost:3001/api/v1/health` ✅
+  - `curl http://localhost:3001/api/v1/reports/overview` ✅
+  - `curl -I http://localhost:3000` ✅
+
+## Session Update 2026-04-01 15:36
+- Delete/Archive enablement cho CRM/Sales/Finance/HR:
+  - bổ sung API `DELETE` (xóa mềm = chuyển `status -> ARCHIVED`) cho:
+    - CRM customer: `DELETE /crm/customers/:id`, `DELETE /crm/customer-360/:id`
+    - Sales order: `DELETE /sales/orders/:id` (có guard: chặn khi còn hóa đơn liên kết chưa đóng)
+    - Finance invoice: `DELETE /finance/invoices/:id` (có guard: chặn khi đã có thanh toán/đối soát)
+    - HR employee/payroll/payroll-component/recruitment:
+      - `DELETE /hr/employees/:id`
+      - `DELETE /hr/payrolls/:id`
+      - `DELETE /hr/payroll-components/:id`
+      - `DELETE /hr/recruitment/:id`
+  - thêm nút thao tác lưu trữ trực tiếp trên UI:
+    - `apps/web/components/crm-customers-board.tsx`
+    - `apps/web/components/sales-operations-board.tsx`
+    - `apps/web/components/finance-operations-board.tsx`
+    - `apps/web/components/hr-operations-board.tsx`
+  - chuẩn hóa action `DELETE` trong `apps/web/lib/module-definitions.ts` cho employees/payroll/payroll-components/recruitment/customers/orders/invoices để hiển thị trên các màn hình dùng ModuleWorkbench.
+- Verify:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/sales.service.test.ts test/finance.service.test.ts test/hr.service.test.ts test/crm.api-flow.test.ts` ✅ (19 tests)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts` ✅
+  - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/hr-recruitment-pipeline.spec.ts` ✅
+  - `docker ps` có `erp-postgres` `Up` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-01 15:02
+- Hydration hotfix v2:
+  - bổ sung `suppressHydrationWarning` cho cả `html` và `body` trong root layout.
+  - xử lý trường hợp browser extension mutate DOM trước hydrate gây `Load failed`/hydration mismatch.
+- Verify:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - rebuild sạch `.next` cache + build lại ✅
+
+## Session Update 2026-04-01 14:56
+- Hotfix Web runtime:
+  - xử lý warning hydration mismatch ở root layout khi browser extension inject attribute vào thẻ `html`.
+  - cập nhật `apps/web/app/layout.tsx` thêm `suppressHydrationWarning`.
+- Verify:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
 
 ## In Progress
+### Task ID: RETAIL-WORKFLOWS-001
+- Tên: Nâng cấp module Quy Trình ERP (full low-code, SoD nghiêm ngặt, SLA automation)
+- Mục tiêu:
+  - Chuẩn hóa workflow engine theo chuẩn ERP cho phê duyệt liên phòng ban.
+  - Bắt buộc actor duyệt từ auth context; chặn duyệt sai người và self-approval (SoD).
+  - Bổ sung inbox/requests và builder/monitor UX nghiệp vụ thay cho generic workbench.
+  - Kích hoạt SLA auto-escalation scheduler idempotent.
+  - Chuẩn hóa tích hợp liên module (Sales/HR/Finance/SCM) qua workflow engine thống nhất.
+- Tiến độ:
+  - [x] Data model/migration:
+    - mở rộng `Approval` với assignment/policy/audit/escalation fields.
+    - migration `20260401094000_workflow_assignment_policy_hardening`.
+  - [x] Workflow API/engine hardening:
+    - thêm endpoints:
+      - `GET /workflows/inbox`
+      - `GET /workflows/requests`
+      - `POST /workflows/definitions/:id/validate|simulate|publish|archive`
+      - `POST /workflows/tasks/:id/approve|reject|delegate|reassign`
+    - enforce actor từ auth context.
+    - loại bỏ fallback duyệt pending không đúng assignee.
+    - SoD mặc định chặn requester tự duyệt.
+    - hỗ trợ approval mode `ANY|ALL|MIN_N`.
+  - [x] Runtime automation:
+    - thêm scheduler quét SLA 5 phút:
+      - `apps/api/src/modules/workflows/workflow-escalation-scheduler.service.ts`
+    - escalation idempotent (`escalatedAt` gate + conditional update).
+  - [x] Low-code Web UX:
+    - `apps/web/components/workflows-operations-board.tsx` với 4 tab:
+      - Inbox
+      - Requests
+      - Builder
+      - Monitor
+    - Builder có save draft + validate + simulate + publish/archive.
+  - [x] UX hardening chống nhập sai dữ liệu bắt buộc:
+    - fix nút `+ Tạo definition mới` luôn tạo draft mới (reset rõ ràng, không còn trạng thái “bấm mà như không chạy”).
+    - chuyển trường bắt buộc sang chọn từ danh sách:
+      - module
+      - initial step
+      - step template/key
+      - approver (role/user)
+      - approve/reject transitions
+      - simulate actions
+      - delegate/reassign target approver
+    - bỏ nhập tay cú pháp approver nhiều dòng trong Builder để giảm lỗi vận hành.
+  - [x] Integration module:
+    - Sales order-edit approval ưu tiên workflow engine, fallback legacy tương thích ngược.
+  - [x] Verify kỹ thuật:
+    - `docker ps` có `erp-postgres` `Up` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npx prisma migrate status --schema apps/api/prisma/schema.prisma` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/workflows.service.test.ts` ✅
+    - `npm run test --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/workflows-module.spec.ts` ✅ (5 tests)
+    - `npm run benchmark:workflows:inbox --workspace @erp/api` ✅ (`p95=65.46ms < 300ms`)
+    - `npm run smoke:workflows:lifecycle --workspace @erp/api` ✅ (`create -> validate -> simulate -> publish -> archive`)
+  - [x] ADR:
+    - `docs/decisions/ADR-024-WORKFLOW-ERP-HARDENING-SOD-LOWCODE-SLA.md`
+  - [x] Chốt acceptance checklist ERP-ready:
+    - benchmark inbox `<300ms` theo acceptance NFR đã pass.
+    - E2E đã phủ nhánh `delegate`, `reassign`, `error-path Validation+Policy`.
+    - evidence: `planning/WORKFLOWS_ERP_READY_EVIDENCE_2026-04-01.md`.
+
 ### Task ID: RETAIL-AUDIT-001
 - Tên: Triển khai Audit Log chuẩn ERP (global, filter theo object/action)
 - Mục tiêu:
@@ -97,6 +223,48 @@
     - cập nhật runbook: `docs/deployment/VM_AUTODEPLOY.md`.
     - cập nhật specs/architecture: `PROJECT_OVERVIEW.md`, `SCALING_DESIGN.md`.
   - [ ] Verify full regression API/Web trong session hiện tại (lint/build/test targeted).
+
+### Task ID: RETAIL-AUDIT-003
+- Tên: Ma trận ủy quyền xem Audit Log theo cấp quản lý (Settings Center Enterprise)
+- Mục tiêu:
+  - Áp scope xem audit theo cấp quản lý:
+    - `DIRECTOR` (quản lý `COMPANY`) => full company.
+    - `BRANCH_MANAGER` (quản lý `BRANCH`) => branch + descendants.
+    - `DEPARTMENT_MANAGER` (quản lý `DEPARTMENT`) => department + descendants.
+  - Admin bật/tắt độc lập theo từng nhóm quản lý.
+  - `MANAGER` chưa gán `OrgUnit.managerEmployeeId` bị chặn theo policy mặc định.
+  - Đồng bộ enforcement cho hot/cold logs và `GET /audit/actions`.
+- Tiến độ:
+  - [x] Backend scope resolver:
+    - thêm `AuditAccessScopeService` (`apps/api/src/modules/audit/audit-access-scope.service.ts`).
+    - source-of-truth nhóm quản lý: `OrgUnit.managerEmployeeId`.
+    - rule union scope + ưu tiên rộng hơn (`company > branch > department`).
+    - deny manager không có scope hiệu lực khi `denyIfUngroupedManager=true`.
+  - [x] Enforce scope trong audit service:
+    - `GET /audit/logs` và `GET /audit/objects/:entityType/:entityId/history`:
+      - filter hot theo `actorId IN allowedActorIds` khi không phải company scope.
+      - matcher cold tier lọc cùng actor scope.
+      - `pageInfo` bổ sung `accessScope`.
+    - `GET /audit/actions` lọc taxonomy/count theo scope actor.
+  - [x] Runtime settings `access_security`:
+    - thêm `auditViewPolicy` vào default domain + normalize/validate trong settings policy service.
+    - expose `auditViewPolicy` qua runtime settings service.
+  - [x] Settings Center Enterprise:
+    - thêm section `Ma trận ủy quyền Audit Log theo cấp quản lý` trong domain `access_security`.
+    - thêm module `audit` vào permission matrix.
+    - bổ sung UI gán `managerEmployeeId` cho org unit (create + update nhanh).
+  - [x] Test/verify:
+    - API unit:
+      - `npm run test --workspace @erp/api -- test/audit.service.test.ts test/audit-access-scope.service.test.ts test/settings-policy.service.test.ts` ✅
+      - `npm run lint --workspace @erp/api` ✅
+      - `npm run build --workspace @erp/api` ✅
+    - Web + E2E:
+      - `npm run lint --workspace @erp/web` ✅
+      - `npm run build --workspace @erp/web` ✅
+      - `npx playwright test -c apps/web/e2e/playwright.crm-sales-finance.config.ts apps/web/e2e/tests/audit-module.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts` ✅
+  - [x] ADR:
+    - `docs/decisions/ADR-023-AUDIT-VIEW-AUTHORIZATION-MATRIX-BY-MANAGER-SCOPE.md`
+  - [ ] Chờ UAT nghiệp vụ trên dữ liệu production-like cho policy scope theo actor.
 
 ### Task ID: RETAIL-CORE-006
 - Tên: Hoàn thiện CRM-Sales-Finance Core Flow (Operations Boards + ERP transitions)

@@ -108,6 +108,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'ownerStaffId', label: 'Mã nhân viên phụ trách' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
+          },
+          {
+            key: 'archive-customer-360',
+            label: 'Lưu trữ khách hàng',
+            method: 'DELETE',
+            endpoint: '/crm/customer-360/:id',
+            fields: [{ name: 'id', label: 'Mã khách hàng', required: true }]
           }
         ]
       },
@@ -352,6 +359,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'quantity', label: 'Số lượng mới', type: 'number', required: true, defaultValue: 1 },
               { name: 'unitPrice', label: 'Đơn giá mới', type: 'number', required: true }
             ]
+          },
+          {
+            key: 'archive-order',
+            label: 'Lưu trữ đơn hàng',
+            method: 'DELETE',
+            endpoint: '/sales/orders/:id',
+            fields: [{ name: 'id', label: 'Mã đơn hàng', required: true }]
           }
         ]
       },
@@ -438,6 +452,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'workShiftId', label: 'Mã ca làm việc' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
+          },
+          {
+            key: 'archive-employee',
+            label: 'Lưu trữ nhân viên',
+            method: 'DELETE',
+            endpoint: '/hr/employees/:id',
+            fields: [{ name: 'id', label: 'Mã nhân viên', required: true }]
           }
         ]
       },
@@ -682,6 +703,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'isTaxable', label: 'Chịu thuế', type: 'checkbox' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
+          },
+          {
+            key: 'archive-payroll-component',
+            label: 'Lưu trữ cấu phần',
+            method: 'DELETE',
+            endpoint: '/hr/payroll-components/:id',
+            fields: [{ name: 'id', label: 'Mã cấu phần', required: true }]
           }
         ]
       },
@@ -803,6 +831,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/hr/payrolls/:id/pay',
             fields: [{ name: 'id', label: 'Mã bảng lương', required: true }]
+          },
+          {
+            key: 'archive-payroll',
+            label: 'Lưu trữ bảng lương',
+            method: 'DELETE',
+            endpoint: '/hr/payrolls/:id',
+            fields: [{ name: 'id', label: 'Mã bảng lương', required: true }]
           }
         ]
       },
@@ -837,6 +872,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'stage', label: 'Giai đoạn' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
+          },
+          {
+            key: 'archive-recruitment',
+            label: 'Lưu trữ tuyển dụng',
+            method: 'DELETE',
+            endpoint: '/hr/recruitment/:id',
+            fields: [{ name: 'id', label: 'Mã hồ sơ tuyển dụng', required: true }]
           }
         ]
       },
@@ -1225,6 +1267,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'dueAt', label: 'Hạn', type: 'date' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
+          },
+          {
+            key: 'archive-invoice',
+            label: 'Lưu trữ hóa đơn',
+            method: 'DELETE',
+            endpoint: '/finance/invoices/:id',
+            fields: [{ name: 'id', label: 'Mã hóa đơn', required: true }]
           }
         ]
       },
@@ -1767,7 +1816,14 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'name', label: 'Tên quy trình', required: true },
               { name: 'module', label: 'Phân hệ', required: true },
               { name: 'version', label: 'Phiên bản', type: 'number', defaultValue: 1 },
-              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'ACTIVE' }
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'DRAFT' },
+              {
+                name: 'definitionJson',
+                label: 'Định nghĩa JSON',
+                type: 'json',
+                required: true,
+                defaultValue: '{\n  "initialStep": "approval",\n  "steps": [\n    {\n      "key": "approval",\n      "approvalMode": "ALL",\n      "approvers": [\n        { "type": "ROLE", "role": "MANAGER" }\n      ],\n      "transitions": [\n        { "action": "APPROVE", "terminalStatus": "APPROVED" },\n        { "action": "REJECT", "terminalStatus": "REJECTED" }\n      ]\n    }\n  ]\n}'
+              }
             ]
           },
           {
