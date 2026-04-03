@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { CustomFieldEntityType, UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { AuditAction } from '../../common/audit/audit.decorators';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import {
   CreateDemandForecastDto,
   CreateDistributionDto,
@@ -24,7 +25,10 @@ import { ScmService } from './scm.service';
 
 @Controller('scm')
 export class ScmController {
-  constructor(@Inject(ScmService) private readonly scmService: ScmService) {}
+  constructor(
+    @Inject(ScmService) private readonly scmService: ScmService,
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+  ) {}
 
   @Get('vendors')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
@@ -46,50 +50,62 @@ export class ScmController {
 
   @Get('purchase-orders')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  listPurchaseOrders(@Query() query: ScmListQueryDto) {
-    return this.scmService.listPurchaseOrders(query);
+  async listPurchaseOrders(@Query() query: ScmListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
+    const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.PURCHASE_ORDER, req?.query);
+    const result = await this.scmService.listPurchaseOrders(query, entityIds);
+    return this.customFields.wrapResult(CustomFieldEntityType.PURCHASE_ORDER, result);
   }
 
   @Post('purchase-orders')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'CREATE_PURCHASE_ORDER', entityType: 'PurchaseOrder' })
-  createPurchaseOrder(@Body() body: CreatePurchaseOrderDto) {
-    return this.scmService.createPurchaseOrder(body);
+  async createPurchaseOrder(@Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const purchaseOrder = await this.scmService.createPurchaseOrder(mutation.base as unknown as CreatePurchaseOrderDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.PURCHASE_ORDER, (purchaseOrder as Record<string, unknown>)?.id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PURCHASE_ORDER, purchaseOrder);
   }
 
   @Patch('purchase-orders/:id')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'UPDATE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
-  updatePurchaseOrder(@Param('id') id: string, @Body() body: UpdatePurchaseOrderDto) {
-    return this.scmService.updatePurchaseOrder(id, body);
+  async updatePurchaseOrder(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const purchaseOrder = await this.scmService.updatePurchaseOrder(id, mutation.base as unknown as UpdatePurchaseOrderDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.PURCHASE_ORDER, id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PURCHASE_ORDER, purchaseOrder);
   }
 
   @Post('purchase-orders/:id/submit')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'SUBMIT_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
-  submitPurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
-    return this.scmService.submitPurchaseOrder(id, body);
+  async submitPurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
+    const purchaseOrder = await this.scmService.submitPurchaseOrder(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PURCHASE_ORDER, purchaseOrder);
   }
 
   @Post('purchase-orders/:id/approve')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'APPROVE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
-  approvePurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
-    return this.scmService.approvePurchaseOrder(id, body);
+  async approvePurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
+    const purchaseOrder = await this.scmService.approvePurchaseOrder(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PURCHASE_ORDER, purchaseOrder);
   }
 
   @Post('purchase-orders/:id/cancel')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'CANCEL_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
-  cancelPurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
-    return this.scmService.cancelPurchaseOrder(id, body);
+  async cancelPurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
+    const purchaseOrder = await this.scmService.cancelPurchaseOrder(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PURCHASE_ORDER, purchaseOrder);
   }
 
   @Post('purchase-orders/:id/close')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'CLOSE_PURCHASE_ORDER', entityType: 'PurchaseOrder', entityIdParam: 'id' })
-  closePurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
-    return this.scmService.closePurchaseOrder(id, body);
+  async closePurchaseOrder(@Param('id') id: string, @Body() body: PoTransitionDto) {
+    const purchaseOrder = await this.scmService.closePurchaseOrder(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PURCHASE_ORDER, purchaseOrder);
   }
 
   @Get('purchase-orders/:id/receipts')

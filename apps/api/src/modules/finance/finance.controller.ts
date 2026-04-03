@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { CustomFieldEntityType, UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import {
   CreateAccountDto,
   CreateBudgetPlanDto,
@@ -20,68 +21,87 @@ import { FinanceService } from './finance.service';
 
 @Controller('finance')
 export class FinanceController {
-  constructor(@Inject(FinanceService) private readonly financeService: FinanceService) {}
+  constructor(
+    @Inject(FinanceService) private readonly financeService: FinanceService,
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+  ) {}
 
   @Get('invoices')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  listInvoices(@Query() query: FinanceListQueryDto) {
-    return this.financeService.listInvoices(query);
+  async listInvoices(@Query() query: FinanceListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
+    const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.INVOICE, req?.query);
+    const result = await this.financeService.listInvoices(query, entityIds);
+    return this.customFields.wrapResult(CustomFieldEntityType.INVOICE, result);
   }
 
   @Post('invoices')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'CREATE_INVOICE', entityType: 'Invoice' })
-  createInvoice(@Body() body: CreateInvoiceDto) {
-    return this.financeService.createInvoice(body);
+  async createInvoice(@Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const invoice = await this.financeService.createInvoice(mutation.base as unknown as CreateInvoiceDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.INVOICE, (invoice as Record<string, unknown>)?.id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Post('invoices/from-order')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'CREATE_INVOICE_FROM_ORDER', entityType: 'Invoice' })
-  createInvoiceFromOrder(@Body() body: CreateInvoiceFromOrderDto) {
-    return this.financeService.createInvoiceFromOrder(body);
+  async createInvoiceFromOrder(@Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const invoice = await this.financeService.createInvoiceFromOrder(mutation.base as unknown as CreateInvoiceFromOrderDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.INVOICE, (invoice as Record<string, unknown>)?.id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Patch('invoices/:id')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'UPDATE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
-  updateInvoice(@Param('id') id: string, @Body() body: UpdateInvoiceDto) {
-    return this.financeService.updateInvoice(id, body);
+  async updateInvoice(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const invoice = await this.financeService.updateInvoice(id, mutation.base as unknown as UpdateInvoiceDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.INVOICE, id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Delete('invoices/:id')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'ARCHIVE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
-  archiveInvoice(@Param('id') id: string) {
-    return this.financeService.archiveInvoice(id);
+  async archiveInvoice(@Param('id') id: string) {
+    const invoice = await this.financeService.archiveInvoice(id);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Post('invoices/:id/issue')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'ISSUE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
-  issueInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
-    return this.financeService.issueInvoice(id, body);
+  async issueInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
+    const invoice = await this.financeService.issueInvoice(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Post('invoices/:id/approve')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'APPROVE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
-  approveInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
-    return this.financeService.approveInvoice(id, body);
+  async approveInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
+    const invoice = await this.financeService.approveInvoice(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Post('invoices/:id/pay')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'PAY_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
-  payInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
-    return this.financeService.payInvoice(id, body);
+  async payInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
+    const invoice = await this.financeService.payInvoice(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Post('invoices/:id/void')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   @AuditAction({ action: 'VOID_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
-  voidInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
-    return this.financeService.voidInvoice(id, body);
+  async voidInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
+    const invoice = await this.financeService.voidInvoice(id, body);
+    return this.customFields.wrapEntity(CustomFieldEntityType.INVOICE, invoice);
   }
 
   @Get('invoices-aging')

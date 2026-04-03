@@ -1,7 +1,8 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { CustomFieldEntityType, UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import {
   CreateApprovalDto,
   CreateWorkflowDefinitionDto,
@@ -21,24 +22,39 @@ import { WorkflowsService } from './workflows.service';
 
 @Controller('workflows')
 export class WorkflowsController {
-  constructor(@Inject(WorkflowsService) private readonly workflowsService: WorkflowsService) {}
+  constructor(
+    @Inject(WorkflowsService) private readonly workflowsService: WorkflowsService,
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+  ) {}
 
   @Get('definitions')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
-  listDefinitions(@Query() query: WorkflowsListQueryDto) {
-    return this.workflowsService.listDefinitions(query);
+  async listDefinitions(@Query() query: WorkflowsListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
+    const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.WORKFLOW_DEFINITION, req?.query);
+    const result = await this.workflowsService.listDefinitions(query, entityIds);
+    return this.customFields.wrapResult(CustomFieldEntityType.WORKFLOW_DEFINITION, result);
   }
 
   @Post('definitions')
   @Roles(UserRole.ADMIN)
-  createDefinition(@Body() body: CreateWorkflowDefinitionDto) {
-    return this.workflowsService.createDefinition(body);
+  async createDefinition(@Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const definition = await this.workflowsService.createDefinition(mutation.base as unknown as CreateWorkflowDefinitionDto);
+    await this.customFields.applyEntityMutation(
+      CustomFieldEntityType.WORKFLOW_DEFINITION,
+      (definition as Record<string, unknown>)?.id,
+      mutation
+    );
+    return this.customFields.wrapEntity(CustomFieldEntityType.WORKFLOW_DEFINITION, definition);
   }
 
   @Patch('definitions/:id')
   @Roles(UserRole.ADMIN)
-  updateDefinition(@Param('id') id: string, @Body() body: UpdateWorkflowDefinitionDto) {
-    return this.workflowsService.updateDefinition(id, body);
+  async updateDefinition(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const definition = await this.workflowsService.updateDefinition(id, mutation.base as unknown as UpdateWorkflowDefinitionDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.WORKFLOW_DEFINITION, id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.WORKFLOW_DEFINITION, definition);
   }
 
   @Post('definitions/:id/validate')
@@ -55,14 +71,16 @@ export class WorkflowsController {
 
   @Post('definitions/:id/publish')
   @Roles(UserRole.ADMIN)
-  publishDefinition(@Param('id') id: string) {
-    return this.workflowsService.publishDefinition(id);
+  async publishDefinition(@Param('id') id: string) {
+    const definition = await this.workflowsService.publishDefinition(id);
+    return this.customFields.wrapEntity(CustomFieldEntityType.WORKFLOW_DEFINITION, definition);
   }
 
   @Post('definitions/:id/archive')
   @Roles(UserRole.ADMIN)
-  archiveDefinition(@Param('id') id: string) {
-    return this.workflowsService.archiveDefinition(id);
+  async archiveDefinition(@Param('id') id: string) {
+    const definition = await this.workflowsService.archiveDefinition(id);
+    return this.customFields.wrapEntity(CustomFieldEntityType.WORKFLOW_DEFINITION, definition);
   }
 
   @Get('instances')

@@ -1,33 +1,46 @@
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
-import { GenericStatus } from '@prisma/client';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { CustomFieldEntityType, GenericStatus } from '@prisma/client';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { RecruitmentPipelineQueryDto } from './dto/recruitment-pipeline-query.dto';
 import { HrService } from './hr.service';
 
 @Controller('hr')
 export class HrController {
-  constructor(@Inject(HrService) private readonly hrService: HrService) {}
+  constructor(
+    @Inject(HrService) private readonly hrService: HrService,
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+  ) {}
 
   @Get('employees')
-  listEmployees(@Query() query: PaginationQueryDto) {
-    return this.hrService.listEmployees(query);
+  async listEmployees(@Query() query: PaginationQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
+    const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.EMPLOYEE, req?.query);
+    const result = await this.hrService.listEmployees(query, entityIds);
+    return this.customFields.wrapResult(CustomFieldEntityType.EMPLOYEE, result);
   }
 
   @Post('employees')
-  createEmployee(@Body() body: Record<string, unknown>) {
-    return this.hrService.createEmployee(body);
+  async createEmployee(@Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const employee = await this.hrService.createEmployee(mutation.base);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.EMPLOYEE, (employee as Record<string, unknown>)?.id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.EMPLOYEE, employee);
   }
 
   @Patch('employees/:id')
-  updateEmployee(@Param('id') id: string, @Body() body: Record<string, unknown>) {
-    return this.hrService.updateEmployee(id, body);
+  async updateEmployee(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const employee = await this.hrService.updateEmployee(id, mutation.base);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.EMPLOYEE, id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.EMPLOYEE, employee);
   }
 
   @Delete('employees/:id')
   @AuditAction({ action: 'ARCHIVE_EMPLOYEE', entityType: 'Employee', entityIdParam: 'id' })
-  archiveEmployee(@Param('id') id: string) {
-    return this.hrService.archiveEmployee(id);
+  async archiveEmployee(@Param('id') id: string) {
+    const employee = await this.hrService.archiveEmployee(id);
+    return this.customFields.wrapEntity(CustomFieldEntityType.EMPLOYEE, employee);
   }
 
   @Get('departments')
@@ -529,12 +542,21 @@ export class HrController {
   }
 
   @Get('events')
-  listEvents(@Query() query: PaginationQueryDto, @Query('employeeId') employeeId?: string) {
-    return this.hrService.listEmployeeEvents(query, employeeId);
+  async listEvents(
+    @Query() query: PaginationQueryDto,
+    @Query('employeeId') employeeId?: string,
+    @Req() req?: { query?: Record<string, unknown> }
+  ) {
+    const eventIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.HR_EVENT, req?.query);
+    const result = await this.hrService.listEmployeeEvents(query, employeeId, eventIds);
+    return this.customFields.wrapResult(CustomFieldEntityType.HR_EVENT, result);
   }
 
   @Post('employees/:id/events')
-  createEvent(@Param('id') employeeId: string, @Body() body: Record<string, unknown>) {
-    return this.hrService.createEmployeeEvent(employeeId, body);
+  async createEvent(@Param('id') employeeId: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const event = await this.hrService.createEmployeeEvent(employeeId, mutation.base);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.HR_EVENT, (event as Record<string, unknown>)?.id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.HR_EVENT, event);
   }
 }

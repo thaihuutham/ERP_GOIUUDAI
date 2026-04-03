@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
-import { GenericStatus, UserRole } from '@prisma/client';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { CustomFieldEntityType, GenericStatus, UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import {
   CreateProjectBudgetDto,
   CreateProjectDto,
@@ -17,18 +18,26 @@ import { ProjectsService } from './projects.service';
 
 @Controller('projects')
 export class ProjectsController {
-  constructor(@Inject(ProjectsService) private readonly projectsService: ProjectsService) {}
+  constructor(
+    @Inject(ProjectsService) private readonly projectsService: ProjectsService,
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+  ) {}
 
   @Get()
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  listProjects(@Query() query: ProjectsListQueryDto) {
-    return this.projectsService.listProjects(query);
+  async listProjects(@Query() query: ProjectsListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
+    const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.PROJECT, req?.query);
+    const result = await this.projectsService.listProjects(query, entityIds);
+    return this.customFields.wrapResult(CustomFieldEntityType.PROJECT, result);
   }
 
   @Post()
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
-  createProject(@Body() body: CreateProjectDto) {
-    return this.projectsService.createProject(body);
+  async createProject(@Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const project = await this.projectsService.createProject(mutation.base as unknown as CreateProjectDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.PROJECT, (project as Record<string, unknown>)?.id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PROJECT, project);
   }
 
   @Get('tasks')
@@ -103,13 +112,17 @@ export class ProjectsController {
 
   @Get(':id')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  getProject(@Param('id') id: string) {
-    return this.projectsService.getProject(id);
+  async getProject(@Param('id') id: string) {
+    const project = await this.projectsService.getProject(id);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PROJECT, project);
   }
 
   @Patch(':id')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
-  updateProject(@Param('id') id: string, @Body() body: UpdateProjectDto) {
-    return this.projectsService.updateProject(id, body);
+  async updateProject(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    const project = await this.projectsService.updateProject(id, mutation.base as unknown as UpdateProjectDto);
+    await this.customFields.applyEntityMutation(CustomFieldEntityType.PROJECT, id, mutation);
+    return this.customFields.wrapEntity(CustomFieldEntityType.PROJECT, project);
   }
 }

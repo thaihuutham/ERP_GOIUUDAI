@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 14:25 +07
+- Time: 2026-04-03 18:17 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_1425_codex.md`
+- Session Log: `.agent/sessions/2026-04-03_1817_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,25 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-03 18:17 (Custom Fields Platform V1 - Day-1 controller integration)
+- Da chot checkpoint git theo yeu cau user:
+  - commit `2857659` (`feat(api): scaffold custom fields platform v1 foundation`)
+  - push branch `origin/codex/custom-fields-platform-v1`.
+- Da fix compile cho `apps/api/src/modules/custom-fields/custom-fields.service.ts`:
+  - chuan hoa gia tri `Json?` khi ghi Prisma qua helper `toDbJsonValue` (`Prisma.DbNull`).
+  - sua typing intersection/filter cho `resolveEntityIdsByTerms`.
+  - sua typing map entity ids trong report query helper.
+- Da wire custom fields vao Day-1 controllers:
+  - `catalog.controller.ts`, `sales.controller.ts`, `scm.controller.ts`, `finance.controller.ts`, `projects.controller.ts`, `workflows.controller.ts`, `hr.controller.ts`.
+- Runtime behavior moi:
+  - list endpoint Day-1 ho tro query filter `cf.<fieldKey>[.<op>]`.
+  - create/update endpoint Day-1 ho tro payload `{ base, customFields, schemaVersion }`.
+  - response entity/list Day-1 duoc wrap theo contract `{ id, schemaVersion, base, customFields }`.
+- Verify session:
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/catalog.service.test.ts test/sales.service.test.ts test/scm.service.test.ts test/finance.service.test.ts test/projects.service.test.ts test/workflows.service.test.ts test/hr.service.test.ts` ✅ (`29 passed`)
 
 ## Update 2026-04-03 12:10 (Appendix metadata + employee lock + scope analytics)
 - Da implement policy-driven Appendix catalog cho Regulation:

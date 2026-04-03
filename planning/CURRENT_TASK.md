@@ -2,9 +2,36 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-03 14:25 +07
+- Last updated: 2026-04-03 18:17 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-03 18:17 (Custom Fields Platform V1 wiring + Day-1 integration)
+- User yêu cầu: `commit và đưa lên github rồi bắt đầu`.
+- Đã chốt checkpoint Git:
+  - commit `2857659` (`feat(api): scaffold custom fields platform v1 foundation`).
+  - push nhánh `origin/codex/custom-fields-platform-v1`.
+- Đã fix compile blocker cho `apps/api/src/modules/custom-fields/custom-fields.service.ts`:
+  - chuẩn hóa ghi `Json?` field theo Prisma (`Prisma.DbNull` qua helper `toDbJsonValue`).
+  - sửa typing phần giao cắt `entityIds` khi filter nhiều điều kiện `cf.*`.
+  - sửa typing map `entityId` cho report query.
+- Đã hoàn tất nối controller Day-1 cho custom fields:
+  - `apps/api/src/modules/catalog/catalog.controller.ts`
+  - `apps/api/src/modules/sales/sales.controller.ts`
+  - `apps/api/src/modules/scm/scm.controller.ts`
+  - `apps/api/src/modules/finance/finance.controller.ts`
+  - `apps/api/src/modules/projects/projects.controller.ts`
+  - `apps/api/src/modules/workflows/workflows.controller.ts`
+  - `apps/api/src/modules/hr/hr.controller.ts` (Employee + HrEvent)
+- Hành vi mới đã bật:
+  - list endpoint nhận filter query `cf.<fieldKey>[.<op>]`, resolve id và pushdown vào truy vấn list.
+  - create/update endpoint nhận unified payload `{ base, customFields, schemaVersion }`.
+  - response entity/list trả unified contract có `customFields`.
+- Verify theo phạm vi backend:
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/catalog.service.test.ts test/sales.service.test.ts test/scm.service.test.ts test/finance.service.test.ts test/projects.service.test.ts test/workflows.service.test.ts test/hr.service.test.ts` ✅ (`29 passed`)
+- Chưa phát sinh quyết định kiến trúc mới ngoài plan đã duyệt, chưa tạo ADR mới trong session này.
 
 ## Session Update 2026-04-03 14:25 (Structured Field Library + Appendix Template + Analytics gating)
 - User yêu cầu implement plan `HR tự thiết kế form theo phụ lục (Regulation-first, Global-ready)`.

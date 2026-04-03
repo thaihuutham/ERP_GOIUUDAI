@@ -208,8 +208,8 @@ export class CustomFieldsService {
             description: normalized.description,
             fieldType: normalized.fieldType,
             required: normalized.required,
-            defaultValueJson: normalized.defaultValueJson,
-            optionsJson: normalized.optionsJson,
+            defaultValueJson: this.toDbJsonValue(normalized.defaultValueJson),
+            optionsJson: this.toDbJsonValue(normalized.optionsJson),
             relationEntityType: normalized.relationEntityType,
             formulaExpression: normalized.formulaExpression,
             filterable: normalized.filterable,
@@ -231,8 +231,8 @@ export class CustomFieldsService {
             description: normalized.description,
             fieldType: normalized.fieldType,
             required: normalized.required,
-            defaultValueJson: normalized.defaultValueJson,
-            optionsJson: normalized.optionsJson,
+            defaultValueJson: this.toDbJsonValue(normalized.defaultValueJson),
+            optionsJson: this.toDbJsonValue(normalized.optionsJson),
             relationEntityType: normalized.relationEntityType,
             formulaExpression: normalized.formulaExpression,
             filterable: normalized.filterable,
@@ -657,8 +657,8 @@ export class CustomFieldsService {
           metricType,
           metricFieldKey: this.readString(payload.metricFieldKey) || null,
           groupByFieldKey: this.readString(payload.groupByFieldKey) || null,
-          filtersJson: this.toNullableJson(this.toRecord(payload.filters)),
-          configJson: this.toNullableJson(this.toRecord(payload.config)),
+          filtersJson: this.toDbJsonValue(this.toRecord(payload.filters)),
+          configJson: this.toDbJsonValue(this.toRecord(payload.config)),
           isActive: this.toBool(payload.isActive, true),
           updatedBy: actor
         }
@@ -676,8 +676,8 @@ export class CustomFieldsService {
         metricType,
         metricFieldKey: this.readString(payload.metricFieldKey) || null,
         groupByFieldKey: this.readString(payload.groupByFieldKey) || null,
-        filtersJson: this.toNullableJson(this.toRecord(payload.filters)),
-        configJson: this.toNullableJson(this.toRecord(payload.config)),
+        filtersJson: this.toDbJsonValue(this.toRecord(payload.filters)),
+        configJson: this.toDbJsonValue(this.toRecord(payload.config)),
         isActive: this.toBool(payload.isActive, true),
         createdBy: actor,
         updatedBy: actor
@@ -858,12 +858,18 @@ export class CustomFieldsService {
         where,
         select: { entityId: true }
       });
-      const currentSet = new Set(rows.map((row) => row.entityId));
+      const currentSet = new Set<string>(rows.map((row) => row.entityId));
 
       if (!intersection) {
         intersection = currentSet;
       } else {
-        intersection = new Set([...intersection].filter((id) => currentSet.has(id)));
+        const nextIntersection = new Set<string>();
+        for (const entityId of intersection) {
+          if (currentSet.has(entityId)) {
+            nextIntersection.add(entityId);
+          }
+        }
+        intersection = nextIntersection;
       }
 
       if (intersection.size === 0) {
@@ -1068,7 +1074,7 @@ export class CustomFieldsService {
           valueNumber: normalized.valueNumber,
           valueDate: normalized.valueDate,
           valueBool: normalized.valueBool,
-          valueJson: normalized.valueJson,
+          valueJson: this.toDbJsonValue(normalized.valueJson),
           valueSource: normalized.valueSource,
           createdBy: actor,
           updatedBy: actor
@@ -1079,7 +1085,7 @@ export class CustomFieldsService {
           valueNumber: normalized.valueNumber,
           valueDate: normalized.valueDate,
           valueBool: normalized.valueBool,
-          valueJson: normalized.valueJson,
+          valueJson: this.toDbJsonValue(normalized.valueJson),
           valueSource: normalized.valueSource,
           updatedBy: actor
         }
@@ -1289,7 +1295,9 @@ export class CustomFieldsService {
       orderBy: { createdAt: 'desc' },
       take: limit
     });
-    return rows.map((row: { id: string }) => row.id);
+    return rows
+      .map((row) => this.readString(row.id))
+      .filter((id) => Boolean(id));
   }
 
   private async updateEntitySchemaVersion(entityType: CustomFieldEntityType, entityId: string, schemaVersion: number | null) {
@@ -1522,6 +1530,11 @@ export class CustomFieldsService {
       return value as Prisma.InputJsonValue;
     }
     return null;
+  }
+
+  private toDbJsonValue(value: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput {
+    const normalized = this.toNullableJson(value);
+    return normalized === null ? Prisma.DbNull : normalized;
   }
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
