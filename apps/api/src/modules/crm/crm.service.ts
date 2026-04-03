@@ -16,13 +16,16 @@ export class CrmService {
 
   async listCustomers(
     query: PaginationQueryDto,
-    filters: { status?: GenericStatus | 'ALL'; stage?: string; tag?: string } = {}
+    filters: { status?: GenericStatus | 'ALL'; stage?: string; tag?: string } = {},
+    entityIds?: string[]
   ) {
     const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
     const keyword = query.q?.trim();
     const normalizedTag = this.cleanString(filters.tag).toLowerCase();
 
-    const where: Prisma.CustomerWhereInput = {};
+    const where: Prisma.CustomerWhereInput = {
+      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
+    };
     const normalizedStage = filters.stage ? this.cleanString(filters.stage).toUpperCase() : undefined;
     const normalizedStatus = filters.status && filters.status !== 'ALL' ? filters.status : undefined;
 

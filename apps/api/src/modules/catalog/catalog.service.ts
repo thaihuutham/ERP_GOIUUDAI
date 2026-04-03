@@ -17,10 +17,11 @@ export class CatalogService {
     @Inject(SearchService) private readonly search: SearchService
   ) {}
 
-  async listProducts(query: CatalogListQueryDto) {
+  async listProducts(query: CatalogListQueryDto, entityIds?: string[]) {
     const take = this.take(query.limit);
     const keyword = query.q?.trim();
     const where: Prisma.ProductWhereInput = {
+      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.category
         ? {

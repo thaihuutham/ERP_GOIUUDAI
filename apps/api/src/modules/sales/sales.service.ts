@@ -32,12 +32,14 @@ export class SalesService {
     @Optional() @Inject(WorkflowsService) private readonly workflowsService?: WorkflowsService
   ) {}
 
-  async listOrders(query: PaginationQueryDto, status?: GenericStatus | 'ALL') {
+  async listOrders(query: PaginationQueryDto, status?: GenericStatus | 'ALL', entityIds?: string[]) {
     const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
     const keyword = query.q?.trim();
     const normalizedStatus = status && status !== 'ALL' ? status : undefined;
 
-    const where: Prisma.OrderWhereInput = {};
+    const where: Prisma.OrderWhereInput = {
+      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
+    };
 
     if (normalizedStatus) {
       where.status = normalizedStatus;

@@ -125,20 +125,23 @@ export class HrService {
     @Optional() @Inject(ClsService) private readonly cls?: ClsService
   ) {}
 
-  async listEmployees(query: PaginationQueryDto) {
+  async listEmployees(query: PaginationQueryDto, entityIds?: string[]) {
     const keyword = query.q?.trim();
-    const where: Prisma.EmployeeWhereInput = keyword
-      ? {
-          OR: [
-            { fullName: { contains: keyword, mode: 'insensitive' } },
-            { email: { contains: keyword, mode: 'insensitive' } },
-            { phone: { contains: keyword } },
-            { department: { contains: keyword, mode: 'insensitive' } },
-            { position: { contains: keyword, mode: 'insensitive' } },
-            { code: { contains: keyword, mode: 'insensitive' } }
-          ]
-        }
-      : {};
+    const where: Prisma.EmployeeWhereInput = {
+      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { fullName: { contains: keyword, mode: 'insensitive' } },
+              { email: { contains: keyword, mode: 'insensitive' } },
+              { phone: { contains: keyword } },
+              { department: { contains: keyword, mode: 'insensitive' } },
+              { position: { contains: keyword, mode: 'insensitive' } },
+              { code: { contains: keyword, mode: 'insensitive' } }
+            ]
+          }
+        : {})
+    };
 
     return this.prisma.client.employee.findMany({
       where,
@@ -3676,8 +3679,11 @@ export class HrService {
     return this.getEmployeeInfo(id);
   }
 
-  async listEmployeeEvents(query: PaginationQueryDto, employeeId?: string) {
-    const where: Prisma.HrEventWhereInput = employeeId ? { employeeId } : {};
+  async listEmployeeEvents(query: PaginationQueryDto, employeeId?: string, eventIds?: string[]) {
+    const where: Prisma.HrEventWhereInput = {
+      ...(employeeId ? { employeeId } : {}),
+      ...(Array.isArray(eventIds) ? { id: { in: eventIds } } : {})
+    };
     return this.prisma.client.hrEvent.findMany({
       where,
       orderBy: [{ effectiveAt: 'desc' }, { createdAt: 'desc' }],

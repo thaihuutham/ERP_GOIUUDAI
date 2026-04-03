@@ -1,21 +1,29 @@
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
-import { GenericStatus } from '@prisma/client';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { CustomFieldEntityType, GenericStatus } from '@prisma/client';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { CrmService } from './crm.service';
 
 @Controller('crm')
 export class CrmController {
-  constructor(@Inject(CrmService) private readonly crmService: CrmService) {}
+  constructor(
+    @Inject(CrmService) private readonly crmService: CrmService,
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+  ) {}
 
   @Get('customers')
   listCustomers(
     @Query() query: PaginationQueryDto,
     @Query('status') status?: GenericStatus | 'ALL',
     @Query('stage') stage?: string,
-    @Query('tag') tag?: string
+    @Query('tag') tag?: string,
+    @Req() req?: { query?: Record<string, unknown> }
   ) {
-    return this.crmService.listCustomers(query, { status, stage, tag });
+    const entityIdsPromise = this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.CUSTOMER, req?.query);
+    return entityIdsPromise
+      .then((entityIds) => this.crmService.listCustomers(query, { status, stage, tag }, entityIds))
+      .then((result) => this.customFields.wrapResult(CustomFieldEntityType.CUSTOMER, result));
   }
 
   @Get('taxonomy')
@@ -26,13 +34,27 @@ export class CrmController {
   @Post('customers')
   @AuditAction({ action: 'CREATE_CUSTOMER', entityType: 'Customer' })
   createCustomer(@Body() body: Record<string, unknown>) {
-    return this.crmService.createCustomer(body);
+    const mutation = this.customFields.parseMutationBody(body);
+    return this.crmService.createCustomer(mutation.base)
+      .then(async (result) => {
+        const container = result as Record<string, unknown>;
+        const customer = container.customer as Record<string, unknown> | undefined;
+        if (customer?.id) {
+          await this.customFields.applyEntityMutation(CustomFieldEntityType.CUSTOMER, customer.id, mutation);
+        }
+        return this.customFields.wrapNestedEntity(CustomFieldEntityType.CUSTOMER, container, 'customer');
+      });
   }
 
   @Patch('customers/:id')
   @AuditAction({ action: 'UPDATE_CUSTOMER', entityType: 'Customer', entityIdParam: 'id' })
   updateCustomer(@Param('id') id: string, @Body() body: Record<string, unknown>) {
-    return this.crmService.updateCustomer(id, body);
+    const mutation = this.customFields.parseMutationBody(body);
+    return this.crmService.updateCustomer(id, mutation.base)
+      .then(async (customer) => {
+        await this.customFields.applyEntityMutation(CustomFieldEntityType.CUSTOMER, id, mutation);
+        return this.customFields.wrapEntity(CustomFieldEntityType.CUSTOMER, customer);
+      });
   }
 
   @Delete('customers/:id')
@@ -46,19 +68,37 @@ export class CrmController {
     @Query() query: PaginationQueryDto,
     @Query('status') status?: GenericStatus | 'ALL',
     @Query('stage') stage?: string,
-    @Query('tag') tag?: string
+    @Query('tag') tag?: string,
+    @Req() req?: { query?: Record<string, unknown> }
   ) {
-    return this.crmService.listCustomers(query, { status, stage, tag });
+    const entityIdsPromise = this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.CUSTOMER, req?.query);
+    return entityIdsPromise
+      .then((entityIds) => this.crmService.listCustomers(query, { status, stage, tag }, entityIds))
+      .then((result) => this.customFields.wrapResult(CustomFieldEntityType.CUSTOMER, result));
   }
 
   @Post('customer-360')
   createCustomer360(@Body() body: Record<string, unknown>) {
-    return this.crmService.createCustomer(body);
+    const mutation = this.customFields.parseMutationBody(body);
+    return this.crmService.createCustomer(mutation.base)
+      .then(async (result) => {
+        const container = result as Record<string, unknown>;
+        const customer = container.customer as Record<string, unknown> | undefined;
+        if (customer?.id) {
+          await this.customFields.applyEntityMutation(CustomFieldEntityType.CUSTOMER, customer.id, mutation);
+        }
+        return this.customFields.wrapNestedEntity(CustomFieldEntityType.CUSTOMER, container, 'customer');
+      });
   }
 
   @Patch('customer-360/:id')
   updateCustomer360(@Param('id') id: string, @Body() body: Record<string, unknown>) {
-    return this.crmService.updateCustomer(id, body);
+    const mutation = this.customFields.parseMutationBody(body);
+    return this.crmService.updateCustomer(id, mutation.base)
+      .then(async (customer) => {
+        await this.customFields.applyEntityMutation(CustomFieldEntityType.CUSTOMER, id, mutation);
+        return this.customFields.wrapEntity(CustomFieldEntityType.CUSTOMER, customer);
+      });
   }
 
   @Delete('customer-360/:id')

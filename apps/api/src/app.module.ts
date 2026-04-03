@@ -29,6 +29,7 @@ import { ScmModule } from './modules/scm/scm.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { SearchModule } from './modules/search/search.module';
 import { WorkflowsModule } from './modules/workflows/workflows.module';
+import { CustomFieldsModule } from './modules/custom-fields/custom-fields.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { ZaloModule } from './modules/zalo/zalo.module';
 import { ConversationQualityModule } from './modules/conversation-quality/conversation-quality.module';
@@ -77,6 +78,7 @@ import { AssistantModule } from './modules/assistant/assistant.module';
     AssetsModule,
     ProjectsModule,
     WorkflowsModule,
+    CustomFieldsModule,
     ReportsModule,
     SearchModule,
     SettingsModule,

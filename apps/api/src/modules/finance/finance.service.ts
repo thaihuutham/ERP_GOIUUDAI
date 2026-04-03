@@ -39,8 +39,9 @@ export class FinanceService {
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
   ) {}
 
-  async listInvoices(query: FinanceListQueryDto) {
+  async listInvoices(query: FinanceListQueryDto, entityIds?: string[]) {
     const where: Prisma.InvoiceWhereInput = {
+      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.invoiceType ? { invoiceType: query.invoiceType } : {}),
       ...(query.q

@@ -146,7 +146,7 @@ export class RuntimeSettingsService {
     if (!moduleKey) {
       return true;
     }
-    if (moduleKey === 'auth' || moduleKey === 'health' || moduleKey === 'settings') {
+    if (moduleKey === 'auth' || moduleKey === 'health' || moduleKey === 'settings' || moduleKey === 'custom-fields') {
       return true;
     }
 
@@ -575,6 +575,9 @@ export class RuntimeSettingsService {
     const normalized = moduleKey.toLowerCase();
     if (normalized === 'conversations' || normalized === 'zalo' || normalized === 'conversation-quality') {
       return 'crm';
+    }
+    if (normalized === 'custom-fields') {
+      return 'settings';
     }
     return normalized;
   }

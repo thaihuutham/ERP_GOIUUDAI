@@ -186,6 +186,46 @@ enum RecruitmentOfferStatus {
   CANCELED
 }
 
+enum CustomFieldEntityType {
+  CUSTOMER
+  PRODUCT
+  EMPLOYEE
+  SALES_ORDER
+  PURCHASE_ORDER
+  INVOICE
+  PROJECT
+  HR_EVENT
+  WORKFLOW_DEFINITION
+}
+
+enum CustomFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  DATE
+  DATETIME
+  BOOLEAN
+  SELECT
+  MULTISELECT
+  RELATION
+  FORMULA
+}
+
+enum CustomFieldLifecycleStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+  ARCHIVED
+}
+
+enum CustomFieldWidgetChartType {
+  KPI
+  TABLE
+  BAR
+  LINE
+  PIE
+}
+
 model Tenant {
   id         String   @id @default(cuid())
   tenant_Id  String   @unique
@@ -247,6 +287,7 @@ model Employee {
   joinDate     DateTime?
   employmentType EmploymentType @default(FULL_TIME)
   attendanceMethod AttendanceMethod @default(REMOTE_TRACKED)
+  customFieldSchemaVersion Int?
   baseSalary   Decimal? @db.Decimal(18, 2)
   status       GenericStatus @default(ACTIVE)
   createdAt    DateTime @default(now())
@@ -260,6 +301,7 @@ model Employee {
   @@index([tenant_Id, managerId])
   @@index([tenant_Id, workShiftId])
   @@index([tenant_Id, attendanceMethod])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model OrgUnit {
@@ -406,6 +448,7 @@ model Customer {
   consentStatus String?
   segment       String?
   source        String?
+  customFieldSchemaVersion Int?
   totalOrders   Int      @default(0)
   totalSpent    Decimal? @db.Decimal(18, 2)
   lastOrderAt   DateTime?
@@ -427,6 +470,7 @@ model Customer {
   @@index([tenant_Id])
   @@index([tenant_Id, phone])
   @@index([tenant_Id, email])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model CustomerInteraction {
@@ -506,6 +550,7 @@ model Product {
   attributesJson Json?
   variantOfProductId String?
   pricePolicyCode String?
+  customFieldSchemaVersion Int?
   unitPrice     Decimal  @db.Decimal(18, 2)
   status        GenericStatus @default(ACTIVE)
   archivedAt    DateTime?
@@ -521,6 +566,7 @@ model Product {
   @@index([tenant_Id, variantOfProductId])
   @@index([tenant_Id, categoryPath])
   @@index([tenant_Id, pricePolicyCode])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model Order {
@@ -530,6 +576,7 @@ model Order {
   customerId    String?
   customerName  String?
   employeeId    String?
+  customFieldSchemaVersion Int?
   totalAmount   Decimal? @db.Decimal(18, 2)
   status        GenericStatus @default(PENDING)
   createdBy     String?
@@ -544,6 +591,7 @@ model Order {
   @@index([tenant_Id])
   @@index([tenant_Id, createdAt])
   @@index([tenant_Id, employeeId])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model OrderItem {
@@ -984,6 +1032,7 @@ model HrEvent {
   employeeId    String
   eventType     String
   effectiveAt   DateTime
+  customFieldSchemaVersion Int?
   payload       Json?
   createdBy     String?
   createdAt     DateTime @default(now())
@@ -991,6 +1040,7 @@ model HrEvent {
 
   @@index([tenant_Id])
   @@index([tenant_Id, employeeId, effectiveAt])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model Invoice {
@@ -1003,6 +1053,7 @@ model Invoice {
   invoiceType   String
   partnerName   String?
   orderId       String?
+  customFieldSchemaVersion Int?
   totalAmount   Decimal? @db.Decimal(18, 2)
   paidAmount    Decimal? @default(0) @db.Decimal(18, 2)
   dueAt         DateTime?
@@ -1018,6 +1069,7 @@ model Invoice {
   @@unique([tenant_Id, orderId])
   @@index([tenant_Id])
   @@index([tenant_Id, orderId])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model Account {
@@ -1121,6 +1173,7 @@ model PurchaseOrder {
   poNo               String?
   warehouseCode      String?
   vendorId           String?
+  customFieldSchemaVersion Int?
   relatedSalesOrderNo String?
   totalAmount        Decimal? @db.Decimal(18, 2)
   receivedAmount     Decimal? @default(0) @db.Decimal(18, 2)
@@ -1140,6 +1193,7 @@ model PurchaseOrder {
   @@index([tenant_Id])
   @@index([tenant_Id, vendorId])
   @@index([tenant_Id, lifecycleStatus])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model Shipment {
@@ -1521,6 +1575,7 @@ model Project {
   code        String?
   name        String
   description String?
+  customFieldSchemaVersion Int?
   status      GenericStatus @default(PENDING)
   startAt     DateTime?
   endAt       DateTime?
@@ -1537,6 +1592,7 @@ model Project {
   timeEntries TimeEntry[]
 
   @@index([tenant_Id])
+  @@index([tenant_Id, customFieldSchemaVersion])
 }
 
 model ProjectTask {
@@ -1609,6 +1665,7 @@ model WorkflowDefinition {
   code        String?
   name        String
   module      String
+  customFieldSchemaVersion Int?
   version     Int      @default(1)
   description String?
   definitionJson Json?
@@ -1618,6 +1675,126 @@ model WorkflowDefinition {
   instances   WorkflowInstance[]
 
   @@index([tenant_Id])
+  @@index([tenant_Id, customFieldSchemaVersion])
+}
+
+model CustomFieldDefinition {
+  id                     String                   @id @default(cuid())
+  tenant_Id              String
+  entityType             CustomFieldEntityType
+  fieldKey               String
+  label                  String
+  description            String?
+  fieldType              CustomFieldType
+  required               Boolean                  @default(false)
+  defaultValueJson       Json?
+  optionsJson            Json?
+  relationEntityType     CustomFieldEntityType?
+  formulaExpression      String?
+  filterable             Boolean                  @default(false)
+  searchable             Boolean                  @default(false)
+  reportable             Boolean                  @default(false)
+  status                 CustomFieldLifecycleStatus @default(DRAFT)
+  latestPublishedVersion Int?
+  fieldVersion           Int                      @default(1)
+  createdBy              String?
+  updatedBy              String?
+  retiredAt              DateTime?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  @@unique([tenant_Id, entityType, fieldKey])
+  @@index([tenant_Id])
+  @@index([tenant_Id, entityType, status])
+}
+
+model CustomFieldSchemaVersion {
+  id                    String              @id @default(cuid())
+  tenant_Id             String
+  entityType            CustomFieldEntityType
+  version               Int
+  status                GenericStatus       @default(ACTIVE)
+  definitionSnapshotJson Json
+  impactSummaryJson     Json?
+  publishedBy           String?
+  publishedAt           DateTime            @default(now())
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@unique([tenant_Id, entityType, version])
+  @@index([tenant_Id])
+  @@index([tenant_Id, entityType, publishedAt])
+}
+
+model CustomFieldValue {
+  id            String               @id @default(cuid())
+  tenant_Id     String
+  entityType    CustomFieldEntityType
+  entityId      String
+  fieldKey      String
+  schemaVersion Int
+  valueText     String?
+  valueNumber   Decimal?             @db.Decimal(20, 4)
+  valueDate     DateTime?
+  valueBool     Boolean?
+  valueJson     Json?
+  valueSource   String               @default("MANUAL")
+  createdBy     String?
+  updatedBy     String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@unique([tenant_Id, entityType, entityId, fieldKey])
+  @@index([tenant_Id])
+  @@index([tenant_Id, entityType, entityId])
+  @@index([tenant_Id, entityType, fieldKey, valueText])
+  @@index([tenant_Id, entityType, fieldKey, valueNumber])
+  @@index([tenant_Id, entityType, fieldKey, valueDate])
+  @@index([tenant_Id, entityType, fieldKey, valueBool])
+}
+
+model CustomFieldIndexSpec {
+  id         String                @id @default(cuid())
+  tenant_Id  String
+  entityType CustomFieldEntityType
+  fieldKey   String
+  filterable Boolean               @default(false)
+  searchable Boolean               @default(false)
+  reportable Boolean               @default(false)
+  indexed    Boolean               @default(false)
+  indexName  String?
+  status     GenericStatus         @default(ACTIVE)
+  createdBy  String?
+  updatedBy  String?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  @@unique([tenant_Id, entityType, fieldKey])
+  @@index([tenant_Id])
+  @@index([tenant_Id, entityType, indexed])
+}
+
+model CustomFieldReportWidget {
+  id              String                   @id @default(cuid())
+  tenant_Id       String
+  name            String
+  title           String
+  entityType      CustomFieldEntityType
+  chartType       CustomFieldWidgetChartType @default(TABLE)
+  metricType      String
+  metricFieldKey  String?
+  groupByFieldKey String?
+  filtersJson     Json?
+  configJson      Json?
+  isActive        Boolean                  @default(true)
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@unique([tenant_Id, name])
+  @@index([tenant_Id])
+  @@index([tenant_Id, entityType, isActive])
 }
 
 model WorkflowInstance {

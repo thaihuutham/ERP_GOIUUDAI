@@ -92,9 +92,10 @@ export class ScmService {
     return this.prisma.client.vendor.findFirst({ where: { id } });
   }
 
-  async listPurchaseOrders(query: ScmListQueryDto) {
+  async listPurchaseOrders(query: ScmListQueryDto, entityIds?: string[]) {
     return this.prisma.client.purchaseOrder.findMany({
       where: {
+        ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.lifecycleStatus ? { lifecycleStatus: query.lifecycleStatus } : {}),
         ...(query.vendorId ? { vendorId: query.vendorId } : {}),

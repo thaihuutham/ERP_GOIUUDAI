@@ -120,9 +120,10 @@ export class WorkflowsService {
     @Inject(SearchService) private readonly search: SearchService
   ) {}
 
-  async listDefinitions(query: WorkflowsListQueryDto) {
+  async listDefinitions(query: WorkflowsListQueryDto, entityIds?: string[]) {
     return this.prisma.client.workflowDefinition.findMany({
       where: {
+        ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.module ? { module: query.module } : {})
       },

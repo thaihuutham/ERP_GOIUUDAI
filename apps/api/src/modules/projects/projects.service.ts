@@ -18,9 +18,10 @@ const COMPLETED_TASK_STATUSES: GenericStatus[] = [GenericStatus.APPROVED, Generi
 export class ProjectsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async listProjects(query: ProjectsListQueryDto) {
+  async listProjects(query: ProjectsListQueryDto, entityIds?: string[]) {
     const keyword = query.q?.trim();
     const where: Prisma.ProjectWhereInput = {
+      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
       ...(query.status ? { status: query.status } : {})
     };
 
