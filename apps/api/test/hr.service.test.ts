@@ -49,6 +49,9 @@ function makePrismaMock() {
       },
       hrGoalTimeline: {
         create: vi.fn().mockImplementation(async ({ data }) => ({ id: 'timeline_1', ...data }))
+      },
+      hrEvent: {
+        create: vi.fn().mockImplementation(async ({ data }) => ({ id: 'event_1', ...data }))
       }
     }
   };
@@ -122,5 +125,33 @@ describe('HrService (new HR v1 domains)', () => {
         dateOfBirth: 'not-a-valid-date'
       })
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('composes HR event payload from user-friendly fields when payload is omitted', async () => {
+    const prisma = makePrismaMock();
+    const service = new HrService(prisma as any);
+
+    await service.createEmployeeEvent('emp_1', {
+      eventType: 'TRANSFER',
+      effectiveAt: '2026-04-03',
+      fromDepartment: 'Sales',
+      toDepartment: 'Marketing',
+      reasonNote: 're-align coverage',
+      createdBy: 'manager_1'
+    });
+
+    expect(prisma.client.hrEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          employeeId: 'emp_1',
+          eventType: 'TRANSFER',
+          payload: expect.objectContaining({
+            fromDepartment: 'Sales',
+            toDepartment: 'Marketing',
+            reasonNote: 're-align coverage'
+          })
+        })
+      })
+    );
   });
 });

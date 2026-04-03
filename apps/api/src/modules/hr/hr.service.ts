@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AttendanceMethod,
   EmploymentType,
   GenericStatus,
   HrGoalTrackingMode,
@@ -95,6 +96,23 @@ type GoalAccessContext = {
   requestedOrgUnitId: string | null;
 };
 
+type AttendanceDailyStatus = 'WORKED' | 'NO_DATA' | 'EXEMPT';
+
+type AttendanceMonthlyCell = {
+  day: number;
+  workedMinutes: number;
+  status: AttendanceDailyStatus;
+};
+
+type AttendanceMonthlyEmployeeRow = {
+  employeeId: string;
+  employeeCode: string | null;
+  employeeName: string;
+  attendanceMethod: AttendanceMethod;
+  daily: AttendanceMonthlyCell[];
+  monthTotalMinutes: number;
+};
+
 const GOAL_AUTO_STALE_MS = 10_000;
 
 @Injectable()
@@ -161,6 +179,7 @@ export class HrService {
         workShiftId: this.toNullableString(payload.workShiftId) ?? defaultShiftId ?? null,
         joinDate: this.toDate(payload.joinDate),
         employmentType: this.normalizeEmploymentType(payload.employmentType),
+        attendanceMethod: this.normalizeAttendanceMethod(payload.attendanceMethod),
         baseSalary: this.toDecimal(payload.baseSalary),
         status: this.normalizeStatus(payload.status)
       }
@@ -192,6 +211,7 @@ export class HrService {
         workShiftId: this.toNullableString(payload.workShiftId),
         joinDate: this.toDate(payload.joinDate),
         employmentType: payload.employmentType ? this.normalizeEmploymentType(payload.employmentType) : undefined,
+        attendanceMethod: payload.attendanceMethod ? this.normalizeAttendanceMethod(payload.attendanceMethod) : undefined,
         baseSalary: this.toDecimal(payload.baseSalary),
         status: payload.status ? this.normalizeStatus(payload.status) : undefined
       }
@@ -607,6 +627,396 @@ export class HrService {
     });
   }
 
+  async getAttendanceMonthly(yearRaw?: string, monthRaw?: string) {
+    const { year, month, start, end, daysInMonth } = this.resolveYearMonthWindow(yearRaw, monthRaw);
+
+    const [employees, attendanceRows] = await Promise.all([
+      this.prisma.client.employee.findMany({
+        where: {
+          status: {
+            not: GenericStatus.ARCHIVED
+          }
+        },
+        select: {
+          id: true,
+          code: true,
+          fullName: true,
+          attendanceMethod: true
+        },
+        orderBy: [{ code: 'asc' }, { fullName: 'asc' }]
+      }),
+      this.prisma.client.attendance.findMany({
+        where: {
+          workDate: { gte: start, lte: end }
+        },
+        select: {
+          employeeId: true,
+          workDate: true,
+          workedMinutes: true,
+          attendanceMethod: true,
+          checkInAt: true,
+          checkOutAt: true
+        },
+        orderBy: [{ employeeId: 'asc' }, { workDate: 'asc' }]
+      })
+    ]);
+
+    const now = new Date();
+    const dayAggregateByEmployee = new Map<string, Map<number, { workedMinutes: number; hasExempt: boolean }>>();
+    for (const row of attendanceRows) {
+      const employeeDayMap = dayAggregateByEmployee.get(row.employeeId) ?? new Map<number, { workedMinutes: number; hasExempt: boolean }>();
+      const day = row.workDate.getDate();
+      const aggregate = employeeDayMap.get(day) ?? { workedMinutes: 0, hasExempt: false };
+
+      if (row.attendanceMethod === AttendanceMethod.EXEMPT) {
+        aggregate.hasExempt = true;
+        aggregate.workedMinutes = 0;
+        employeeDayMap.set(day, aggregate);
+        dayAggregateByEmployee.set(row.employeeId, employeeDayMap);
+        continue;
+      }
+
+      let minutes = Math.max(0, row.workedMinutes ?? 0);
+      if (row.checkInAt && !row.checkOutAt) {
+        minutes += Math.max(0, Math.floor((now.getTime() - row.checkInAt.getTime()) / 60000));
+      }
+
+      aggregate.workedMinutes = Math.max(0, aggregate.workedMinutes + minutes);
+      employeeDayMap.set(day, aggregate);
+      dayAggregateByEmployee.set(row.employeeId, employeeDayMap);
+    }
+
+    const rows: AttendanceMonthlyEmployeeRow[] = employees.map((employee) => {
+      const attendanceMethod = employee.attendanceMethod ?? AttendanceMethod.REMOTE_TRACKED;
+      const employeeDayMap = dayAggregateByEmployee.get(employee.id) ?? new Map<number, { workedMinutes: number; hasExempt: boolean }>();
+
+      const daily: AttendanceMonthlyCell[] = [];
+      let monthTotalMinutes = 0;
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const aggregate = employeeDayMap.get(day) ?? { workedMinutes: 0, hasExempt: false };
+        if (aggregate.hasExempt) {
+          daily.push({
+            day,
+            workedMinutes: 0,
+            status: 'EXEMPT'
+          });
+          continue;
+        }
+
+        const workedMinutes = Math.max(0, aggregate.workedMinutes);
+        if (workedMinutes > 0) {
+          monthTotalMinutes += workedMinutes;
+        }
+        daily.push({
+          day,
+          workedMinutes,
+          status: workedMinutes > 0 ? 'WORKED' : 'NO_DATA'
+        });
+      }
+
+      return {
+        employeeId: employee.id,
+        employeeCode: employee.code,
+        employeeName: employee.fullName,
+        attendanceMethod,
+        daily,
+        monthTotalMinutes
+      };
+    });
+
+    return {
+      year,
+      month,
+      daysInMonth,
+      rows
+    };
+  }
+
+  async importOfficeAttendance(payload: HrPayload) {
+    const { year, month } = this.resolveYearMonthWindow(payload.year, payload.month);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length === 0) {
+      throw new BadRequestException('Thiếu dữ liệu rows để import chấm công văn phòng.');
+    }
+
+    const employeeCodes = Array.from(
+      new Set(
+        rows
+          .map((item) => this.readOfficeRowEmployeeCode(item))
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+
+    const employees = await this.prisma.client.employee.findMany({
+      where: {
+        code: {
+          in: employeeCodes
+        }
+      },
+      select: {
+        id: true,
+        code: true,
+        workShiftId: true
+      }
+    });
+
+    const employeeByCode = new Map<string, (typeof employees)[number]>();
+    for (const employee of employees) {
+      if (employee.code) {
+        employeeByCode.set(employee.code.trim().toLowerCase(), employee);
+      }
+    }
+
+    const errors: Array<{ rowIndex: number; employeeCode?: string; message: string }> = [];
+    let importedCount = 0;
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const rowIndex = index + 1;
+      const rowRaw = rows[index];
+      try {
+        const employeeCode = this.readOfficeRowEmployeeCode(rowRaw);
+        if (!employeeCode) {
+          throw new BadRequestException('Thiếu employeeCode.');
+        }
+
+        const employee = employeeByCode.get(employeeCode.toLowerCase());
+        if (!employee) {
+          throw new NotFoundException(`Không tìm thấy nhân sự với mã ${employeeCode}.`);
+        }
+
+        const row = this.toRecord(rowRaw);
+        const workDate = this.toDate(row.workDate);
+        if (!workDate) {
+          throw new BadRequestException('Thiếu workDate.');
+        }
+        if (workDate.getFullYear() !== year || workDate.getMonth() + 1 !== month) {
+          throw new BadRequestException(`workDate ${workDate.toISOString().slice(0, 10)} không thuộc tháng ${month}/${year}.`);
+        }
+
+        const workedHours = this.toInt(row.workedHours, 0) ?? 0;
+        const workedMinutes = this.toInt(row.workedMinutes, 0) ?? 0;
+        const totalWorkedMinutes = workedHours * 60 + workedMinutes;
+        if (totalWorkedMinutes < 0) {
+          throw new BadRequestException('workedHours/workedMinutes phải >= 0.');
+        }
+
+        const workDateStart = this.startOfDay(workDate);
+        const workDateEnd = this.endOfDay(workDate);
+        await this.assertAttendanceDayNotExempt(
+          employee.id,
+          workDateStart,
+          workDateEnd,
+          'import công văn phòng',
+          `Ngày ${this.toDateOnlyString(workDateStart)} đã đánh dấu Miễn chấm công, không thể import công văn phòng.`
+        );
+
+        const existing = await this.prisma.client.attendance.findFirst({
+          where: {
+            employeeId: employee.id,
+            workDate: {
+              gte: workDateStart,
+              lte: workDateEnd
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        if (existing) {
+          await this.prisma.client.attendance.updateMany({
+            where: { id: existing.id },
+            data: {
+              workDate: workDateStart,
+              workShiftId: employee.workShiftId ?? existing.workShiftId,
+              checkInAt: null,
+              checkOutAt: null,
+              workedMinutes: totalWorkedMinutes,
+              lateMinutes: 0,
+              overtimeMinutes: 0,
+              attendanceMethod: AttendanceMethod.OFFICE_EXCEL,
+              status: totalWorkedMinutes > 0 ? 'present' : 'absent',
+              note: this.toNullableString(row.note) ?? existing.note
+            }
+          });
+        } else {
+          await this.prisma.client.attendance.create({
+            data: {
+              tenant_Id: this.prisma.getTenantId(),
+              employeeId: employee.id,
+              workDate: workDateStart,
+              workShiftId: employee.workShiftId ?? null,
+              checkInAt: null,
+              checkOutAt: null,
+              workedMinutes: totalWorkedMinutes,
+              lateMinutes: 0,
+              overtimeMinutes: 0,
+              attendanceMethod: AttendanceMethod.OFFICE_EXCEL,
+              status: totalWorkedMinutes > 0 ? 'present' : 'absent',
+              note: this.toNullableString(row.note)
+            }
+          });
+        }
+
+        importedCount += 1;
+      } catch (error) {
+        const employeeCode = this.readOfficeRowEmployeeCode(rowRaw) ?? undefined;
+        errors.push({
+          rowIndex,
+          employeeCode,
+          message: error instanceof Error ? error.message : 'Không thể import dòng dữ liệu.'
+        });
+      }
+    }
+
+    return {
+      totalRows: rows.length,
+      importedCount,
+      skippedCount: rows.length - importedCount,
+      errors
+    };
+  }
+
+  async markAttendanceExemptDay(payload: HrPayload) {
+    const tenantId = this.prisma.getTenantId();
+    const employeeId = this.toNullableString(payload.employeeId);
+    if (!employeeId) {
+      throw new BadRequestException('Thiếu employeeId.');
+    }
+    const workDateValue = this.toDate(payload.workDate);
+    if (!workDateValue) {
+      throw new BadRequestException('Thiếu workDate.');
+    }
+
+    const employee = await this.ensureEmployeeExists(employeeId);
+    const workDateStart = this.startOfDay(workDateValue);
+    const workDateEnd = this.endOfDay(workDateValue);
+
+    const conflictingWorkedRecord = await this.prisma.client.attendance.findFirst({
+      where: {
+        employeeId,
+        workDate: { gte: workDateStart, lte: workDateEnd },
+        attendanceMethod: { not: AttendanceMethod.EXEMPT },
+        OR: [{ workedMinutes: { gt: 0 } }, { checkInAt: { not: null } }, { checkOutAt: { not: null } }]
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    if (conflictingWorkedRecord) {
+      throw new BadRequestException(
+        `Ngày ${this.toDateOnlyString(workDateStart)} đã có dữ liệu công, không thể đánh dấu Miễn chấm công.`
+      );
+    }
+
+    const note = this.toNullableString(payload.note);
+    const existingExempt = await this.prisma.client.attendance.findFirst({
+      where: {
+        employeeId,
+        workDate: { gte: workDateStart, lte: workDateEnd },
+        attendanceMethod: AttendanceMethod.EXEMPT
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (existingExempt) {
+      await this.prisma.client.attendance.updateMany({
+        where: { id: existingExempt.id },
+        data: {
+          workDate: workDateStart,
+          workShiftId: employee.workShiftId ?? existingExempt.workShiftId,
+          checkInAt: null,
+          checkOutAt: null,
+          scheduledStartAt: null,
+          scheduledEndAt: null,
+          workedMinutes: 0,
+          lateMinutes: 0,
+          overtimeMinutes: 0,
+          attendanceMethod: AttendanceMethod.EXEMPT,
+          status: 'exempt',
+          note: note ?? existingExempt.note
+        }
+      });
+      return this.prisma.client.attendance.findFirst({ where: { id: existingExempt.id } });
+    }
+
+    const neutralRecord = await this.prisma.client.attendance.findFirst({
+      where: {
+        employeeId,
+        workDate: { gte: workDateStart, lte: workDateEnd },
+        workedMinutes: 0,
+        checkInAt: null,
+        checkOutAt: null
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (neutralRecord) {
+      await this.prisma.client.attendance.updateMany({
+        where: { id: neutralRecord.id },
+        data: {
+          workDate: workDateStart,
+          workShiftId: employee.workShiftId ?? neutralRecord.workShiftId,
+          checkInAt: null,
+          checkOutAt: null,
+          scheduledStartAt: null,
+          scheduledEndAt: null,
+          workedMinutes: 0,
+          lateMinutes: 0,
+          overtimeMinutes: 0,
+          attendanceMethod: AttendanceMethod.EXEMPT,
+          status: 'exempt',
+          note: note ?? neutralRecord.note
+        }
+      });
+      return this.prisma.client.attendance.findFirst({ where: { id: neutralRecord.id } });
+    }
+
+    return this.prisma.client.attendance.create({
+      data: {
+        tenant_Id: tenantId,
+        employeeId,
+        workDate: workDateStart,
+        workShiftId: employee.workShiftId ?? null,
+        checkInAt: null,
+        checkOutAt: null,
+        scheduledStartAt: null,
+        scheduledEndAt: null,
+        workedMinutes: 0,
+        lateMinutes: 0,
+        overtimeMinutes: 0,
+        attendanceMethod: AttendanceMethod.EXEMPT,
+        status: 'exempt',
+        note
+      }
+    });
+  }
+
+  async unmarkAttendanceExemptDay(employeeIdRaw?: string, workDateRaw?: string) {
+    const employeeId = this.toNullableString(employeeIdRaw);
+    if (!employeeId) {
+      throw new BadRequestException('Thiếu employeeId.');
+    }
+    const workDateValue = this.toDate(workDateRaw);
+    if (!workDateValue) {
+      throw new BadRequestException('Thiếu workDate.');
+    }
+
+    await this.ensureEmployeeExists(employeeId);
+    const workDateStart = this.startOfDay(workDateValue);
+    const workDateEnd = this.endOfDay(workDateValue);
+
+    const deleted = await this.prisma.client.attendance.deleteMany({
+      where: {
+        employeeId,
+        workDate: { gte: workDateStart, lte: workDateEnd },
+        attendanceMethod: AttendanceMethod.EXEMPT
+      }
+    });
+
+    return {
+      employeeId,
+      workDate: this.toDateOnlyString(workDateStart),
+      removedCount: deleted.count
+    };
+  }
+
   async checkIn(payload: HrPayload) {
     const tenantId = this.prisma.getTenantId();
     const employeeId = this.toNullableString(payload.employeeId);
@@ -620,15 +1030,20 @@ export class HrService {
     const workDate = this.startOfDay(workDateValue);
     const workDateEnd = this.endOfDay(workDateValue);
 
-    const existing = await this.prisma.client.attendance.findFirst({
+    await this.assertAttendanceDayNotExempt(employeeId, workDate, workDateEnd, 'check-in');
+
+    const openSession = await this.prisma.client.attendance.findFirst({
       where: {
         employeeId,
-        workDate: { gte: workDate, lte: workDateEnd }
-      }
+        workDate: { gte: workDate, lte: workDateEnd },
+        checkInAt: { not: null },
+        checkOutAt: null
+      },
+      orderBy: { checkInAt: 'desc' }
     });
 
-    if (existing) {
-      throw new BadRequestException('Nhân viên đã chấm công trong ngày này.');
+    if (openSession) {
+      throw new BadRequestException('Nhân sự đã check-in và chưa check-out trong ngày.');
     }
 
     const now = new Date();
@@ -658,8 +1073,10 @@ export class HrService {
         checkInAt: now,
         scheduledStartAt,
         scheduledEndAt: normalizedScheduledEndAt,
+        workedMinutes: 0,
         lateMinutes,
         status: lateMinutes > 0 ? 'late' : 'present',
+        attendanceMethod: AttendanceMethod.REMOTE_TRACKED,
         note: this.toNullableString(payload.note)
       }
     });
@@ -670,6 +1087,7 @@ export class HrService {
     if (!employeeId) {
       throw new BadRequestException('Thiếu employeeId.');
     }
+    await this.ensureEmployeeExists(employeeId);
 
     const workDateValue = this.toDate(payload.workDate) ?? new Date();
     const start = this.startOfDay(workDateValue);
@@ -679,32 +1097,38 @@ export class HrService {
     const attendance = await this.prisma.client.attendance.findFirst({
       where: {
         employeeId,
-        workDate: { gte: start, lte: end }
+        workDate: { gte: start, lte: end },
+        checkInAt: { not: null },
+        checkOutAt: null
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { checkInAt: 'desc' }
     });
 
     if (!attendance) {
-      throw new NotFoundException('Không tìm thấy bản ghi chấm công trong ngày.');
+      throw new NotFoundException('Không tìm thấy phiên check-in đang mở trong ngày.');
     }
 
     const workedMinutes = attendance.checkInAt
       ? Math.max(0, Math.floor((now.getTime() - attendance.checkInAt.getTime()) / 60000))
       : 0;
+    const accumulatedWorkedMinutes = Math.max(0, (attendance.workedMinutes ?? 0) + workedMinutes);
 
     const overtimeMinutes = attendance.scheduledEndAt
       ? Math.max(0, Math.floor((now.getTime() - attendance.scheduledEndAt.getTime()) / 60000))
       : 0;
 
     let resolvedStatus = attendance.status ?? 'present';
-    if (workedMinutes > 0 && workedMinutes < 240) {
+    if (accumulatedWorkedMinutes > 0 && accumulatedWorkedMinutes < 240) {
       resolvedStatus = 'half_day';
+    } else if (resolvedStatus === 'half_day') {
+      resolvedStatus = attendance.lateMinutes > 0 ? 'late' : 'present';
     }
 
     await this.prisma.client.attendance.updateMany({
       where: { id: attendance.id },
       data: {
         checkOutAt: now,
+        workedMinutes: accumulatedWorkedMinutes,
         overtimeMinutes,
         status: resolvedStatus,
         note: this.toNullableString(payload.note) ?? attendance.note
@@ -3277,10 +3701,45 @@ export class HrService {
         employeeId,
         eventType,
         effectiveAt,
-        payload: this.toJson(payload.payload),
+        payload: this.toJson(this.composeEmployeeEventPayload(payload)),
         createdBy: this.toNullableString(payload.createdBy)
       }
     });
+  }
+
+  private composeEmployeeEventPayload(payload: HrPayload) {
+    const explicitPayload = payload.payload;
+    if (explicitPayload && typeof explicitPayload === 'object' && !Array.isArray(explicitPayload)) {
+      return explicitPayload;
+    }
+
+    const reserved = new Set([
+      'id',
+      'employeeId',
+      'eventType',
+      'effectiveAt',
+      'createdBy',
+      'actorId',
+      'payload'
+    ]);
+
+    const composed: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(payload)) {
+      if (reserved.has(key) || value === undefined || value === null) {
+        continue;
+      }
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          continue;
+        }
+        composed[key] = trimmed;
+        continue;
+      }
+      composed[key] = value;
+    }
+
+    return Object.keys(composed).length > 0 ? composed : null;
   }
 
   private resolveGoalActor() {
@@ -4905,6 +5364,24 @@ export class HrService {
     return fallback;
   }
 
+  private normalizeAttendanceMethod(
+    value: unknown,
+    fallback: AttendanceMethod = AttendanceMethod.REMOTE_TRACKED,
+    strict = true
+  ) {
+    if (value === undefined || value === null || value === '') {
+      return fallback;
+    }
+    const normalized = String(value ?? '').trim().toUpperCase();
+    if ((Object.values(AttendanceMethod) as string[]).includes(normalized)) {
+      return normalized as AttendanceMethod;
+    }
+    if (strict) {
+      throw new BadRequestException(`attendanceMethod không hợp lệ: ${String(value)}`);
+    }
+    return fallback;
+  }
+
   private normalizePayrollComponentType(
     value: unknown,
     fallback: PayrollComponentType = PayrollComponentType.EARNING
@@ -4981,6 +5458,13 @@ export class HrService {
     return str.length > 0 ? str : null;
   }
 
+  private toRecord(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new BadRequestException('Dòng dữ liệu import không hợp lệ.');
+    }
+    return value as Record<string, unknown>;
+  }
+
   private toUpdateString(value: unknown) {
     if (value === undefined || value === null) return undefined;
     const str = String(value).trim();
@@ -5023,6 +5507,66 @@ export class HrService {
       throw new BadRequestException(`Định dạng thời gian không hợp lệ: ${str}.`);
     }
     return str;
+  }
+
+  private resolveYearMonthWindow(yearRaw?: unknown, monthRaw?: unknown) {
+    const now = new Date();
+    const year = this.toInt(yearRaw, now.getFullYear()) ?? now.getFullYear();
+    const month = this.toInt(monthRaw, now.getMonth() + 1) ?? now.getMonth() + 1;
+
+    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+      throw new BadRequestException('Năm không hợp lệ. Dùng YYYY.');
+    }
+    if (!Number.isFinite(month) || month < 1 || month > 12) {
+      throw new BadRequestException('Tháng không hợp lệ. Dùng MM (1-12).');
+    }
+
+    const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const end = new Date(year, month, 0, 23, 59, 59, 999);
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    return { year, month, start, end, daysInMonth };
+  }
+
+  private readOfficeRowEmployeeCode(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    const row = value as Record<string, unknown>;
+    const code =
+      this.toNullableString(row.employeeCode) ??
+      this.toNullableString(row.employee_code) ??
+      this.toNullableString(row.code);
+    return code ? code.trim() : null;
+  }
+
+  private toDateOnlyString(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private async assertAttendanceDayNotExempt(
+    employeeId: string,
+    start: Date,
+    end: Date,
+    actionLabel: string,
+    customMessage?: string
+  ) {
+    const exemptRecord = await this.prisma.client.attendance.findFirst({
+      where: {
+        employeeId,
+        workDate: { gte: start, lte: end },
+        attendanceMethod: AttendanceMethod.EXEMPT
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    if (exemptRecord) {
+      throw new BadRequestException(
+        customMessage ?? `Ngày ${this.toDateOnlyString(start)} đã đánh dấu Miễn chấm công, không thể ${actionLabel}.`
+      );
+    }
   }
 
   private timeOnDate(date: Date, hhmm: string | null | undefined) {

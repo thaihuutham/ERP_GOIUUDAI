@@ -9,8 +9,7 @@ export type FieldType =
   | 'datetime-local'
   | 'textarea'
   | 'select'
-  | 'checkbox'
-  | 'json';
+  | 'checkbox';
 
 export type SelectOption = {
   label: string;

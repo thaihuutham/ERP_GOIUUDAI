@@ -5,6 +5,12 @@ import { Plus, Search, RefreshCw, Filter, FileText, LayoutDashboard, ChevronRigh
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { canRunAction, type UserRole } from '../lib/rbac';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
+import {
+  formatBulkSummary,
+  runBulkOperation,
+  type BulkExecutionResult,
+  type BulkRowId
+} from '../lib/bulk-actions';
 import type {
   FeatureAction,
   FeatureFilter,
@@ -14,12 +20,23 @@ import type {
   ModuleFeature
 } from '../lib/module-ui';
 import { useUserRole } from './user-role-context';
-import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
+import {
+  StandardDataTable,
+  ColumnDefinition,
+  type StandardTableBulkAction
+} from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
 type FormValue = FieldValue;
 type FormValues = Record<string, FormValue>;
 type FilterValues = Record<string, FormValue>;
+type TableRow = Record<string, unknown> & { id: BulkRowId };
+
+type PendingBulkActionContext = {
+  action: FeatureAction;
+  rows: TableRow[];
+  resolve: (result: BulkExecutionResult | void) => void;
+};
 
 function getInitialValue(field: FormField): FormValue {
   if (field.defaultValue !== undefined) return field.defaultValue;
@@ -53,10 +70,44 @@ function parseFormPayload(action: FeatureAction, formValues: FormValues) {
       if (!Number.isNaN(num)) body[field.name] = num;
       continue;
     }
-    if (field.type === 'json') { body[field.name] = JSON.parse(stringValue); continue; }
     body[field.name] = stringValue;
   }
   return body;
+}
+
+function extractPathParamKeys(endpoint: string) {
+  return Array.from(endpoint.matchAll(/:([A-Za-z0-9_]+)/g)).map((match) => match[1]);
+}
+
+function getRowValueForPathParam(row: Record<string, unknown>, key: string) {
+  const direct = row[key];
+  if (direct !== undefined && direct !== null && direct !== '') {
+    return direct;
+  }
+  if (key === 'id') {
+    const fallbackId = row.id;
+    if (fallbackId !== undefined && fallbackId !== null && fallbackId !== '') {
+      return fallbackId;
+    }
+  }
+  return undefined;
+}
+
+function isDestructiveAction(action: FeatureAction) {
+  const fingerprint = `${action.key} ${action.label} ${action.endpoint}`.toLowerCase();
+  return (
+    action.method === 'DELETE' ||
+    fingerprint.includes('archive') ||
+    fingerprint.includes('delete') ||
+    fingerprint.includes('reject') ||
+    fingerprint.includes('xoa') ||
+    fingerprint.includes('luu tru') ||
+    fingerprint.includes('tu choi')
+  );
+}
+
+function buildBulkConfirmMessage(action: FeatureAction, count: number) {
+  return `Xác nhận ${action.label.toLowerCase()} cho ${count} bản ghi đã chọn?`;
 }
 
 function applyPathParams(endpoint: string, body: Record<string, unknown>) {
@@ -84,20 +135,38 @@ function formatCellValue(value: unknown): string {
 }
 
 // Sub-component for individual Feature Action Forms in SidePanel
-function ActionForm({ action, onSubmit, onCancel, initialValues }: { 
+function ActionForm({
+  action,
+  onSubmit,
+  onCancel,
+  initialValues,
+  hiddenFieldNames = [],
+  isSubmitting = false
+}: {
   action: FeatureAction, 
   onSubmit: (values: FormValues) => void,
   onCancel: () => void,
-  initialValues?: FormValues 
+  initialValues?: FormValues,
+  hiddenFieldNames?: string[],
+  isSubmitting?: boolean
 }) {
   const [values, setValues] = useState<FormValues>(initialValues ?? createDefaultFormValues(action));
+  const hiddenSet = useMemo(() => new Set(hiddenFieldNames), [hiddenFieldNames]);
+  const visibleFields = useMemo(
+    () => action.fields.filter((field) => !hiddenSet.has(field.name)),
+    [action.fields, hiddenSet]
+  );
+
+  useEffect(() => {
+    setValues(initialValues ?? createDefaultFormValues(action));
+  }, [action, initialValues]);
 
   const updateValue = (name: string, val: FormValue) => setValues(prev => ({ ...prev, [name]: val }));
 
   return (
     <form className="form-grid" onSubmit={(e) => { e.preventDefault(); onSubmit(values); }}>
       <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1.5rem', color: 'var(--primary)' }}>{action.label}</h3>
-      {action.fields.map(field => (
+      {visibleFields.map(field => (
         <div className="field" key={field.name}>
           <label>{field.label}</label>
           {field.type === 'textarea' ? (
@@ -117,9 +186,18 @@ function ActionForm({ action, onSubmit, onCancel, initialValues }: {
           )}
         </div>
       ))}
+      {visibleFields.length === 0 && (
+        <p className="banner banner-info" style={{ margin: 0 }}>
+          Không cần nhập thêm dữ liệu. Nhấn xác nhận để áp dụng cho toàn bộ bản ghi đã chọn.
+        </p>
+      )}
       <div className="action-buttons" style={{ marginTop: '2rem' }}>
-        <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Xác nhận</button>
-        <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Hủy</button>
+        <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={isSubmitting}>
+          {isSubmitting ? 'Đang xử lý...' : 'Xác nhận'}
+        </button>
+        <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel} disabled={isSubmitting}>
+          Hủy
+        </button>
       </div>
     </form>
   );
@@ -135,6 +213,9 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
   
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const [activeAction, setActiveAction] = useState<FeatureAction | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
+  const [pendingBulkAction, setPendingBulkAction] = useState<PendingBulkActionContext | null>(null);
+  const [isRunningBulkAction, setIsRunningBulkAction] = useState(false);
   const featureFilters = feature.filters ?? [];
 
   const loadData = async () => {
@@ -173,11 +254,22 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
 
   useEffect(() => {
     setFilterValues(createDefaultFilterValues(featureFilters));
+    setSelectedRowIds([]);
+    setPendingBulkAction((current) => {
+      current?.resolve(undefined);
+      return null;
+    });
   }, [feature.key]);
 
   useEffect(() => {
     if (feature.autoLoad !== false) loadData();
   }, [feature.key, search, filterValues]);
+
+  useEffect(() => {
+    return () => {
+      pendingBulkAction?.resolve(undefined);
+    };
+  }, [pendingBulkAction]);
 
   const handleAction = async (action: FeatureAction, formValues: FormValues) => {
     setErrorMessage(null);
@@ -198,29 +290,188 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
     }
   };
 
-  const updateAction = feature.actions.find(a => 
-    (a.method === 'PATCH' || a.method === 'PUT') && 
-    (a.endpoint.includes(':id') || a.endpoint.includes(':code')) &&
-    canRunAction({ role, moduleKey, action: a })
+  const updateAction = feature.actions.find((action) =>
+    (action.method === 'PATCH' || action.method === 'PUT') &&
+    (action.endpoint.includes(':id') || action.endpoint.includes(':code')) &&
+    canRunAction({ role, moduleKey, action })
   );
 
-  const columns: ColumnDefinition<any>[] = useMemo(() => {
-    const keys = feature.columns ?? (rows.length > 0 ? Object.keys(rows[0]).filter(k => k !== 'tenant_Id').slice(0, 8) : []);
-    
-    return keys.map(k => {
-      const fieldDef = updateAction?.fields.find(f => f.name === k);
+  const tableRows = rows as TableRow[];
+
+  const columns: ColumnDefinition<TableRow>[] = useMemo(() => {
+    const keys = feature.columns ?? (rows.length > 0 ? Object.keys(rows[0]).filter((key) => key !== 'tenant_Id').slice(0, 8) : []);
+
+    return keys.map((key) => {
+      const fieldDef = updateAction?.fields.find((field) => field.name === key);
       return {
-        key: k,
-        label: k.charAt(0).toUpperCase() + k.slice(1).replace(/([A-Z])/g, ' $1'),
-        render: (r: any) => formatCellValue(r[k]),
+        key,
+        label: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1'),
+        render: (row) => formatCellValue(row[key]),
         type: fieldDef?.type as any,
         options: fieldDef?.options
       };
     });
   }, [feature.columns, rows, updateAction]);
 
-  const createAction = feature.actions.find(a => a.method === 'POST' && !a.endpoint.includes(':id'));
-  const rowActions = feature.actions.filter(a => a !== createAction && canRunAction({ role, moduleKey, action: a }));
+  const createAction = feature.actions.find((action) => action.method === 'POST' && !action.endpoint.includes(':id'));
+  const rowActions = feature.actions.filter(
+    (action) => action !== createAction && canRunAction({ role, moduleKey, action })
+  );
+
+  const bulkActionCandidates = useMemo(
+    () =>
+      rowActions.filter((action) => action.method !== 'GET' && extractPathParamKeys(action.endpoint).length > 0),
+    [rowActions]
+  );
+
+  const executePendingBulkAction = async (
+    action: FeatureAction,
+    bulkRows: TableRow[],
+    formValues: FormValues
+  ): Promise<BulkExecutionResult | undefined> => {
+    const pathParamKeys = extractPathParamKeys(action.endpoint);
+    const parsedBody = parseFormPayload(action, formValues);
+    const selectedIds = bulkRows.map((row) => row.id).filter((id): id is BulkRowId => Boolean(id));
+
+    if (selectedIds.length === 0) {
+      return {
+        total: 0,
+        successCount: 0,
+        failedCount: 0,
+        failedIds: [],
+        failures: [],
+        actionLabel: action.label,
+        message: `${action.label}: không có dòng hợp lệ để xử lý.`
+      };
+    }
+
+    if (isDestructiveAction(action) && !window.confirm(buildBulkConfirmMessage(action, selectedIds.length))) {
+      return undefined;
+    }
+
+    setIsRunningBulkAction(true);
+    try {
+      const rowById = new Map<BulkRowId, TableRow>();
+      for (const row of bulkRows) {
+        rowById.set(row.id, row);
+      }
+
+      const result = await runBulkOperation({
+        ids: selectedIds,
+        continueOnError: true,
+        chunkSize: 10,
+        execute: async (rowId) => {
+          const row = rowById.get(rowId);
+          if (!row) {
+            throw new Error(`Không tìm thấy dữ liệu cho bản ghi ${rowId}.`);
+          }
+
+          const rowPayload: Record<string, unknown> = { ...parsedBody };
+          for (const pathParamKey of pathParamKeys) {
+            const rowValue = getRowValueForPathParam(row, pathParamKey);
+            if (rowValue === undefined || rowValue === null || rowValue === '') {
+              throw new Error(`Thiếu tham số ${pathParamKey} cho bản ghi ${rowId}.`);
+            }
+            rowPayload[pathParamKey] = rowValue;
+          }
+
+          const resolved = applyPathParams(action.endpoint, rowPayload);
+          await apiRequest(resolved.endpoint, {
+            method: action.method,
+            body: action.method === 'GET' || action.method === 'DELETE' ? undefined : resolved.body
+          });
+        }
+      });
+
+      const normalized: BulkExecutionResult = {
+        ...result,
+        actionLabel: action.label,
+        message: formatBulkSummary(
+          {
+            ...result,
+            actionLabel: action.label
+          },
+          action.label
+        )
+      };
+
+      if (normalized.successCount > 0) {
+        await loadData();
+      }
+      setResultMessage(normalized.message ?? null);
+      if (normalized.failedCount > 0) {
+        setErrorMessage(`Một số bản ghi thất bại khi chạy ${action.label.toLowerCase()}.`);
+      }
+      return normalized;
+    } catch (error) {
+      const fallback: BulkExecutionResult = {
+        total: selectedIds.length,
+        successCount: 0,
+        failedCount: selectedIds.length,
+        failedIds: selectedIds,
+        failures: selectedIds.map((id) => ({
+          id,
+          message: error instanceof Error ? error.message : 'Lỗi xử lý bulk action'
+        })),
+        actionLabel: action.label,
+        message: `${action.label}: thất bại ${selectedIds.length}/${selectedIds.length}.`
+      };
+      setErrorMessage(error instanceof Error ? error.message : 'Thao tác hàng loạt thất bại');
+      return fallback;
+    } finally {
+      setIsRunningBulkAction(false);
+    }
+  };
+
+  const bulkActions = useMemo<StandardTableBulkAction<TableRow>[]>(
+    () =>
+      bulkActionCandidates.map((action) => ({
+        key: `bulk-${action.key}`,
+        label: action.label,
+        tone: isDestructiveAction(action) ? 'danger' : 'primary',
+        execute: async (selectedRows) =>
+          new Promise<BulkExecutionResult | void>((resolve) => {
+            setPendingBulkAction({
+              action,
+              rows: (selectedRows as TableRow[]).slice(),
+              resolve
+            });
+          })
+      })),
+    [bulkActionCandidates]
+  );
+
+  const pendingBulkHiddenFieldNames = useMemo(() => {
+    if (!pendingBulkAction) {
+      return [];
+    }
+
+    const pathParamKeys = extractPathParamKeys(pendingBulkAction.action.endpoint);
+    return pathParamKeys.filter((key) =>
+      pendingBulkAction.rows.every((row) => {
+        const rowValue = getRowValueForPathParam(row, key);
+        return rowValue !== undefined && rowValue !== null && rowValue !== '';
+      })
+    );
+  }, [pendingBulkAction]);
+
+  const closePendingBulkAction = () => {
+    setPendingBulkAction((current) => {
+      current?.resolve(undefined);
+      return null;
+    });
+  };
+
+  const submitPendingBulkAction = async (values: FormValues) => {
+    if (!pendingBulkAction) {
+      return;
+    }
+
+    const context = pendingBulkAction;
+    const result = await executePendingBulkAction(context.action, context.rows, values);
+    context.resolve(result);
+    setPendingBulkAction(null);
+  };
 
   return (
     <div className="feature-panel">
@@ -333,13 +584,18 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
       {resultMessage && <div className="banner banner-success" style={{ marginBottom: '1rem' }}>{resultMessage}</div>}
 
       <StandardDataTable
-        data={rows}
+        data={tableRows}
         columns={columns}
         isLoading={isLoading}
         onRowClick={(r) => setSelectedRow(r)}
         storageKey={`erp.workbench.${moduleKey}.${feature.key}`}
         editableKeys={updateAction ? updateAction.fields.map(f => f.name) : []}
         onSaveRow={updateAction ? (id, values) => handleAction(updateAction, { ...values, id } as FormValues) : undefined}
+        enableRowSelection
+        selectedRowIds={selectedRowIds}
+        onSelectedRowIdsChange={setSelectedRowIds}
+        bulkActions={bulkActions}
+        showDefaultBulkUtilities
       />
 
       {/* Detail SidePanel */}
@@ -383,6 +639,28 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
                </div>
              )}
           </div>
+        )}
+      </SidePanel>
+
+      <SidePanel
+        isOpen={Boolean(pendingBulkAction)}
+        onClose={closePendingBulkAction}
+        title={pendingBulkAction ? `${pendingBulkAction.action.label} (${pendingBulkAction.rows.length} bản ghi)` : 'Bulk action'}
+      >
+        {pendingBulkAction && (
+          <ActionForm
+            action={pendingBulkAction.action}
+            initialValues={createDefaultFormValues(pendingBulkAction.action)}
+            hiddenFieldNames={pendingBulkHiddenFieldNames}
+            isSubmitting={isRunningBulkAction}
+            onCancel={closePendingBulkAction}
+            onSubmit={(vals) => void submitPendingBulkAction(vals)}
+          />
+        )}
+        {isRunningBulkAction && (
+          <p className="banner banner-info" style={{ marginTop: '0.75rem' }}>
+            Đang xử lý batch, vui lòng chờ...
+          </p>
         )}
       </SidePanel>
 

@@ -1,10 +1,616 @@
 # CURRENT_TASK
 
 ## Trạng thái tổng quan
-- Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization
-- Last updated: 2026-04-01 15:36 +07
+- Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
+- Last updated: 2026-04-03 11:20 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-03 11:20 (ERP No-JSON Input v1 - user non-IT)
+- User yêu cầu triển khai toàn hệ thống chuẩn nhập liệu không JSON thô cho người dùng không IT và lưu chuẩn này làm quy tắc bền vững cho các agent.
+- Đã hoàn tất frontend:
+  - `apps/web/components/hr-regulation-board.tsx`
+    - bỏ `Payload JSON`, `Revision JSON`, `Goals JSON`, `Baseline JSON`.
+    - thay bằng field nghiệp vụ cố định + ghi chú bổ sung.
+    - submit map object alias:
+      - Appendix `payload`: `summary`, `result`, `taskCount`, `complianceNote`, `qualityNote`, `note`.
+      - Revision `payload`: `adjustmentType`, `beforeValue`, `afterValue`, `reasonNote`.
+      - PIP `goals`: `targetMonthlyScore`, `recoveryWindowDays`, `mandatoryAppendixCodes`, `coachingCheckinWeekly`.
+      - PIP `baseline`: `roleGroup`, `missingLogCount30d`, `note`.
+  - `apps/web/components/hr-goals-tracking-board.tsx`
+    - bỏ `Metric bindings JSON`.
+    - thay bằng row builder add/remove dòng:
+      - `sourceSystem`, `metricKey`, `weight`, config phụ (`employeeId` / `recruiterId` / `departmentId`).
+    - frontend không parse JSON text nữa.
+  - `apps/web/lib/module-ui.ts`
+    - bỏ `FieldType = 'json'`.
+  - `apps/web/components/module-workbench.tsx`
+    - bỏ nhánh parser `field.type === 'json'`.
+  - `apps/web/lib/module-definitions.ts`
+    - `hr-events`: thay payload JSON bằng field nghiệp vụ rõ nghĩa (`fromDepartment`, `toDepartment`, `fromPosition`, `toPosition`, `reasonNote`, `note`, `referenceCode`).
+    - `workflow-definitions`: bỏ action create JSON trên generic workbench, giữ cập nhật; tạo mới dùng màn builder chuyên dụng `/modules/workflows`.
+- Đã hoàn tất backend compatibility:
+  - `apps/api/src/modules/hr/hr-regulation.service.ts`
+    - PIP create/patch nhận cả key cũ (`goalsJson`, `baselineJson`) và alias mới (`goals`, `baseline`).
+  - `apps/api/src/modules/hr/hr.service.ts`
+    - `createEmployeeEvent` tự compose `payload` object từ field nghiệp vụ nếu không gửi `payload`.
+- Đã bổ sung test compatibility:
+  - `apps/api/test/hr-regulation.service.test.ts`
+    - thêm test chấp nhận alias `payload` cho Appendix.
+    - thêm test chấp nhận alias `goals`/`baseline` cho PIP.
+  - `apps/api/test/hr.service.test.ts`
+    - thêm test compose payload HR event từ field nghiệp vụ.
+- Quy tắc bền vững cho agent:
+  - Chuẩn no-JSON user-facing đã được neo tại:
+    - `planning/CURRENT_TASK.md`
+    - `.agent/memory/CONTEXT_SNAPSHOT.md`
+    - `docs/specs/CONVENTIONS.md`
+  - Không tạo ADR mới cho thay đổi này theo quyết định hiện tại.
+- Verify:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/hr-regulation.service.test.ts test/hr.service.test.ts test/hr-regulation.api-flow.test.ts` ✅ (`13 passed`)
+  - `PLAYWRIGHT_PORT=4196 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/hr-regulation-board.spec.ts apps/web/e2e/tests/hr-goals-tracking-board.spec.ts apps/web/e2e/tests/workflows-module.spec.ts --reporter=line` ✅ (`8 passed`)
+
+## Session Update 2026-04-03 08:04
+- User yêu cầu implement plan `ERP Quy Chế 2026 v1`: số hóa phụ lục `PL01/02/03/04/05/06/10`, điểm ngày tự động, trigger PIP.
+- Đã hoàn tất backend/domain:
+  - schema + migration:
+    - `apps/api/prisma/schema.prisma`
+    - `apps/api/prisma/migrations/20260403100000_add_hr_regulation_appendix_scoring_v1/migration.sql`
+  - service/controller/scheduler:
+    - `apps/api/src/modules/hr/hr-regulation.service.ts`
+    - `apps/api/src/modules/hr/hr-regulation.controller.ts`
+    - `apps/api/src/modules/hr/hr-regulation-scheduler.service.ts`
+  - module wiring:
+    - `apps/api/src/modules/hr/hr.module.ts`
+    - `apps/api/src/modules/notifications/notifications.module.ts` (export service + scheduler provider)
+    - `apps/api/src/modules/notifications/notifications-dispatch-scheduler.service.ts` (dispatch due jobs định kỳ).
+  - env defaults scheduler:
+    - `config/.env.example` thêm:
+      - `NOTIFICATIONS_DISPATCH_SCHEDULER_ENABLED`
+      - `NOTIFICATIONS_DISPATCH_INTERVAL_MINUTES`
+      - `NOTIFICATIONS_DISPATCH_BATCH_LIMIT`
+      - `HR_SCORE_RECONCILE_SCHEDULER_ENABLED`
+      - `HR_SCORE_RECONCILE_INTERVAL_MINUTES`
+- Đã hoàn tất frontend section mới:
+  - `apps/web/lib/hr-sections.ts` thêm section `regulation`.
+  - `apps/web/components/hr-section-screen.tsx` route switch sang board chuyên biệt.
+  - `apps/web/components/hr-regulation-board.tsx`:
+    - tab `Biểu mẫu`: create/submit/approve/reject submission, tạo/duyệt/từ chối revision T+1.
+    - tab `Điểm ngày`: list daily snapshots + role templates, manual recompute/reconcile.
+    - tab `PIP`: list cases, manual create, auto-draft run.
+- Đã bổ sung test:
+  - unit: `apps/api/test/hr-regulation.service.test.ts`
+    - dueAt PL01 cuối ngày ICT
+    - fallback approver HCNS manager
+    - revision T+1 chỉ apply sau approve
+    - scoring theo role template + freeze status
+    - trigger auto-draft PIP theo điều kiện tháng liên tiếp
+  - integration API flow: `apps/api/test/hr-regulation.api-flow.test.ts`
+  - e2e UI: `apps/web/e2e/tests/hr-regulation-board.spec.ts`
+- ADR mới:
+  - `docs/decisions/ADR-031-HR-REGULATION-APPENDIX-DIGITIZATION-AND-DAILY-SCORING.md`
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/hr-regulation.service.test.ts test/hr-regulation.api-flow.test.ts` ✅ (`7 passed`)
+  - `npm run test --workspace @erp/api -- test/hr.api-flow.test.ts` ✅ (`3 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=4192 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/hr-regulation-board.spec.ts --reporter=line` ✅ (`1 passed`)
+
+## Session Update 2026-04-02 22:00
+- User báo lỗi runtime khi thao tác exempt-day trên board attendance:
+  - `Cannot POST /api/v1/hr/attendance/exempt-day`
+  - `Cannot DELETE /api/v1/hr/attendance/exempt-day?...`
+  - kèm lỗi DB: `Can't reach database server at localhost:55432`.
+- Chẩn đoán:
+  - API process đang chạy trên `:3001` là runtime cũ chưa nạp route mới.
+  - Verify trước xử lý: `POST /api/v1/hr/attendance/exempt-day` trả `404`.
+- Đã xử lý:
+  - restart API dev process (`apps/api`, `npm run dev`).
+  - verify endpoint sau restart:
+    - `POST /api/v1/hr/attendance/exempt-day` => `201`
+    - `DELETE /api/v1/hr/attendance/exempt-day?...` => `200`.
+- Kết luận:
+  - Lỗi là do process runtime stale + thời điểm DB local chưa sẵn sàng.
+  - Không cần thay đổi code/business logic bổ sung.
+
+## Session Update 2026-04-02 18:56
+- User yêu cầu triển khai V2 attendance theo ngày cho case mixed methods cùng tháng (Remote + Office + EXEMPT) cho cùng một nhân sự.
+- Đã hoàn tất backend/domain:
+  - `apps/api/src/modules/hr/hr.service.ts`
+    - `monthly` tổng hợp theo `Attendance.attendanceMethod` từng ngày (không áp cứng theo `Employee.attendanceMethod`).
+    - rule ngày:
+      - có `EXEMPT` => `EXEMPT`, `workedMinutes=0`;
+      - không EXEMPT + phút công > 0 => `WORKED`;
+      - còn lại => `NO_DATA`.
+    - `monthTotalMinutes` chỉ cộng ngày `WORKED`.
+    - bỏ gate cứng `Employee.attendanceMethod` trong `check-in/check-out` và `office-import`.
+    - thêm conflict guard theo ngày:
+      - ngày đã `EXEMPT` => chặn check-in và office import;
+      - ngày đã có worked/open session => chặn mark EXEMPT.
+    - thêm service methods:
+      - `markAttendanceExemptDay(payload)`
+      - `unmarkAttendanceExemptDay(employeeId, workDate)`
+  - `apps/api/src/modules/hr/hr.controller.ts`
+    - thêm:
+      - `POST /api/v1/hr/attendance/exempt-day`
+      - `DELETE /api/v1/hr/attendance/exempt-day?employeeId=...&workDate=...`
+- Đã cập nhật frontend attendance board:
+  - `apps/web/components/hr-attendance-board.tsx`
+  - giữ filter `Tháng/Năm`, rule ô ngày trống cho `NO_DATA/EXEMPT`.
+  - thêm thao tác admin exempt theo ngày ngay trên cell:
+    - icon-only action buttons (có `aria-label`) để giữ text cell trống.
+  - thêm metadata row:
+    - `WORKED: x | EXEMPT: y`.
+  - giữ flow remote check-in + office import, backend xử lý conflict theo ngày.
+- Đã cập nhật test:
+  - `apps/api/test/hr-attendance.service.test.ts`
+    - nâng bộ test lên 9 test theo logic V2 (mixed month, exempt-day lifecycle/conflict, import/check-in guard theo ngày).
+  - `apps/api/test/hr.api-flow.test.ts`
+    - thêm integration test map route `POST/DELETE attendance/exempt-day`.
+  - `apps/web/e2e/tests/hr-attendance-board.spec.ts`
+    - assert admin đánh dấu 2 ngày EXEMPT và metadata đếm đúng;
+    - assert cell `NO_DATA/EXEMPT` vẫn trống;
+    - assert import + remote self check-in/out vẫn hoạt động.
+- ADR mới:
+  - `docs/decisions/ADR-030-HR-ATTENDANCE-DAILY-METHOD-PRIORITY-EXEMPT-DAY.md`
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/hr-attendance.service.test.ts` ✅ (`9 passed`)
+  - `npm run test --workspace @erp/api -- test/hr.api-flow.test.ts` ✅ (`3 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (sau khi clear stale `.next/types` + `tsconfig.tsbuildinfo` và build lại)
+  - `PLAYWRIGHT_PORT=4180 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/hr-attendance-board.spec.ts --reporter=line` ✅ (`2 passed`)
+- Ghi chú:
+  - Không đổi contract `GET /hr/attendance/monthly`.
+  - Không phát sinh migration schema mới cho V2 này.
+
+## Session Update 2026-04-02 18:30
+- User báo lỗi runtime: `Cannot GET /api/v1/hr/attendance/monthly?year=2026&month=4`, đồng thời yêu cầu:
+  - tách filter thời gian thành 2 dropdown riêng `Tháng` và `Năm`;
+  - bảng chấm công dạng bảng có kẻ ô, gọn để vừa trang;
+  - ô không có dữ liệu để trống;
+  - giữ “Miễn chấm công” ở metadata/tổng tháng, không hiển thị trong từng ô ngày.
+- Đã xử lý backend/runtime:
+  - restart API process đang chạy stale route:
+    - dừng PID cũ trên `:3001`;
+    - chạy lại `npm run dev` tại `apps/api`.
+  - verify runtime:
+    - `GET /api/v1/hr/attendance/monthly?year=2026&month=4` trả `200`.
+  - bổ sung regression smoke mức API:
+    - `apps/api/test/hr.api-flow.test.ts`
+    - thêm test `serves GET /api/v1/hr/attendance/monthly and maps year/month query correctly`.
+- Đã cập nhật frontend attendance board:
+  - `apps/web/components/hr-attendance-board.tsx`
+  - thay state/filter:
+    - từ `selectedMonth: 'YYYY-MM'`
+    - sang `selectedMonth: number` + `selectedYear: number`.
+  - thêm 2 dropdown riêng:
+    - `Tháng` (1..12)
+    - `Năm` (current year ±5)
+  - query API monthly dùng trực tiếp `year` + `month` từ 2 state.
+  - tối ưu bảng:
+    - `table-layout: fixed`
+    - giảm width/padding/font cho cột ngày
+    - giữ horizontal scroll nhẹ khi cần
+    - thêm border rõ ràng cho `th/td`.
+  - rule render ô ngày:
+    - `WORKED` => `HH:mm`
+    - `NO_DATA` => `''`
+    - `EXEMPT` => `''` (trống ô ngày), “Miễn chấm công” giữ ở cột phương pháp/tổng tháng.
+- Đã cập nhật e2e:
+  - `apps/web/e2e/tests/hr-attendance-board.spec.ts`
+  - assert mới:
+    - có filter `Tháng` + `Năm` riêng và đổi filter reload dữ liệu.
+    - ô ngày `NO_DATA/EXEMPT` hiển thị trống.
+    - không còn hiển thị `--` trong cell ngày.
+    - vẫn có “Miễn chấm công” ở metadata/tổng tháng.
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/hr.api-flow.test.ts test/hr-attendance.service.test.ts` ✅ (`8 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=4180 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/hr-attendance-board.spec.ts --reporter=line` ✅ (`2 passed`)
+
+## Session Update 2026-04-02 18:01
+- User yêu cầu implement đầy đủ kế hoạch trang chấm công đa phương thức (Remote/Office/Exempt) cho HR.
+- Đã hoàn tất backend:
+  - `apps/api/prisma/schema.prisma`
+  - `apps/api/prisma/migrations/20260402170500_add_attendance_method_and_monthly_minutes/migration.sql`
+  - `apps/api/src/modules/hr/hr.controller.ts`
+  - `apps/api/src/modules/hr/hr.service.ts`
+  - Thêm enum + fields mới: `AttendanceMethod`, `Employee.attendanceMethod`, `Attendance.workedMinutes`, `Attendance.attendanceMethod`.
+  - Thêm API:
+    - `GET /api/v1/hr/attendance/monthly`
+    - `POST /api/v1/hr/attendance/office-import`
+  - Check-in/check-out chỉ cho `REMOTE_TRACKED`, chặn rõ ràng cho `OFFICE_EXCEL`/`EXEMPT`.
+  - Hỗ trợ cộng dồn nhiều phiên remote trong ngày qua `workedMinutes`.
+- Đã hoàn tất frontend attendance board riêng cho route `/modules/hr/attendance`:
+  - `apps/web/components/hr-attendance-board.tsx`
+  - `apps/web/components/hr-section-screen.tsx`
+  - `apps/web/lib/module-definitions.ts` (thêm field chọn `attendanceMethod` cho employee create/update)
+  - `apps/web/package.json` + `package-lock.json` (thêm `xlsx`)
+  - Có dropdown tháng, bảng ma trận theo ngày, inline đổi phương pháp chấm công, import `.xlsx`, remote self check-in/out, idle 6 phút auto checkout + logout.
+- Test bổ sung:
+  - Backend: `apps/api/test/hr-attendance.service.test.ts`
+  - Frontend e2e: `apps/web/e2e/tests/hr-attendance-board.spec.ts`
+- ADR mới:
+  - `docs/decisions/ADR-029-HR-ATTENDANCE-MULTI-METHOD-REMOTE-OFFICE-EXEMPT.md`
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run prisma:generate --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/hr-attendance.service.test.ts test/hr.service.test.ts` ✅ (`9 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=4180 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/hr-attendance-board.spec.ts --reporter=line` ✅ (`2 passed`)
+
+## Session Update 2026-04-02 15:54
+- User yêu cầu xóa hoàn toàn trang `Thông tin nhân sự` do trùng nội dung với trang `Nhân viên`.
+- Đã gỡ frontend route + menu + feature `employee-info`:
+  - `apps/web/lib/hr-sections.ts`
+  - `apps/web/lib/module-definitions.ts`
+- Kết quả:
+  - Không còn mục `Thông tin nhân sự` trong điều hướng HR.
+  - URL cũ `/modules/hr/employee-info` không còn là section hợp lệ và bị chặn bởi `notFound()`.
+  - Không còn tham chiếu `employee-info` trong `apps/web`.
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=4176 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/hr-goals-tracking-board.spec.ts --reporter=line` ✅ (`1 passed`)
+- Ghi chú:
+  - Không thay đổi business logic backend HR.
+  - Không cần ADR mới (thay đổi phạm vi điều hướng/UI).
+
+## Session Update 2026-04-02 15:42
+- User phản hồi còn sót branding cũ: `D / Digital Retail ERP Co.` trên UI.
+- Đã fix backend defaults/fallback `companyName` sang `GOIUUDAI` để runtime trả đúng thương hiệu:
+  - `apps/api/src/modules/settings/settings-policy.types.ts`
+  - `apps/api/src/modules/settings/settings.service.ts`
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+  - `apps/api/src/common/settings/runtime-settings.service.ts`
+- Verify:
+  - `rg -n "Digital Retail ERP Co\.|Digital Retail ERP" apps/api apps/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+- Ghi chú:
+  - Nếu tenant đã lưu `organization.companyName` cũ trong DB, cần cập nhật tại Settings để phản ánh ngay trên UI.
+
+## Session Update 2026-04-02 15:22
+- Tiếp tục polish theo yêu cầu “ERP chuyên nghiệp + tối giản” cho các màn còn sót wording:
+  - `apps/web/components/crm-conversations-workbench.tsx`
+  - `apps/web/components/workflows-operations-board.tsx`
+  - `apps/web/e2e/tests/workflows-module.spec.ts`
+- Điểm hoàn tất:
+  - CRM Conversations: chuẩn hóa nhãn bảng/field/action còn lẫn Anh-Việt (`Kênh`, `Chưa đọc`, `Đánh giá AI`, `Tạo lịch`, `Tên lịch`, `phiên`...).
+  - Workflows: chuẩn hóa nhãn builder/action để dễ thao tác (`Mã quy trình`, `Sơ đồ bước duyệt`, `Mã người xử lý`, wording tiếng Việt rõ nghĩa).
+  - E2E workflows đồng bộ selector + assertion theo wording mới.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=4174 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/workflows-module.spec.ts` ✅ (`6 passed`)
+  - `PLAYWRIGHT_PORT=4175 npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/conversations-inbox.spec.ts` ✅ (`4 passed`)
+- Lưu ý:
+  - Khi chạy e2e local cần set `PLAYWRIGHT_PORT` riêng để tránh reuse nhầm server đang chạy sẵn trên port mặc định.
+
+## Session Update 2026-04-02 15:08
+- Yêu cầu user: tái thiết kế tên/mô tả/trường hiển thị để thể hiện ERP chuyên nghiệp theo profile GOIUUDAI và tối giản giao diện.
+- Đã hoàn tất:
+  - Đồng bộ profile hệ thống (`Hệ thống Quản trị tập trung`, GOIUUDAI, domain/scale/model/vision) cho shell + dashboard + metadata.
+  - Chuẩn hóa tên phân hệ/mô tả toàn cục theo giọng vận hành.
+  - Việt hóa và rút gọn các màn còn nhiều thuật ngữ kỹ thuật:
+    - Trợ lý AI (`runs/access/proxy/knowledge/channels`)
+    - CRM hội thoại
+    - Quy trình phê duyệt (workflow operations)
+  - Đồng bộ e2e assertions theo nhãn mới để tránh mismatch text.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+- Phạm vi an toàn:
+  - Không đổi business logic.
+  - Không đổi backend contract.
+  - Không cần ADR mới (thay đổi UI copy/label).
+
+## Session Update 2026-04-02 14:31
+- User chốt UX: muốn xem dữ liệu archived ngay tại từng bảng bằng nút riêng `Xem dữ liệu đã xóa`, không trộn archived + active trong cùng table.
+- Trạng thái:
+  - Không cần sửa thêm code vì `StandardDataTable` đã hỗ trợ đúng hành vi:
+    - mode mặc định chỉ dữ liệu hiện hành.
+    - bấm `Xem dữ liệu đã xóa` chuyển sang tập archived-only.
+    - bấm lại quay về dữ liệu hiện hành.
+  - Đã rà soát phạm vi dùng `StandardDataTable` trên các bảng chính module để xác nhận áp dụng đồng nhất.
+- Verify bổ sung:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=3110 CI=1 npx playwright test -c apps/web/e2e/playwright.config.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --reporter=line` ✅ (`2 passed`)
+
+## Session Update 2026-04-02 14:19
+- User yêu cầu ẩn dữ liệu đã archive để bảng chính gọn hơn.
+- Đã hoàn tất bằng cách cập nhật `StandardDataTable`:
+  - `apps/web/components/ui/standard-data-table.tsx`
+  - tự lọc các dòng archived theo marker (`status/lifecycleStatus=ARCHIVED`, `isArchived`, `archivedAt`...).
+  - mặc định bật `hideArchivedRows=true`.
+  - logic selection + bulk action + select-all + retry dùng tập dữ liệu đã lọc.
+- Verify:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=3110 CI=1 npx playwright test -c apps/web/e2e/playwright.config.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/workflows-module.spec.ts apps/web/e2e/tests/assistant-module.spec.ts apps/web/e2e/tests/audit-module.spec.ts apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts --reporter=line` ✅ (`24 passed`)
+
+## Session Update 2026-04-02 13:27
+- User yêu cầu implement kế hoạch V1 bulk selection + bulk actions cho toàn bộ bảng chính module.
+- Đã hoàn tất trong phạm vi frontend (không đổi backend API, không migration DB):
+  - bổ sung phần còn thiếu ở Assistant Access board:
+    - `apps/web/components/assistant/assistant-access-board.tsx`
+    - áp dụng selection controlled + read-only bulk utilities (`Copy IDs`, `Export CSV`).
+  - chốt contract kiến trúc bằng ADR:
+    - `docs/decisions/ADR-028-GLOBAL-BULK-INTERACTION-CONTRACT-MAIN-TABLES-V1.md`.
+  - cập nhật và ổn định e2e suites theo kế hoạch:
+    - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`
+    - `apps/web/e2e/tests/workflows-module.spec.ts`
+    - `apps/web/e2e/tests/assistant-module.spec.ts`
+    - `apps/web/e2e/tests/audit-module.spec.ts`
+    - `apps/web/e2e/tests/conversations-inbox.spec.ts`
+    - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+- Verify:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=3110 CI=1 npx playwright test -c apps/web/e2e/playwright.config.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/workflows-module.spec.ts apps/web/e2e/tests/assistant-module.spec.ts apps/web/e2e/tests/audit-module.spec.ts apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts --reporter=line` ✅ (`24 passed`)
+
+## Session Update 2026-04-02 09:06
+- User yêu cầu bật mã hóa at-rest cho key lưu DB theo hướng:
+  - AES-256-GCM với master key từ env.
+  - Không migration plaintext -> ciphertext do môi trường chưa có dữ liệu cũ cần migrate.
+- Đã triển khai backend:
+  - thêm util crypto:
+    - `apps/api/src/common/settings/settings-secret-crypto.util.ts`
+    - format ciphertext: `enc:v1:gcm:<iv>.<tag>.<cipher>`
+    - env bắt buộc khi lưu secret trực tiếp: `SETTINGS_ENCRYPTION_MASTER_KEY`.
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+    - decrypt-on-read cho secret fields của domain `integrations`.
+    - encrypt-on-write khi persist `settings.integrations.v1`.
+    - giữ nguyên ciphertext cũ nếu plaintext không đổi (tránh churn do IV random).
+    - `resolveSecretValue` đọc được cả ciphertext/plaintext.
+    - snapshot domain `integrations` lưu bản đã mã hóa.
+  - `apps/api/src/common/settings/runtime-settings.service.ts`
+    - runtime resolve secret có bước decrypt trước khi áp precedence (`direct` > `secretRef` > `env`).
+    - nếu decrypt lỗi: warn và fallback sang ref/env.
+  - `apps/api/src/modules/settings/settings.service.ts`
+    - mã hóa at-rest thêm cho `system_config.bhtotSync.apiKey` (legacy bridge).
+    - đọc/normalize tự giải mã khi load config.
+    - giữ nguyên ciphertext cũ nếu key không đổi.
+- Test/docs/ADR:
+  - cập nhật test:
+    - `apps/api/test/settings-policy.service.test.ts` (assert DB không còn plaintext key)
+    - thêm `apps/api/test/settings-secret-crypto.util.test.ts`
+  - cập nhật env/docs vận hành:
+    - `config/.env.example`
+    - `docs/deployment/VM_AUTODEPLOY.md`
+    - `docs/operations/RUNBOOK.md`
+  - ADR mới:
+    - `docs/decisions/ADR-027-SETTINGS-SECRETS-AT-REST-ENCRYPTION-AES-GCM.md`
+  - ADR liên quan:
+    - `docs/decisions/ADR-026-UI-MANAGED-INTEGRATION-SECRETS-RUNTIME-HOT-RELOAD.md` (bổ sung liên kết ADR-027)
+- Verify:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `SETTINGS_ENCRYPTION_MASTER_KEY=<test-key> npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/settings-secret-crypto.util.test.ts test/zalo.service.test.ts` ✅
+
+## Session Update 2026-04-02 08:39
+- User yêu cầu đổi kiến trúc integrations:
+  - cho phép nhập key trực tiếp trên UI cho tất cả key chính.
+  - đổi key phải có hiệu lực runtime ngay, không restart container/docker.
+- Đã xử lý backend:
+  - `apps/api/src/modules/settings/settings-policy.types.ts`
+    - thêm field key trực tiếp vào defaults:
+      - `integrations.bhtot.apiKey`
+      - `integrations.ai.apiKey`
+      - `integrations.zalo.accessToken`
+      - `integrations.zalo.webhookSecret`
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+    - bỏ chặn payload key thô ở domain `integrations`.
+    - chuẩn hóa + persist đồng thời cả `key` và `*Ref`.
+    - test-connection/status dùng precedence mới:
+      - `direct key` > `secretRef` > `ENV fallback`.
+    - cập nhật warning/validation theo mô hình mới.
+  - `apps/api/src/common/settings/runtime-settings.service.ts`
+    - runtime resolve key theo precedence mới, lấy key mới ngay sau `PUT settings` + invalidate cache.
+  - `apps/api/src/modules/settings/settings.service.ts`
+    - BHTOT legacy bridge và one-way sync hỗ trợ `apiKey` trực tiếp.
+- Đã xử lý frontend:
+  - `apps/web/components/settings-center.tsx`
+    - thêm type field `secret` (input password).
+    - domain `integrations` có input trực tiếp cho:
+      - `bhtot.apiKey`
+      - `ai.apiKey`
+      - `zalo.accessToken`
+      - `zalo.webhookSecret`
+    - vẫn giữ `*Ref` dưới dạng fallback.
+- Tests/docs:
+  - cập nhật unit test:
+    - `apps/api/test/settings-policy.service.test.ts`
+  - thêm ADR:
+    - `docs/decisions/ADR-026-UI-MANAGED-INTEGRATION-SECRETS-RUNTIME-HOT-RELOAD.md`
+  - cập nhật docs deploy/runbook và superseded note:
+    - `docs/deployment/VM_AUTODEPLOY.md`
+    - `docs/operations/RUNBOOK.md`
+    - `docs/decisions/ADR-013-SETTINGS-CENTER-ENTERPRISE-DOMAIN-POLICY.md`
+    - `docs/decisions/ADR-017-RUNTIME-ENFORCEMENT-SETTINGS-CENTER.md`
+- Verify:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/zalo.service.test.ts` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=3110 CI=1 npx playwright test -c apps/web/e2e/playwright.config.ts apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --reporter=line` ✅ (2 passed)
+
+## Session Update 2026-04-02 08:20
+- User issue: Assistant UI báo `Không xác định được danh tính để truy cập AI assistant`.
+- Root cause:
+  - auth-disabled mode (`AUTH_ENABLED=false`) không set auth identity vào CLS nên assistant authz không resolve được actor.
+  - web client chưa gửi dev identity headers theo role đang chọn.
+- Đã xử lý:
+  - `apps/api/src/common/auth/jwt-auth.guard.ts`
+    - inject dev auth context khi auth-disabled.
+    - enforce `@Roles` trong auth-disabled mode.
+    - đọc headers dev identity (`x-erp-dev-role`, `x-erp-dev-user-id`, `x-erp-dev-email`, `x-erp-dev-employee-id`, `x-erp-dev-position-id`).
+  - `apps/web/lib/api-client.ts`
+    - tự gửi dev identity headers theo role lưu ở `erp_web_role` khi auth-disabled.
+  - `apps/api/src/modules/assistant/assistant-authz.service.ts`
+    - fallback company scope cho synthetic dev manager (`dev_*`) khi thiếu mapping employee/org unit.
+  - tests:
+    - `apps/api/test/jwt-auth.guard.test.ts` thêm case auth-disabled.
+    - `apps/api/test/assistant-authz.service.test.ts` thêm case dev manager fallback.
+  - runtime config local:
+    - bật `access_security.assistantAccessPolicy.enabled=true` qua `PUT /api/v1/settings/domains/access_security`.
+  - restart runtime:
+    - `npm run dev:api`
+    - `npm run dev:web`
+- Verify:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/assistant-authz.service.test.ts test/jwt-auth.guard.test.ts` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=3110 CI=1 npx playwright test -c apps/web/e2e/playwright.config.ts apps/web/e2e/tests/assistant-module.spec.ts --reporter=line` ✅ (6 passed)
+  - `curl -s -H 'x-tenant-id: GOIUUDAI' http://localhost:3001/api/v1/assistant/access/me` trả access hợp lệ (không còn `deny_missing_identity`) ✅
+
+## Session Update 2026-04-02 08:01
+- User issue: UI chưa thấy module `Trợ lý AI` dù đã triển khai route/board.
+- Root cause:
+  - tenant runtime `enabledModules` chưa có `assistant`.
+  - fallback legacy settings chỉ auto-add `audit`, chưa add `assistant`.
+  - runtime package `@erp/shared` có nguy cơ stale dist khi dev (missing `assistant`).
+- Đã xử lý:
+  - backend fallback add `assistant` cho legacy org_profile:
+    - `apps/api/src/common/settings/runtime-settings.service.ts`
+    - `apps/api/src/modules/settings/settings-policy.service.ts`
+  - update test:
+    - `apps/api/test/settings-policy.service.test.ts`
+  - hardening workflow local dev:
+    - `package.json` thêm `predev:api`, `predev:web` để build `@erp/shared` trước khi chạy.
+  - rebuild shared:
+    - `npm run build --workspace @erp/shared` (dist constants có `assistant`).
+- Verify:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - verify runtime bằng API instance mới (`API_PORT=3011`) trả `enabledModules` có `assistant` ✅
+
+## Session Update 2026-04-01 18:26
+- RETAIL-AI-ASSISTANT-001 frontend completion theo plan nested routes + full API:
+  - Hoàn thiện module route `/modules/assistant` (redirect -> `/runs`) + 5 route con:
+    - `/modules/assistant/runs`
+    - `/modules/assistant/access`
+    - `/modules/assistant/proxy`
+    - `/modules/assistant/knowledge`
+    - `/modules/assistant/channels`
+  - Sidebar tree module `Trợ lý AI` tích hợp sau `Báo cáo`, render theo RBAC:
+    - `ADMIN/MANAGER`: full route.
+    - `STAFF`: `runs/access/proxy`.
+    - truy cập trực tiếp route cấm hiển thị `Truy cập bị giới hạn`.
+  - Hoàn thiện kiến trúc UI:
+    - `AssistantShell` dùng chung.
+    - 5 board chuyên trách: Runs/Access/Proxy/Knowledge/Channels.
+    - Proxy triển khai 1 màn hình đa nguồn đúng yêu cầu.
+  - Hoàn thiện lớp frontend typed client assistant:
+    - `apps/web/lib/assistant-api.ts`.
+  - E2E deep test + ổn định hóa flake:
+    - `apps/web/e2e/tests/assistant-module.spec.ts`.
+    - fix selector strict-mode ở Knowledge (scope theo form `Tạo source mới`).
+    - fix negative test chống submit trùng (form submit locator + loading state assertion).
+  - Hỗ trợ e2e cổng tùy chỉnh:
+    - `apps/web/e2e/playwright.config.ts` (thêm `PLAYWRIGHT_PORT`).
+- Verify phiên này:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `PLAYWRIGHT_PORT=3110 CI=1 npx playwright test -c apps/web/e2e/playwright.config.ts apps/web/e2e/tests/assistant-module.spec.ts --reporter=line` ✅ (6 passed)
+  - `npm run test --workspace @erp/api -- test/assistant-report-dispatch-scope.api-flow.test.ts` ✅
+
+## Session Update 2026-04-01 17:17
+- RETAIL-AI-ASSISTANT-001 acceptance closure theo yêu cầu user:
+  - Hoàn thiện migration rollout checklist cho assistant schema trên môi trường deploy:
+    - migration mới: `apps/api/prisma/migrations/20260401170000_add_assistant_access_boundary_v1/migration.sql`.
+    - runbook deploy cập nhật checklist pre-check/deploy/post-check + post-deploy smoke:
+      - `docs/deployment/VM_AUTODEPLOY.md`.
+    - bổ sung smoke script deploy:
+      - `scripts/deploy/smoke-assistant-access-boundary.sh`.
+  - Bổ sung integration/e2e (API-flow) cho case report-dispatch scope mismatch:
+    - `apps/api/test/assistant-report-dispatch-scope.api-flow.test.ts`.
+    - assert artifact chat không bị dispatch khi channel scope mismatch (không tạo dispatch attempt, không gọi webhook outbound).
+- Verify phiên này:
+  - `docker ps` có `erp-postgres` `Up` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run test --workspace @erp/api -- test/assistant-report-dispatch-scope.api-flow.test.ts` ✅
+  - `bash -n scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+
+## Session Update 2026-04-01 16:48
+- AI Assistant v1 (access boundary) integration stabilization:
+  - Hoàn thiện compile/runtime cho module mới:
+    - `assistant-authz`, `assistant-knowledge`, `assistant-proxy`, `assistant-reports`, `assistant-dispatch`, `assistant.controller`, `assistant.module`.
+  - Bổ sung helper scope/ACL và chuẩn hóa DTO:
+    - sửa check narrowing trong `assistant-scope.util.ts`.
+    - bỏ override `limit` dư trong `AssistantProxyQueryDto` để tương thích `PaginationQueryDto`.
+  - Chốt policy normalization cho `assistantAccessPolicy`:
+    - chỉ auto-add module `audit` cho `org_profile.enabledModules` (backward-compat).
+    - không auto-add `audit` vào `assistantAccessPolicy.allowedModules` để giữ đúng danh sách phân quyền AI cấu hình.
+  - Verify quality gates phần thay đổi:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/assistant-authz.service.test.ts test/settings-policy.service.test.ts` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/web` ✅ (chạy sau `next build` để regenerate `.next/types`)
 
 ## Session Update 2026-04-01 15:10
 - Runtime recovery (không đổi business logic):
@@ -65,6 +671,42 @@
   - `npm run lint --workspace @erp/web` ✅
 
 ## In Progress
+### Task ID: RETAIL-AI-ASSISTANT-001
+- Tên: AI Assistant v1 + Access Boundary (AuthZ, Knowledge ACL, Read-only Proxy, Reports/Dispatch/Approval)
+- Mục tiêu:
+  - AI chỉ truy cập dữ liệu hợp lệ theo tenant/scope/permission.
+  - Chặn vượt quyền trước khi vào LLM context.
+  - Tách artifact ERP/Chat và enforce channel whitelist scope.
+- Tiến độ:
+  - [x] ADR:
+    - `docs/decisions/ADR-025-AI-ASSISTANT-ACCESS-BOUNDARY-V1.md`
+  - [x] Runtime settings:
+    - thêm `access_security.assistantAccessPolicy` default + normalize/validate/runtime.
+  - [x] Backend modules:
+    - `assistant-authz`, `assistant-knowledge`, `assistant-proxy`, `assistant-reports`, `assistant-dispatch`.
+    - API surface `/assistant/*` theo kế hoạch v1.
+  - [x] Data model:
+    - thêm Prisma models cho knowledge/report/dispatch/access-decision log.
+  - [x] Tests:
+    - `apps/api/test/assistant-authz.service.test.ts`
+    - mở rộng `apps/api/test/settings-policy.service.test.ts` cho assistant policy.
+    - `apps/api/test/assistant-report-dispatch-scope.api-flow.test.ts` cho case dispatch scope mismatch.
+  - [x] Verify:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/assistant-authz.service.test.ts test/settings-policy.service.test.ts` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/assistant-report-dispatch-scope.api-flow.test.ts` ✅
+    - `bash -n scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+  - [x] Migration deploy-ready:
+    - `apps/api/prisma/migrations/20260401170000_add_assistant_access_boundary_v1/migration.sql`.
+  - [x] Deploy rollout checklist + smoke:
+    - `docs/deployment/VM_AUTODEPLOY.md` (assistant schema rollout checklist + post-deploy smoke).
+    - `scripts/deploy/smoke-assistant-access-boundary.sh`.
+
 ### Task ID: RETAIL-WORKFLOWS-001
 - Tên: Nâng cấp module Quy Trình ERP (full low-code, SoD nghiêm ngặt, SLA automation)
 - Mục tiêu:

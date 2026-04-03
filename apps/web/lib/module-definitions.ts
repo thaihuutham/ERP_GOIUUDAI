@@ -10,21 +10,27 @@ const STATUS_OPTIONS = [
   { label: 'Lưu trữ', value: 'ARCHIVED' }
 ];
 
+const ATTENDANCE_METHOD_OPTIONS = [
+  { label: 'Remote (check-in online)', value: 'REMOTE_TRACKED' },
+  { label: 'Văn phòng (Excel cuối tháng)', value: 'OFFICE_EXCEL' },
+  { label: 'Miễn chấm công', value: 'EXEMPT' }
+];
+
 export const moduleDefinitions: Record<string, ModuleDefinition> = {
   crm: {
     key: 'crm',
     title: 'CRM',
-    summary: 'Khách hàng 360 hợp nhất, lưu toàn bộ lịch sử tương tác và theo dõi gửi hóa đơn/QR thanh toán.',
+    summary: 'Quản trị khách hàng tập trung: hồ sơ hợp nhất, tương tác và theo dõi thanh toán.',
     highlights: [
-      'Một nguồn dữ liệu khách hàng duy nhất',
-      'Chống trùng qua email và số điện thoại',
-      'Theo dõi tương tác + thanh toán ngay trong CRM'
+      'Hồ sơ khách hàng hợp nhất',
+      'Phát hiện trùng tự động',
+      'Theo dõi tương tác và thanh toán'
     ],
     features: [
       {
         key: 'customer-360',
         title: 'Khách hàng 360',
-        description: 'Danh sách hồ sơ khách hàng hợp nhất và tự chống trùng.',
+        description: 'Danh sách hồ sơ khách hàng hợp nhất.',
         listEndpoint: '/crm/customer-360',
         columns: [
           'id',
@@ -121,7 +127,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'interaction-desk',
         title: 'Nhật ký tương tác',
-        description: 'Ghi nhận cuộc gọi, tin nhắn, ghi chú và lịch chăm sóc tiếp theo.',
+        description: 'Ghi nhận lịch sử tương tác và lịch chăm sóc tiếp theo.',
         listEndpoint: '/crm/interactions',
         columns: [
           'id',
@@ -188,7 +194,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'payment-followup',
         title: 'Theo dõi gửi hóa đơn/QR',
-        description: 'Gửi thông tin thanh toán qua Zalo/Email và theo dõi trạng thái thanh toán.',
+        description: 'Gửi thông tin thanh toán và theo dõi trạng thái xử lý.',
         listEndpoint: '/crm/payment-requests',
         columns: ['id', 'customerId', 'invoiceNo', 'orderNo', 'channel', 'recipient', 'amount', 'status', 'sentAt', 'paidAt'],
         actions: [
@@ -230,7 +236,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'dedup-center',
         title: 'Trung tâm gộp trùng lặp',
-        description: 'Xem các hồ sơ trùng email/số điện thoại và gộp hồ sơ về một khách hàng chính.',
+        description: 'Quản lý hồ sơ trùng và hợp nhất về khách hàng chính.',
         listEndpoint: '/crm/dedup-candidates',
         columns: ['dedupKey', 'rule', 'customers'],
         actions: [
@@ -253,13 +259,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   catalog: {
     key: 'catalog',
     title: 'Danh mục',
-    summary: 'Danh mục sản phẩm/dịch vụ phục vụ bán hàng và quản trị tồn kho logic.',
-    highlights: ['CRUD sản phẩm', 'Giá bán tiêu chuẩn', 'Khóa/mở sản phẩm theo trạng thái'],
+    summary: 'Danh mục sản phẩm số và dịch vụ số phục vụ toàn hệ thống.',
+    highlights: ['Chuẩn hóa sản phẩm', 'Quản lý giá chuẩn', 'Kiểm soát trạng thái sản phẩm'],
     features: [
       {
         key: 'products',
         title: 'Danh mục sản phẩm',
-        description: 'Danh sách sản phẩm với tạo/sửa/xóa đầy đủ.',
+        description: 'Danh sách sản phẩm và dịch vụ theo chuẩn vận hành.',
         listEndpoint: '/catalog/products',
         columns: ['id', 'sku', 'name', 'productType', 'unitPrice', 'status'],
         actions: [
@@ -322,13 +328,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   sales: {
     key: 'sales',
     title: 'Bán hàng',
-    summary: 'Quản lý đơn hàng và cơ chế phê duyệt chỉnh sửa theo chính sách tenant.',
-    highlights: ['Tạo đơn hàng nhanh', 'Tự tạo yêu cầu duyệt khi thay đổi tổng tiền', 'Duyệt/Từ chối trực tiếp'],
+    summary: 'Điều phối vòng đời đơn hàng và phê duyệt thay đổi giao dịch.',
+    highlights: ['Tạo đơn nhanh', 'Tự động tạo yêu cầu duyệt', 'Phê duyệt trực tiếp'],
     features: [
       {
         key: 'orders',
         title: 'Bàn điều phối đơn hàng',
-        description: 'Theo dõi và thao tác đơn hàng.',
+        description: 'Theo dõi và xử lý toàn bộ đơn hàng bán.',
         listEndpoint: '/sales/orders',
         columns: ['id', 'orderNo', 'customerName', 'totalAmount', 'status', 'createdBy', 'createdAt'],
         actions: [
@@ -372,7 +378,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'order-approvals',
         title: 'Hàng chờ phê duyệt',
-        description: 'Danh sách yêu cầu chỉnh sửa đơn hàng chờ duyệt.',
+        description: 'Danh sách yêu cầu chờ phê duyệt đơn hàng.',
         listEndpoint: '/sales/approvals',
         columns: ['id', 'targetId', 'requesterId', 'approverId', 'status', 'decidedAt', 'createdAt'],
         actions: [
@@ -397,15 +403,26 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   hr: {
     key: 'hr',
     title: 'Nhân sự',
-    summary: 'HRM hoàn chỉnh: cơ cấu tổ chức, hồ sơ nhân sự, chấm công, nghỉ phép, lương, tuyển dụng và phát triển năng lực.',
-    highlights: ['Master data HR', 'Leave policy + leave balance', 'Payroll có line items'],
+    summary: 'Quản trị nhân sự toàn diện: tổ chức, nhân viên, công, phép, lương, tuyển dụng.',
+    highlights: ['Danh mục nhân sự chuẩn', 'Chính sách phép tập trung', 'Bảng lương minh bạch'],
     features: [
       {
         key: 'employees',
         title: 'Hồ sơ nhân sự',
         description: 'Danh sách và cập nhật hồ sơ nhân viên.',
         listEndpoint: '/hr/employees',
-        columns: ['id', 'code', 'fullName', 'department', 'position', 'joinDate', 'employmentType', 'baseSalary', 'status'],
+        columns: [
+          'id',
+          'code',
+          'fullName',
+          'department',
+          'position',
+          'joinDate',
+          'employmentType',
+          'attendanceMethod',
+          'baseSalary',
+          'status'
+        ],
         actions: [
           {
             key: 'create-employee',
@@ -432,6 +449,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
                 ],
                 defaultValue: 'FULL_TIME'
               },
+              {
+                name: 'attendanceMethod',
+                label: 'Phương pháp chấm công',
+                type: 'select',
+                options: ATTENDANCE_METHOD_OPTIONS,
+                defaultValue: 'REMOTE_TRACKED'
+              },
               { name: 'baseSalary', label: 'Lương cơ bản', type: 'number' },
               { name: 'workShiftId', label: 'Mã ca làm việc' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'ACTIVE' }
@@ -449,6 +473,12 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'position', label: 'Chức danh' },
               { name: 'joinDate', label: 'Ngày vào làm', type: 'date' },
               { name: 'baseSalary', label: 'Lương cơ bản', type: 'number' },
+              {
+                name: 'attendanceMethod',
+                label: 'Phương pháp chấm công',
+                type: 'select',
+                options: ATTENDANCE_METHOD_OPTIONS
+              },
               { name: 'workShiftId', label: 'Mã ca làm việc' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
@@ -465,7 +495,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'departments',
         title: 'Cơ cấu phòng ban',
-        description: 'Quản lý danh mục phòng ban.',
+        description: 'Quản lý danh mục phòng ban và trạng thái hoạt động.',
         listEndpoint: '/hr/departments',
         columns: ['id', 'code', 'name', 'managerEmployeeId', 'status'],
         actions: [
@@ -537,7 +567,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'work-shifts',
         title: 'Ca làm việc',
-        description: 'Định nghĩa ca làm, giờ bắt đầu/kết thúc và quy tắc tăng ca.',
+        description: 'Thiết lập ca làm và quy tắc tăng ca.',
         listEndpoint: '/hr/work-shifts',
         columns: ['id', 'code', 'name', 'startTime', 'endTime', 'breakMinutes', 'overtimeThresholdMinutes', 'status'],
         actions: [
@@ -576,7 +606,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'leave-policies',
         title: 'Chính sách nghỉ phép',
-        description: 'Quota nghỉ phép theo loại nghỉ và quy tắc duyệt.',
+        description: 'Hạn mức nghỉ phép theo loại nghỉ và quy tắc duyệt.',
         listEndpoint: '/hr/leave-policies',
         columns: ['id', 'code', 'name', 'leaveType', 'isPaid', 'annualQuotaDays', 'maxConsecutiveDays', 'status'],
         actions: [
@@ -615,7 +645,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'contracts',
         title: 'Hợp đồng lao động',
-        description: 'Lưu lịch sử hợp đồng nhân sự, mức lương và trạng thái hiệu lực.',
+        description: 'Lưu lịch sử hợp đồng, mức lương và trạng thái hiệu lực.',
         listEndpoint: '/hr/contracts',
         columns: ['id', 'employeeId', 'contractNo', 'contractType', 'startDate', 'endDate', 'baseSalary', 'allowance', 'status'],
         actions: [
@@ -654,7 +684,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'payroll-components',
         title: 'Cấu phần lương',
-        description: 'Danh mục khoản cộng/trừ để sinh bảng lương linh hoạt.',
+        description: 'Danh mục khoản cộng/trừ cho bảng lương.',
         listEndpoint: '/hr/payroll-components',
         columns: ['id', 'code', 'name', 'componentType', 'formulaType', 'defaultValue', 'isTaxable', 'status'],
         actions: [
@@ -716,7 +746,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'attendance',
         title: 'Bàn chấm công',
-        description: 'Bảng chấm công và thao tác vào ca/ra ca.',
+        description: 'Theo dõi chấm công và thao tác vào/ra ca.',
         listEndpoint: '/hr/attendance',
         columns: ['id', 'employeeId', 'workDate', 'workShiftId', 'checkInAt', 'checkOutAt', 'lateMinutes', 'overtimeMinutes', 'status'],
         actions: [
@@ -748,7 +778,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'leave-requests',
         title: 'Quản lý nghỉ phép',
-        description: 'Quản lý đơn nghỉ phép, quota còn lại và phê duyệt.',
+        description: 'Quản lý đơn nghỉ phép, hạn mức còn lại và phê duyệt.',
         listEndpoint: '/hr/leave-requests',
         columns: ['id', 'employeeId', 'leavePolicyId', 'leaveType', 'startDate', 'endDate', 'durationDays', 'status', 'approvedBy'],
         actions: [
@@ -802,7 +832,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'payroll',
         title: 'Xử lý bảng lương',
-        description: 'Sinh bảng lương tháng và xem line item chi tiết.',
+        description: 'Tạo bảng lương theo kỳ và theo dõi chi tiết.',
         listEndpoint: '/hr/payrolls',
         columns: ['id', 'employeeId', 'payMonth', 'payYear', 'workingDays', 'overtimeHours', 'grossSalary', 'deduction', 'netSalary', 'status', 'paidAt'],
         actions: [
@@ -885,7 +915,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'training',
         title: 'Theo dõi đào tạo',
-        description: 'Khóa đào tạo và mức độ hoàn thành.',
+        description: 'Quản lý khóa đào tạo và mức độ hoàn thành.',
         listEndpoint: '/hr/training',
         columns: ['id', 'title', 'employeeId', 'completedAt', 'status'],
         actions: [
@@ -987,7 +1017,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'personal-income-tax',
         title: 'Thuế TNCN',
-        description: 'Quản lý hồ sơ và bản ghi thuế TNCN theo kỳ tháng/năm.',
+        description: 'Quản lý hồ sơ và bản ghi thuế TNCN theo kỳ.',
         listEndpoint: '/hr/personal-income-tax/records',
         columns: [
           'id',
@@ -1082,7 +1112,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'goals',
         title: 'Mục tiêu nhân sự',
-        description: 'Thiết lập mục tiêu theo nhân viên/kỳ và theo dõi tiến độ thực hiện.',
+        description: 'Thiết lập mục tiêu theo nhân viên và theo dõi tiến độ.',
         listEndpoint: '/hr/goals',
         columns: [
           'id',
@@ -1158,56 +1188,9 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         ]
       },
       {
-        key: 'employee-info',
-        title: 'Thông tin nhân sự',
-        description: 'Danh sách hồ sơ nhân sự tổng hợp và cập nhật thông tin chi tiết.',
-        listEndpoint: '/hr/employee-info',
-        columns: [
-          'id',
-          'code',
-          'fullName',
-          'department',
-          'position',
-          'employmentType',
-          'status',
-          'benefitCount',
-          'joinDate'
-        ],
-        actions: [
-          {
-            key: 'get-employee-info-detail',
-            label: 'Xem hồ sơ chi tiết',
-            method: 'GET',
-            endpoint: '/hr/employee-info/:id',
-            fields: [{ name: 'id', label: 'Mã nhân viên', required: true }]
-          },
-          {
-            key: 'update-employee-info',
-            label: 'Cập nhật thông tin nhân sự',
-            method: 'PATCH',
-            endpoint: '/hr/employee-info/:id',
-            fields: [
-              { name: 'id', label: 'Mã nhân viên', required: true },
-              { name: 'code', label: 'Mã nhân viên mới' },
-              { name: 'fullName', label: 'Họ tên' },
-              { name: 'email', label: 'Email' },
-              { name: 'phone', label: 'Số điện thoại' },
-              { name: 'department', label: 'Phòng ban' },
-              { name: 'position', label: 'Chức danh' },
-              { name: 'joinDate', label: 'Ngày vào làm', type: 'date' },
-              { name: 'baseSalary', label: 'Lương cơ bản', type: 'number' },
-              { name: 'taxCode', label: 'Mã số thuế' },
-              { name: 'bankName', label: 'Ngân hàng' },
-              { name: 'bankAccountNo', label: 'Số tài khoản' },
-              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
-            ]
-          }
-        ]
-      },
-      {
         key: 'hr-events',
         title: 'Lịch sử vòng đời nhân sự',
-        description: 'Theo dõi sự kiện HR (onboard, đổi vị trí, nghỉ việc, duyệt phép...).',
+        description: 'Theo dõi sự kiện nhân sự: tiếp nhận, điều chuyển, nghỉ việc, duyệt phép.',
         listEndpoint: '/hr/events',
         columns: ['id', 'employeeId', 'eventType', 'effectiveAt', 'createdBy', 'createdAt'],
         actions: [
@@ -1221,7 +1204,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'eventType', label: 'Loại sự kiện', required: true, placeholder: 'ONBOARD/PROMOTION/TRANSFER/OFFBOARD' },
               { name: 'effectiveAt', label: 'Ngày hiệu lực', type: 'date' },
               { name: 'createdBy', label: 'Người tạo' },
-              { name: 'payload', label: 'Payload (JSON)', type: 'json', placeholder: '{\"from\":\"Kinh doanh\",\"to\":\"Marketing\"}' }
+              { name: 'fromDepartment', label: 'Từ phòng ban' },
+              { name: 'toDepartment', label: 'Đến phòng ban' },
+              { name: 'fromPosition', label: 'Từ vị trí' },
+              { name: 'toPosition', label: 'Đến vị trí' },
+              { name: 'reasonNote', label: 'Lý do thay đổi', type: 'textarea' },
+              { name: 'note', label: 'Ghi chú bổ sung', type: 'textarea' },
+              { name: 'referenceCode', label: 'Mã tham chiếu' }
             ]
           }
         ]
@@ -1231,13 +1220,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   finance: {
     key: 'finance',
     title: 'Tài chính',
-    summary: 'Khối tài chính kế toán: hóa đơn, tài khoản, bút toán, ngân sách.',
-    highlights: ['Bộ sổ kế toán lõi', 'Theo dõi công nợ', 'Giám sát ngân sách theo kỳ'],
+    summary: 'Quản trị tài chính kế toán: hóa đơn, tài khoản, bút toán, ngân sách.',
+    highlights: ['Sổ kế toán lõi', 'Theo dõi công nợ', 'Giám sát ngân sách theo kỳ'],
     features: [
       {
         key: 'invoices',
         title: 'Hóa đơn',
-        description: 'Quản lý hóa đơn mua/bán.',
+        description: 'Quản lý hóa đơn đầu vào và đầu ra.',
         listEndpoint: '/finance/invoices',
         columns: ['id', 'invoiceNo', 'invoiceType', 'partnerName', 'totalAmount', 'dueAt', 'status'],
         actions: [
@@ -1280,7 +1269,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'accounts',
         title: 'Hệ thống tài khoản kế toán',
-        description: 'Danh mục tài khoản kế toán.',
+        description: 'Danh mục tài khoản kế toán chuẩn.',
         listEndpoint: '/finance/accounts',
         columns: ['id', 'accountCode', 'name', 'accountType', 'balance'],
         actions: [
@@ -1313,7 +1302,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'journal',
         title: 'Bút toán',
-        description: 'Bút toán và trạng thái ghi sổ.',
+        description: 'Theo dõi bút toán và trạng thái ghi sổ.',
         listEndpoint: '/finance/journal-entries',
         columns: ['id', 'entryNo', 'entryDate', 'description', 'status'],
         actions: [
@@ -1346,7 +1335,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'budget-plans',
         title: 'Kế hoạch ngân sách',
-        description: 'Lập kế hoạch ngân sách theo danh mục và kỳ tài chính.',
+        description: 'Lập kế hoạch ngân sách theo danh mục và kỳ.',
         listEndpoint: '/finance/budget-plans',
         columns: ['id', 'category', 'fiscalPeriod', 'plannedAmount', 'actualAmount'],
         actions: [
@@ -1380,13 +1369,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   scm: {
     key: 'scm',
     title: 'Chuỗi cung ứng',
-    summary: 'Vận hành chuỗi cung ứng từ nhà cung cấp đến vận chuyển, phân phối và dự báo nhu cầu.',
-    highlights: ['Vendor & PO', 'Shipment/Distribution', 'Demand forecast + risk control'],
+    summary: 'Vận hành chuỗi cung ứng từ nhà cung cấp đến phân phối và dự báo nhu cầu.',
+    highlights: ['Nhà cung cấp và PO', 'Vận chuyển và phân phối', 'Dự báo nhu cầu và rủi ro'],
     features: [
       {
         key: 'vendors',
         title: 'Danh mục nhà cung cấp',
-        description: 'Quản lý nhà cung cấp.',
+        description: 'Quản lý danh mục nhà cung cấp.',
         listEndpoint: '/scm/vendors',
         columns: ['id', 'code', 'name', 'phone', 'email', 'status'],
         actions: [
@@ -1421,7 +1410,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'purchase-orders',
         title: 'Đơn mua hàng',
-        description: 'Theo dõi đơn mua hàng.',
+        description: 'Theo dõi đơn mua hàng theo trạng thái.',
         listEndpoint: '/scm/purchase-orders',
         columns: ['id', 'poNo', 'vendorId', 'totalAmount', 'status'],
         actions: [
@@ -1453,7 +1442,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'shipments',
         title: 'Theo dõi vận chuyển',
-        description: 'Theo dõi vận đơn và thời gian giao nhận.',
+        description: 'Theo dõi vận đơn và tiến độ giao nhận.',
         listEndpoint: '/scm/shipments',
         columns: ['id', 'shipmentNo', 'orderRef', 'carrier', 'status', 'shippedAt', 'deliveredAt'],
         actions: [
@@ -1488,7 +1477,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'distributions',
         title: 'Điều phối phân phối',
-        description: 'Quản lý lệnh phân phối.',
+        description: 'Quản lý lệnh phân phối theo điểm đến.',
         listEndpoint: '/scm/distributions',
         columns: ['id', 'distributionNo', 'destination', 'status'],
         actions: [
@@ -1519,7 +1508,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'demand-forecasts',
         title: 'Dự báo nhu cầu',
-        description: 'Dự báo nhu cầu theo SKU/kỳ.',
+        description: 'Dự báo nhu cầu theo SKU và kỳ.',
         listEndpoint: '/scm/demand-forecasts',
         columns: ['id', 'sku', 'period', 'predictedQty', 'confidence'],
         actions: [
@@ -1586,8 +1575,8 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   assets: {
     key: 'assets',
     title: 'Tài sản',
-    summary: 'Quản lý tài sản, cấp phát cho nhân sự và thu hồi theo vòng đời.',
-    highlights: ['Kho tài sản', 'Cấp phát/thu hồi', 'Lịch sử cấp phát'],
+    summary: 'Quản lý tài sản, cấp phát và thu hồi theo vòng đời sử dụng.',
+    highlights: ['Kho tài sản', 'Cấp phát và thu hồi', 'Lịch sử cấp phát'],
     features: [
       {
         key: 'asset-inventory',
@@ -1659,12 +1648,12 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
     key: 'projects',
     title: 'Dự án',
     summary: 'Điều phối dự án, công việc, nguồn lực, ngân sách và bảng công.',
-    highlights: ['Danh mục dự án', 'Luồng trạng thái công việc', 'Ngân sách và bản ghi công'],
+    highlights: ['Danh mục dự án', 'Trạng thái công việc', 'Ngân sách và giờ công'],
     features: [
       {
         key: 'project-list',
         title: 'Danh mục dự án',
-        description: 'Tạo và cập nhật dự án.',
+        description: 'Tạo và cập nhật danh mục dự án.',
         listEndpoint: '/projects',
         columns: ['id', 'code', 'name', 'status', 'startAt', 'endAt'],
         actions: [
@@ -1699,7 +1688,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'project-tasks',
         title: 'Bảng công việc',
-        description: 'Quản lý công việc theo dự án.',
+        description: 'Quản lý công việc theo từng dự án.',
         listEndpoint: '/projects/tasks',
         columns: ['id', 'projectId', 'title', 'assignedTo', 'status', 'dueAt'],
         actions: [
@@ -1752,7 +1741,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'project-budgets',
         title: 'Ngân sách dự án',
-        description: 'Ngân sách chi tiết cho từng dự án.',
+        description: 'Quản lý ngân sách chi tiết theo dự án.',
         listEndpoint: '/projects/budgets',
         columns: ['id', 'projectId', 'budgetType', 'amount'],
         actions: [
@@ -1772,7 +1761,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'time-entries',
         title: 'Bảng công',
-        description: 'Bảng công nhân sự.',
+        description: 'Theo dõi giờ công nhân sự theo dự án.',
         listEndpoint: '/projects/time-entries',
         columns: ['id', 'projectId', 'employeeId', 'workDate', 'hours', 'note'],
         actions: [
@@ -1802,30 +1791,10 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'workflow-definitions',
         title: 'Định nghĩa quy trình',
-        description: 'Mẫu quy trình cho từng phân hệ.',
+        description: 'Mẫu quy trình theo từng phân hệ. Tạo mới tại màn builder chuyên dụng /modules/workflows.',
         listEndpoint: '/workflows/definitions',
         columns: ['id', 'code', 'name', 'module', 'version', 'status'],
         actions: [
-          {
-            key: 'create-definition',
-            label: 'Tạo định nghĩa',
-            method: 'POST',
-            endpoint: '/workflows/definitions',
-            fields: [
-              { name: 'code', label: 'Mã quy trình' },
-              { name: 'name', label: 'Tên quy trình', required: true },
-              { name: 'module', label: 'Phân hệ', required: true },
-              { name: 'version', label: 'Phiên bản', type: 'number', defaultValue: 1 },
-              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'DRAFT' },
-              {
-                name: 'definitionJson',
-                label: 'Định nghĩa JSON',
-                type: 'json',
-                required: true,
-                defaultValue: '{\n  "initialStep": "approval",\n  "steps": [\n    {\n      "key": "approval",\n      "approvalMode": "ALL",\n      "approvers": [\n        { "type": "ROLE", "role": "MANAGER" }\n      ],\n      "transitions": [\n        { "action": "APPROVE", "terminalStatus": "APPROVED" },\n        { "action": "REJECT", "terminalStatus": "REJECTED" }\n      ]\n    }\n  ]\n}'
-              }
-            ]
-          },
           {
             key: 'update-definition',
             label: 'Cập nhật định nghĩa',
@@ -1914,13 +1883,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   reports: {
     key: 'reports',
     title: 'Báo cáo',
-    summary: 'Tổng hợp KPI đa phân hệ và cấu hình mẫu báo cáo tùy biến.',
-    highlights: ['KPI tổng quan', 'Xem dữ liệu theo phân hệ', 'Lưu mẫu báo cáo'],
+    summary: 'Tổng hợp KPI đa phân hệ và quản lý mẫu báo cáo.',
+    highlights: ['KPI tổng quan', 'Dữ liệu theo phân hệ', 'Mẫu báo cáo dùng lại'],
     features: [
       {
         key: 'overview',
         title: 'KPI tổng quan',
-        description: 'Số liệu nhanh toàn hệ thống.',
+        description: 'Số liệu điều hành nhanh toàn hệ thống.',
         listEndpoint: '/reports/overview',
         view: 'object',
         actions: []
@@ -1960,7 +1929,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'report-definitions',
         title: 'Mẫu báo cáo',
-        description: 'Lưu cấu hình báo cáo.',
+        description: 'Lưu cấu hình mẫu báo cáo.',
         actions: [
           {
             key: 'create-report-definition',
@@ -2005,14 +1974,14 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   },
   settings: {
     key: 'settings',
-    title: 'Cài đặt',
-    summary: 'Quản trị cấu hình từng tenant và chính sách vận hành.',
-    highlights: ['Cấu hình hệ thống', 'Chính sách vận hành', 'Đồng bộ dữ liệu từ BHTOT_CTV'],
+    title: 'Cấu hình hệ thống',
+    summary: 'Quản trị cấu hình vận hành và chính sách điều hành tập trung.',
+    highlights: ['Cấu hình hệ thống', 'Chính sách vận hành', 'Đồng bộ dữ liệu BHTOT'],
     features: [
       {
         key: 'system-config',
         title: 'Cấu hình hệ thống',
-        description: 'Cấu hình vận hành chính cho từng tenant.',
+        description: 'Cấu hình vận hành chính cho tổ chức.',
         listEndpoint: '/settings/config',
         view: 'object',
         actions: [
@@ -2033,9 +2002,9 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       },
       {
         key: 'bhtot-sync',
-        title: 'Đồng bộ dữ liệu từ BHTOT_CTV',
+        title: 'Đồng bộ dữ liệu BHTOT',
         description:
-          'Thiết lập địa chỉ máy chủ + khóa API và đồng bộ 1 chiều dữ liệu đơn hàng, CTV, xe, nhân viên từ BHTOT_CTV vào ERP.',
+          'Thiết lập kết nối API và đồng bộ một chiều dữ liệu đơn hàng, CTV, xe, nhân viên từ BHTOT vào hệ thống.',
         listEndpoint: '/settings/bhtot/sync/status',
         view: 'object',
         actions: [
@@ -2087,13 +2056,13 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   notifications: {
     key: 'notifications',
     title: 'Thông báo',
-    summary: 'Trung tâm thông báo nội bộ cho các tác vụ ERP quan trọng.',
-    highlights: ['Danh sách thông báo', 'Tạo thông báo thủ công', 'Đánh dấu đã đọc'],
+    summary: 'Trung tâm thông báo nội bộ cho các tác vụ quan trọng.',
+    highlights: ['Danh sách thông báo', 'Tạo thông báo nhanh', 'Đánh dấu đã đọc'],
     features: [
       {
         key: 'notification-center',
         title: 'Trung tâm thông báo',
-        description: 'Danh sách thông báo và xử lý đã đọc/chưa đọc.',
+        description: 'Danh sách thông báo và trạng thái đã đọc/chưa đọc.',
         listEndpoint: '/notifications',
         columns: ['id', 'userId', 'title', 'content', 'isRead', 'createdAt'],
         actions: [
@@ -2128,7 +2097,7 @@ export function getModuleDefinition(moduleKey: string): ModuleDefinition {
       key: moduleKey,
       title: moduleKey.toUpperCase(),
       summary: 'Phân hệ chưa được cấu hình.',
-      highlights: ['Cần thêm cấu hình cho phân hệ này'],
+      highlights: ['Cần bổ sung cấu hình cho phân hệ này'],
       features: []
     };
   }

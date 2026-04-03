@@ -35,6 +35,15 @@ type GoalMetricBinding = {
   lastComputedAt?: string | null;
 };
 
+type MetricBindingDraft = {
+  sourceSystem: string;
+  metricKey: string;
+  weight: string;
+  employeeId: string;
+  recruiterId: string;
+  departmentId: string;
+};
+
 type GoalItem = {
   id: string;
   goalCode: string | null;
@@ -154,6 +163,19 @@ const STATUS_COLUMNS: Array<{ key: GoalStatus; title: string }> = [
   { key: 'ARCHIVED', title: 'Archived' }
 ];
 
+const SOURCE_SYSTEM_OPTIONS = ['HR', 'SALES', 'RECRUITMENT', 'ATTENDANCE', 'CUSTOM'];
+
+function createMetricBindingDraft(): MetricBindingDraft {
+  return {
+    sourceSystem: '',
+    metricKey: '',
+    weight: '1',
+    employeeId: '',
+    recruiterId: '',
+    departmentId: ''
+  };
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '--';
   const date = new Date(value);
@@ -214,7 +236,7 @@ export function HrGoalsTrackingBoard() {
     trackingMode: 'MANUAL' as TrackingMode,
     startDate: '',
     endDate: '',
-    metricBindingsJson: ''
+    metricBindings: [createMetricBindingDraft()] as MetricBindingDraft[]
   });
 
   const [progressForm, setProgressForm] = useState({
@@ -295,10 +317,31 @@ export function HrGoalsTrackingBoard() {
     setNotice(null);
 
     try {
-      let metricBindings: GoalMetricBinding[] | undefined;
-      if (createForm.metricBindingsJson.trim()) {
-        const parsed = JSON.parse(createForm.metricBindingsJson);
-        metricBindings = Array.isArray(parsed) ? parsed : undefined;
+      const metricBindings = createForm.metricBindings
+        .map((binding) => {
+          const sourceSystem = binding.sourceSystem.trim();
+          const metricKey = binding.metricKey.trim();
+          if (!sourceSystem || !metricKey) {
+            return null;
+          }
+
+          const configJson: Record<string, unknown> = {};
+          if (binding.employeeId.trim()) configJson.employeeId = binding.employeeId.trim();
+          if (binding.recruiterId.trim()) configJson.recruiterId = binding.recruiterId.trim();
+          if (binding.departmentId.trim()) configJson.departmentId = binding.departmentId.trim();
+
+          const numericWeight = Number(binding.weight);
+          return {
+            sourceSystem,
+            metricKey,
+            weight: Number.isFinite(numericWeight) ? numericWeight : 1,
+            configJson: Object.keys(configJson).length > 0 ? configJson : undefined
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+
+      if (createForm.trackingMode !== 'MANUAL' && metricBindings.length === 0) {
+        throw new Error('Mode AUTO/HYBRID cần ít nhất 1 dòng metric binding hợp lệ.');
       }
 
       await apiRequest('/hr/goals', {
@@ -314,7 +357,7 @@ export function HrGoalsTrackingBoard() {
           trackingMode: createForm.trackingMode,
           startDate: createForm.startDate || undefined,
           endDate: createForm.endDate || undefined,
-          metricBindings
+          metricBindings: metricBindings.length > 0 ? metricBindings : undefined
         }
       });
 
@@ -331,7 +374,7 @@ export function HrGoalsTrackingBoard() {
         trackingMode: 'MANUAL',
         startDate: '',
         endDate: '',
-        metricBindingsJson: ''
+        metricBindings: [createMetricBindingDraft()]
       });
       await loadData();
     } catch (err) {
@@ -744,13 +787,132 @@ export function HrGoalsTrackingBoard() {
             <label>End date</label>
             <input type="date" value={createForm.endDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, endDate: event.target.value }))} />
           </div>
-          <div className="field">
-            <label>Metric bindings JSON (AUTO/HYBRID)</label>
-            <textarea
-              value={createForm.metricBindingsJson}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, metricBindingsJson: event.target.value }))}
-              placeholder='[{"sourceSystem":"SALES","metricKey":"order_amount_sum","weight":1}]'
-            />
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>Liên kết chỉ số (AUTO/HYBRID)</label>
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {createForm.metricBindings.length === 0 && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                  Chưa có dòng cấu hình. Bấm "Thêm dòng metric" để khai báo nguồn chỉ số.
+                </div>
+              )}
+              {createForm.metricBindings.map((binding, index) => (
+                <div key={`binding-${index}`} style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.5rem' }}>
+                    <select
+                      value={binding.sourceSystem}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, sourceSystem: event.target.value } : row
+                          )
+                        }))
+                      }
+                    >
+                      <option value="">Chọn nguồn dữ liệu</option>
+                      {SOURCE_SYSTEM_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={binding.metricKey}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, metricKey: event.target.value } : row
+                          )
+                        }))
+                      }
+                      placeholder="metricKey (ví dụ: order_amount_sum)"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={binding.weight}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, weight: event.target.value } : row
+                          )
+                        }))
+                      }
+                      placeholder="Trọng số"
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.5rem' }}>
+                    <input
+                      value={binding.employeeId}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, employeeId: event.target.value } : row
+                          )
+                        }))
+                      }
+                      placeholder="employeeId (tuỳ chọn)"
+                    />
+                    <input
+                      value={binding.recruiterId}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, recruiterId: event.target.value } : row
+                          )
+                        }))
+                      }
+                      placeholder="recruiterId (tuỳ chọn)"
+                    />
+                    <input
+                      value={binding.departmentId}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, departmentId: event.target.value } : row
+                          )
+                        }))
+                      }
+                      placeholder="departmentId (tuỳ chọn)"
+                    />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          metricBindings: prev.metricBindings.filter((_, rowIndex) => rowIndex !== index)
+                        }))
+                      }
+                    >
+                      <XCircle size={14} /> Xóa dòng
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() =>
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      metricBindings: [...prev.metricBindings, createMetricBindingDraft()]
+                    }))
+                  }
+                >
+                  <Plus size={14} /> Thêm dòng metric
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="action-buttons">
