@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 19:30 +07
+- Time: 2026-04-03 20:28 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_1930_codex.md`
+- Session Log: `.agent/sessions/2026-04-03_2028_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,25 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-03 20:28 (Custom Fields page trong Settings)
+- Da them trang rieng trong Settings de tao/quan ly custom fields:
+  - route: `/modules/settings/custom-fields`
+  - file route: `apps/web/app/modules/settings/custom-fields/page.tsx`
+  - file UI: `apps/web/components/settings-custom-fields-page.tsx`
+- Chuc nang UI:
+  - chon entity type cua custom fields.
+  - xem draft schema + latest published version + publish history.
+  - tao/sua field definitions bang form typed (khong dung JSON editor).
+  - luu draft/publish theo role (`ADMIN`), role khac chi doc.
+- Da them quick access trong Settings Center:
+  - `apps/web/components/settings-center.tsx` them button `Mở trang Trường tùy chỉnh`.
+- Da cap nhat title khi vao route moi:
+  - `apps/web/components/app-shell.tsx` -> `Cài đặt • Trường tùy chỉnh`.
+- Verify session:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - build output co route `/modules/settings/custom-fields` ✅
 
 ## Update 2026-04-03 19:30 (Custom fields day-1 API flow test coverage)
 - Da bo sung test file moi:

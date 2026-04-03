@@ -2,9 +2,28 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-03 19:30 +07
+- Last updated: 2026-04-03 20:28 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-03 20:28 (Settings page cho Custom Fields)
+- User yêu cầu: "vào đâu để tạo trường tùy chỉnh" và đưa thành 1 trang trong Cài đặt hệ thống.
+- Đã hoàn tất frontend routing + UI:
+  - Thêm route mới: `apps/web/app/modules/settings/custom-fields/page.tsx`
+  - Thêm component trang quản trị: `apps/web/components/settings-custom-fields-page.tsx`
+    - chọn entity type
+    - xem draft schema hiện tại + bản publish gần nhất + lịch sử publish
+    - tạo/sửa field definitions theo form thân thiện (không JSON editor)
+    - lưu draft / publish (theo quyền ADMIN), manager/staff chỉ đọc
+  - Bổ sung shortcut từ Settings Center:
+    - `apps/web/components/settings-center.tsx` (button "Mở trang Trường tùy chỉnh")
+  - Cập nhật title cho route mới:
+    - `apps/web/components/app-shell.tsx` -> `Cài đặt • Trường tùy chỉnh`
+- Verify theo phạm vi thay đổi web:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - route build output có ` /modules/settings/custom-fields` ✅
+- Không thay đổi business logic ERP; không phát sinh quyết định kiến trúc mới (không cần ADR mới cho session này).
 
 ## Session Update 2026-04-03 19:30 (Custom fields Day-1 API flow tests)
 - Tiếp tục theo yêu cầu user `hãy sử dụng các kỹ năng cần thiết để tiếp tục`.

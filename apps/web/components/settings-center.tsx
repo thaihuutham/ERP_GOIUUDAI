@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import Link from 'next/link';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
@@ -1911,6 +1912,11 @@ export function SettingsCenter() {
           <p style={{ color: 'var(--muted)', marginTop: '0.4rem' }}>
             Cấu hình tập trung cho {SYSTEM_PROFILE.companyName}: tối giản thao tác, chuẩn hóa dữ liệu, tăng tự động hóa và AI giám sát.
           </p>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.85rem', flexWrap: 'wrap' }}>
+            <Link href="/modules/settings/custom-fields" className="btn btn-ghost">
+              Mở trang Trường tùy chỉnh
+            </Link>
+          </div>
         </div>
       </header>
 

@@ -82,6 +82,10 @@ function getCurrentModuleTitle(pathname: string) {
     return 'Nhân sự';
   }
 
+  if (pathname.startsWith('/modules/settings/custom-fields')) {
+    return 'Cài đặt • Trường tùy chỉnh';
+  }
+
   if (pathname.startsWith('/modules/crm/conversations')) {
     return 'Hội thoại khách hàng';
   }
