@@ -12,15 +12,17 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - `web` (Next.js)
 
 ## Biến môi trường mới cần cấu hình trên VM/Secrets
+- `SETTINGS_ENCRYPTION_MASTER_KEY` (bắt buộc nếu lưu key trực tiếp từ UI; AES-256-GCM master key, 32-byte base64 hoặc hex)
 - `AI_OPENAI_COMPAT_BASE_URL`
-- `AI_OPENAI_COMPAT_API_KEY`
+- `AI_OPENAI_COMPAT_API_KEY` (fallback khi UI chưa nhập `integrations.ai.apiKey`)
 - `AI_OPENAI_COMPAT_MODEL` (optional)
 - `AI_OPENAI_COMPAT_TIMEOUT_MS` (optional)
-- `ZALO_OA_WEBHOOK_SECRET` (khuyến nghị bật)
+- `ZALO_OA_WEBHOOK_SECRET` (fallback khi UI chưa nhập `integrations.zalo.webhookSecret`)
 - `ZALO_OA_OUTBOUND_URL` (optional)
-- `ZALO_OA_ACCESS_TOKEN` (optional)
+- `ZALO_OA_ACCESS_TOKEN` (fallback khi UI chưa nhập `integrations.zalo.accessToken`)
 - `ZALO_OA_API_BASE_URL` (optional)
 - `ZALO_OA_OUTBOUND_TIMEOUT_MS` (optional)
+- `BHTOT_API_KEY` (fallback khi UI chưa nhập `integrations.bhtot.apiKey`)
 - `SEARCH_ENGINE` (`sql` hoặc `meili_hybrid`)
 - `MEILI_HOST`
 - `MEILI_MASTER_KEY` (optional nếu không bật auth)
@@ -49,6 +51,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - Script deploy ghi file runtime `${DEPLOY_ENV_FILE:-/opt/erp-retail/.deploy.env}`.
 - `docker compose --env-file ... build/up` dùng file này để inject env vào container.
 - File `.deploy.env` phải được giữ private trên VM (chmod 600) và không commit vào git.
+- Từ ADR-026: integrations key có thể nhập trực tiếp trong Settings Center; env secret đóng vai trò fallback/runtime bootstrap.
 
 ### Mặc định hiện tại (MVP single-tenant, có thể override bằng GitHub vars)
 - `AUTH_ENABLED=false`
@@ -57,11 +60,13 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 
 ## Mapping khuyến nghị GitHub
 - Secrets:
+  - `SETTINGS_ENCRYPTION_MASTER_KEY`
   - `JWT_SECRET`
   - `DATABASE_URL` (nếu không dùng mặc định)
-  - `AI_OPENAI_COMPAT_API_KEY`
-  - `ZALO_OA_WEBHOOK_SECRET`
-  - `ZALO_OA_ACCESS_TOKEN` (optional)
+  - `AI_OPENAI_COMPAT_API_KEY` (optional fallback)
+  - `ZALO_OA_WEBHOOK_SECRET` (optional fallback)
+  - `ZALO_OA_ACCESS_TOKEN` (optional fallback)
+  - `BHTOT_API_KEY` (optional fallback)
   - `MEILI_MASTER_KEY` (optional)
 - Variables:
   - `AUTH_ENABLED` (mặc định workflow: `false`)
@@ -100,6 +105,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - `scripts/deploy/deploy-from-runner.sh`
 - `scripts/deploy/healthcheck.sh`
 - `scripts/deploy/smoke-crm-conversations.sh`
+- `scripts/deploy/smoke-assistant-access-boundary.sh`
 
 ## Migration gate (bắt buộc)
 - Deploy script luôn chạy `prisma migrate deploy` trước khi khởi động `api/web` và trước healthcheck.
@@ -109,6 +115,34 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - Trước release: chạy `npm run prisma:migrate:status --workspace @erp/api` trên môi trường target hoặc runner tương đương.
 - Kỳ vọng: không còn migration pending.
 - Sau deploy: xác nhận lại API health và smoke nghiệp vụ.
+
+## Assistant schema rollout checklist
+Áp dụng khi rollout migration `20260401170000_add_assistant_access_boundary_v1`.
+
+1. Pre-check migration status:
+```bash
+DATABASE_URL=<target_db_url> npm run prisma:migrate:status --workspace @erp/api
+```
+2. Apply migration trên môi trường target (staging trước, rồi production):
+```bash
+DATABASE_URL=<target_db_url> npm run prisma:migrate:deploy --workspace @erp/api
+```
+3. Xác nhận migration đã hết pending:
+```bash
+DATABASE_URL=<target_db_url> npm run prisma:migrate:status --workspace @erp/api
+```
+4. Verify table assistant đã tồn tại:
+```bash
+docker exec erp-postgres psql -U erp -d erp_retail -Atc \
+  "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'Assistant%';"
+```
+5. Verify API access-boundary:
+```bash
+SMOKE_API_BASE_URL="http://127.0.0.1:3001/api/v1" \
+SMOKE_AUTH_ENABLED="${AUTH_ENABLED:-false}" \
+SMOKE_JWT_SECRET="<jwt-secret-if-auth-enabled>" \
+scripts/deploy/smoke-assistant-access-boundary.sh
+```
 
 ## Healthcheck
 - API: `http://127.0.0.1:3001/api/v1/health`
@@ -174,6 +208,21 @@ scripts/deploy/smoke-crm-conversations.sh
 Ghi chú:
 - `smoke-crm-conversations.sh` mặc định đọc tenant từ `DEFAULT_TENANT_ID` (fallback `GOIUUDAI`).
 - Auth mode của smoke mặc định đọc từ `AUTH_ENABLED` (fallback `false`).
+
+## Post-deploy smoke (AI Assistant access boundary)
+Smoke này xác nhận guard bảo mật end-to-end cho case report-dispatch scope mismatch:
+- tạo channel có scope hẹp (`self`)
+- tạo report run có `dispatchChat=true`
+- verify chat artifact không tạo dispatch attempt nếu scope mismatch.
+
+Ví dụ:
+```bash
+SMOKE_API_BASE_URL="http://127.0.0.1:3001/api/v1" \
+SMOKE_AUTH_ENABLED="${AUTH_ENABLED:-false}" \
+SMOKE_JWT_SECRET="<jwt-secret-if-auth-enabled>" \
+SMOKE_AUTH_ROLE="ADMIN" \
+scripts/deploy/smoke-assistant-access-boundary.sh
+```
 
 ## Rollout IAM/Permission đề xuất
 1. `AUTH_ENABLED=false`, `NEXT_PUBLIC_AUTH_ENABLED=false`, `PERMISSION_ENGINE_ENABLED=false` (safe default).

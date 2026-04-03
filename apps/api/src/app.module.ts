@@ -34,6 +34,7 @@ import { ZaloModule } from './modules/zalo/zalo.module';
 import { ConversationQualityModule } from './modules/conversation-quality/conversation-quality.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { AssistantModule } from './modules/assistant/assistant.module';
 
 @Module({
   imports: [
@@ -81,6 +82,7 @@ import { AuditModule } from './modules/audit/audit.module';
     SettingsModule,
     AuthModule,
     AuditModule,
+    AssistantModule,
     NotificationsModule,
     ConversationsModule,
     ZaloModule,

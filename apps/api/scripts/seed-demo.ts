@@ -547,12 +547,35 @@ async function seed() {
 
   const workflowDefinitionRows = Array.from({ length: COUNTS.workflowDefinitions }, (_, idx) => {
     const i = idx + 1;
+    const module = i === 1 ? 'sales' : pick(modules);
+    const codeValue = i === 1 ? 'SALES_ORDER_EDIT' : code(`${DEMO}-WF-`, i, 4);
+    const baseGraph = {
+      initialStep: 'approval',
+      steps: [
+        {
+          key: 'approval',
+          approvalMode: 'ALL',
+          slaHours: 24,
+          approvers: [
+            {
+              type: 'ROLE',
+              role: module === 'sales' ? 'MANAGER' : 'ADMIN'
+            }
+          ],
+          transitions: [
+            { action: 'APPROVE', terminalStatus: 'APPROVED' },
+            { action: 'REJECT', terminalStatus: 'REJECTED' }
+          ]
+        }
+      ]
+    };
     return {
       tenant_Id: TENANT_ID,
-      code: code(`${DEMO}-WF-`, i, 4),
+      code: codeValue,
       name: `Quy trình Demo ${i}`,
-      module: pick(modules),
+      module,
       version: intBetween(1, 3),
+      definitionJson: baseGraph,
       status: i % 10 === 0 ? GenericStatus.INACTIVE : GenericStatus.ACTIVE,
       createdAt: randomPastDate(180),
       updatedAt: new Date()

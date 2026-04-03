@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
@@ -12,6 +12,7 @@ import {
   SubmitWorkflowDto,
   UpdateApprovalDto,
   UpdateWorkflowDefinitionDto,
+  WorkflowDefinitionSimulateDto,
   UpdateWorkflowInstanceDto,
   WorkflowDecisionDto,
   WorkflowsListQueryDto
@@ -40,10 +41,54 @@ export class WorkflowsController {
     return this.workflowsService.updateDefinition(id, body);
   }
 
+  @Post('definitions/:id/validate')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  validateDefinition(@Param('id') id: string) {
+    return this.workflowsService.validateDefinition(id);
+  }
+
+  @Post('definitions/:id/simulate')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  simulateDefinition(@Param('id') id: string, @Body() body: WorkflowDefinitionSimulateDto) {
+    return this.workflowsService.simulateDefinition(id, body);
+  }
+
+  @Post('definitions/:id/publish')
+  @Roles(UserRole.ADMIN)
+  publishDefinition(@Param('id') id: string) {
+    return this.workflowsService.publishDefinition(id);
+  }
+
+  @Post('definitions/:id/archive')
+  @Roles(UserRole.ADMIN)
+  archiveDefinition(@Param('id') id: string) {
+    return this.workflowsService.archiveDefinition(id);
+  }
+
   @Get('instances')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
   listInstances(@Query() query: WorkflowsListQueryDto) {
     return this.workflowsService.listInstances(query);
+  }
+
+  @Get('inbox')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  listInbox(@Query() query: WorkflowsListQueryDto, @Req() req: { user?: Record<string, unknown> }) {
+    const actorId = this.resolveActorId(req);
+    return this.workflowsService.listInbox({
+      ...query,
+      approverId: query.approverId ?? actorId ?? undefined
+    });
+  }
+
+  @Get('requests')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  listRequests(@Query() query: WorkflowsListQueryDto, @Req() req: { user?: Record<string, unknown> }) {
+    const actorId = this.resolveActorId(req);
+    return this.workflowsService.listRequests({
+      ...query,
+      requesterId: query.requesterId ?? actorId ?? undefined
+    });
   }
 
   @Get('instances/:id')
@@ -144,5 +189,54 @@ export class WorkflowsController {
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   updateApproval(@Param('id') id: string, @Body() body: UpdateApprovalDto) {
     return this.workflowsService.updateApproval(id, body);
+  }
+
+  @Post('tasks/:id/approve')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'APPROVE_WORKFLOW_TASK', entityType: 'Approval', entityIdParam: 'id' })
+  approveTask(@Param('id') id: string, @Body() body: WorkflowDecisionDto, @Req() req: { user?: Record<string, unknown> }) {
+    return this.workflowsService.approveTask(id, {
+      ...body,
+      actorId: body.actorId ?? this.resolveActorId(req) ?? undefined
+    });
+  }
+
+  @Post('tasks/:id/reject')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'REJECT_WORKFLOW_TASK', entityType: 'Approval', entityIdParam: 'id' })
+  rejectTask(@Param('id') id: string, @Body() body: WorkflowDecisionDto, @Req() req: { user?: Record<string, unknown> }) {
+    return this.workflowsService.rejectTask(id, {
+      ...body,
+      actorId: body.actorId ?? this.resolveActorId(req) ?? undefined
+    });
+  }
+
+  @Post('tasks/:id/delegate')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'DELEGATE_WORKFLOW_TASK', entityType: 'Approval', entityIdParam: 'id' })
+  delegateTask(@Param('id') id: string, @Body() body: DelegateWorkflowDto, @Req() req: { user?: Record<string, unknown> }) {
+    return this.workflowsService.delegateTask(id, {
+      ...body,
+      actorId: body.actorId ?? this.resolveActorId(req) ?? undefined
+    });
+  }
+
+  @Post('tasks/:id/reassign')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'REASSIGN_WORKFLOW_TASK', entityType: 'Approval', entityIdParam: 'id' })
+  reassignTask(@Param('id') id: string, @Body() body: ReassignWorkflowDto, @Req() req: { user?: Record<string, unknown> }) {
+    return this.workflowsService.reassignTask(id, {
+      ...body,
+      actorId: body.actorId ?? this.resolveActorId(req) ?? undefined
+    });
+  }
+
+  private resolveActorId(req: { user?: Record<string, unknown> }) {
+    const user = req.user;
+    if (!user || typeof user !== 'object') {
+      return null;
+    }
+    const actorId = user.userId ?? user.sub;
+    return typeof actorId === 'string' && actorId.trim() ? actorId.trim() : null;
   }
 }

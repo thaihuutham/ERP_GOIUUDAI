@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { WorkflowsOperationsBoard } from '../../../components/workflows-operations-board';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="workflows" />;
+  return <WorkflowsOperationsBoard />;
 }

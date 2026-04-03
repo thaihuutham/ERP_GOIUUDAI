@@ -19,8 +19,9 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
-import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
+import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
 type SalesOrderItem = {
@@ -141,6 +142,7 @@ export function SalesOperationsBoard() {
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<SalesOrder | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
 
@@ -236,6 +238,129 @@ export function SalesOperationsBoard() {
       render: (order) => toDateTime(order.createdAt)
     }
   ];
+
+  const runSalesBulkAction = async (
+    actionLabel: string,
+    selectedRows: SalesOrder[],
+    execute: (order: SalesOrder) => Promise<void>
+  ): Promise<BulkExecutionResult> => {
+    if (selectedRows.length === 0) {
+      return {
+        total: 0,
+        successCount: 0,
+        failedCount: 0,
+        failedIds: [],
+        failures: [],
+        actionLabel,
+        message: `${actionLabel}: không có đơn hàng được chọn.`
+      };
+    }
+
+    const rowsById = new Map<string, SalesOrder>();
+    selectedRows.forEach((row) => rowsById.set(String(row.id), row));
+    const ids = selectedRows.map((row) => String(row.id));
+
+    const result = await runBulkOperation({
+      ids,
+      continueOnError: true,
+      chunkSize: 10,
+      execute: async (orderId) => {
+        const row = rowsById.get(String(orderId));
+        if (!row) {
+          throw new Error(`Không tìm thấy đơn hàng ${orderId}.`);
+        }
+        await execute(row);
+      }
+    });
+
+    const normalized: BulkExecutionResult = {
+      ...result,
+      actionLabel,
+      message: formatBulkSummary(
+        {
+          ...result,
+          actionLabel
+        },
+        actionLabel
+      )
+    };
+
+    if (normalized.successCount > 0) {
+      await loadData();
+    }
+    setResultMessage(normalized.message ?? null);
+    if (normalized.failedCount > 0) {
+      setErrorMessage(`Một số đơn hàng lỗi khi chạy "${actionLabel}".`);
+    } else {
+      setErrorMessage(null);
+    }
+    return normalized;
+  };
+
+  const bulkActions: StandardTableBulkAction<SalesOrder>[] = canMutate
+    ? [
+        {
+          key: 'bulk-approve-orders',
+          label: 'Approve',
+          tone: 'primary',
+          execute: async (selectedRows) =>
+            runSalesBulkAction('Duyệt đơn hàng', selectedRows, async (order) => {
+              if (String(order.status || '').toUpperCase() !== 'PENDING') {
+                throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} không ở trạng thái PENDING.`);
+              }
+              await apiRequest(`/sales/orders/${order.id}/approve`, {
+                method: 'POST',
+                body: { note: 'Bulk approve từ Operations Board' }
+              });
+            })
+        },
+        {
+          key: 'bulk-reject-orders',
+          label: 'Reject',
+          tone: 'danger',
+          confirmMessage: (rows) => `Từ chối ${rows.length} đơn hàng đã chọn?`,
+          execute: async (selectedRows) =>
+            runSalesBulkAction('Từ chối đơn hàng', selectedRows, async (order) => {
+              if (String(order.status || '').toUpperCase() !== 'PENDING') {
+                throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} không ở trạng thái PENDING.`);
+              }
+              await apiRequest(`/sales/orders/${order.id}/reject`, {
+                method: 'POST',
+                body: { note: 'Bulk reject từ Operations Board' }
+              });
+            })
+        },
+        {
+          key: 'bulk-create-invoice',
+          label: 'Create invoice',
+          tone: 'ghost',
+          execute: async (selectedRows) =>
+            runSalesBulkAction('Xuất hóa đơn từ đơn hàng', selectedRows, async (order) => {
+              const isApproved = String(order.status || '').toUpperCase() === 'APPROVED';
+              const hasInvoice = Boolean(order.invoices?.[0]);
+              if (!isApproved || hasInvoice) {
+                throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} chưa hợp lệ để tạo invoice.`);
+              }
+              await apiRequest('/finance/invoices/from-order', {
+                method: 'POST',
+                body: { orderId: order.id }
+              });
+            })
+        },
+        {
+          key: 'bulk-archive-orders',
+          label: 'Archive',
+          tone: 'danger',
+          confirmMessage: (rows) => `Lưu trữ ${rows.length} đơn hàng đã chọn?`,
+          execute: async (selectedRows) =>
+            runSalesBulkAction('Lưu trữ đơn hàng', selectedRows, async (order) => {
+              await apiRequest(`/sales/orders/${order.id}`, {
+                method: 'DELETE'
+              });
+            })
+        }
+      ]
+    : [];
 
   if (!canView) {
     return <div style={{ padding: '2rem', textAlign: 'center' }}>Không có quyền truy cập module bán hàng.</div>;
@@ -467,6 +592,11 @@ export function SalesOperationsBoard() {
         isLoading={isLoading}
         storageKey={SALES_COLUMN_SETTINGS_KEY}
         onRowClick={(order) => setSelectedOrder(order)}
+        enableRowSelection
+        selectedRowIds={selectedRowIds}
+        onSelectedRowIdsChange={setSelectedRowIds}
+        bulkActions={bulkActions}
+        showDefaultBulkUtilities
       />
 
       <SidePanel

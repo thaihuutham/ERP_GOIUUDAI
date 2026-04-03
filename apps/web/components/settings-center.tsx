@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { useUserRole } from './user-role-context';
 import { ERP_MODULES } from '@erp/shared';
 
@@ -77,7 +79,7 @@ type FieldOption = {
   label: string;
 };
 
-type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'switch' | 'tags' | 'multiSelect' | 'userDomainMap';
+type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'switch' | 'tags' | 'multiSelect' | 'userDomainMap' | 'secret';
 
 type FieldConfig = {
   id: string;
@@ -119,12 +121,12 @@ const DOMAIN_LABEL: Record<DomainKey, string> = {
   access_security: 'Bảo mật truy cập',
   approval_matrix: 'Ma trận phê duyệt',
   finance_controls: 'Kiểm soát tài chính',
-  sales_crm_policies: 'Chính sách Sales/CRM',
-  catalog_scm_policies: 'Chính sách Catalog/SCM',
-  hr_policies: 'Chính sách HR',
+  sales_crm_policies: 'Chính sách CRM/Bán hàng',
+  catalog_scm_policies: 'Chính sách Danh mục/SCM',
+  hr_policies: 'Chính sách Nhân sự',
   integrations: 'Tích hợp hệ thống',
   notifications_templates: 'Thông báo & mẫu',
-  search_performance: 'Search & hiệu năng',
+  search_performance: 'Tìm kiếm & hiệu năng',
   data_governance_backup: 'Dữ liệu & backup'
 };
 
@@ -144,7 +146,8 @@ const MODULE_LABEL_MAP: Record<string, string> = {
   projects: 'Dự án',
   workflows: 'Quy trình',
   reports: 'Báo cáo',
-  audit: 'Audit log',
+  assistant: 'Trợ lý AI',
+  audit: 'Nhật ký hệ thống',
   notifications: 'Thông báo'
 };
 
@@ -154,6 +157,17 @@ const MODULE_OPTIONS: FieldOption[] = ERP_MODULES
     value: moduleKey,
     label: MODULE_LABEL_MAP[moduleKey] ?? moduleKey.toUpperCase()
   }));
+
+const ASSISTANT_SCOPE_OPTIONS: FieldOption[] = [
+  { value: 'company', label: 'Toàn công ty' },
+  { value: 'branch', label: 'Theo chi nhánh' },
+  { value: 'department', label: 'Theo phòng ban' },
+  { value: 'self', label: 'Chỉ dữ liệu cá nhân' }
+];
+
+const ASSISTANT_ALLOWED_MODULE_OPTIONS: FieldOption[] = MODULE_OPTIONS.filter(
+  (item) => item.value !== 'assistant' && item.value !== 'settings'
+);
 
 const ROLE_OPTIONS: FieldOption[] = [
   { value: 'ADMIN', label: 'ADMIN' },
@@ -222,12 +236,12 @@ const PAYROLL_CYCLE_OPTIONS: FieldOption[] = [
 
 const REASON_TEMPLATES = [
   'Cập nhật chính sách vận hành',
-  'Điều chỉnh theo quy trình kế toán',
-  'Bổ sung quyền truy cập cho đội vận hành',
-  'Chuẩn hóa thông tin công ty',
+  'Điều chỉnh phân quyền và bảo mật',
+  'Chuẩn hóa hồ sơ doanh nghiệp',
   'Cập nhật tích hợp hệ thống',
-  'Tối ưu hiệu năng tìm kiếm',
-  'Điều chỉnh chính sách dữ liệu và backup'
+  'Tối ưu tìm kiếm và hiệu năng',
+  'Điều chỉnh vòng đời dữ liệu',
+  'Tăng mức tự động hóa giám sát AI'
 ] as const;
 
 const CONFLICT_POLICY_OPTIONS: FieldOption[] = [
@@ -248,6 +262,7 @@ const PERMISSION_MODULE_KEYS = [
   'projects',
   'workflows',
   'reports',
+  'audit',
   'settings',
   'notifications',
   'search',
@@ -256,15 +271,15 @@ const PERMISSION_MODULE_KEYS = [
 
 const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
   org_profile: {
-    title: 'Hồ sơ tổ chức',
-    description: 'Thiết lập thông tin công ty, nhận diện thương hiệu và mẫu chứng từ.',
+    title: 'Hồ sơ doanh nghiệp',
+    description: 'Thiết lập thông tin doanh nghiệp, nhận diện thương hiệu và chứng từ.',
     sections: [
       {
         id: 'org-base',
         title: 'Thông tin doanh nghiệp',
         fields: [
-          { id: 'org-company', path: 'companyName', label: 'Tên công ty', type: 'text', placeholder: 'Công ty ABC Retail' },
-          { id: 'org-branch', path: 'branchName', label: 'Chi nhánh chính', type: 'text', placeholder: 'Chi nhánh Hồ Chí Minh' },
+          { id: 'org-company', path: 'companyName', label: 'Tên công ty', type: 'text', placeholder: SYSTEM_PROFILE.companyName },
+          { id: 'org-branch', path: 'branchName', label: 'Đơn vị vận hành', type: 'text', placeholder: 'Vận hành trung tâm' },
           { id: 'org-tax', path: 'taxCode', label: 'Mã số thuế', type: 'text' },
           { id: 'org-address', path: 'address', label: 'Địa chỉ', type: 'textarea' },
           { id: 'org-email', path: 'contactEmail', label: 'Email liên hệ', type: 'text' },
@@ -274,7 +289,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       },
       {
         id: 'org-branding',
-        title: 'Branding & chứng từ',
+        title: 'Nhận diện & chứng từ',
         fields: [
           { id: 'org-logo', path: 'branding.logoUrl', label: 'Link logo', type: 'text', placeholder: 'https://...' },
           { id: 'org-primary-color', path: 'branding.primaryColor', label: 'Màu thương hiệu chính', type: 'text', placeholder: '#0a5f38' },
@@ -286,7 +301,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
   },
   locale_calendar: {
     title: 'Ngôn ngữ và lịch',
-    description: 'Chuẩn hóa múi giờ, định dạng hiển thị và năm tài chính mặc định.',
+    description: 'Chuẩn hóa múi giờ, định dạng hiển thị và năm tài chính.',
     sections: [
       {
         id: 'locale-general',
@@ -304,7 +319,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
   },
   access_security: {
     title: 'Bảo mật truy cập',
-    description: 'Thiết lập bảo mật tài khoản và phân quyền chỉnh Settings theo domain.',
+    description: 'Thiết lập bảo mật tài khoản và phân quyền chỉnh cấu hình theo miền.',
     sections: [
       {
         id: 'security-session',
@@ -329,31 +344,58 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       },
       {
         id: 'security-permission-engine',
-        title: 'Permission engine (chi tiết theo hành động)',
+        title: 'Động cơ phân quyền theo hành động',
         fields: [
-          { id: 'security-super-admin-legacy', path: 'superAdminIds', label: 'Break-glass super admin (legacy)', type: 'tags', placeholder: 'user_id_1, user_id_2' },
-          { id: 'security-perm-enabled', path: 'permissionPolicy.enabled', label: 'Bật permission engine chi tiết', type: 'switch' },
-          { id: 'security-perm-conflict', path: 'permissionPolicy.conflictPolicy', label: 'Conflict policy', type: 'select', options: CONFLICT_POLICY_OPTIONS },
-          { id: 'security-perm-super-admin-ids', path: 'permissionPolicy.superAdminIds', label: 'Super admin IDs (permission policy)', type: 'tags', placeholder: 'user_id_1, user_id_2' },
-          { id: 'security-perm-super-admin-emails', path: 'permissionPolicy.superAdminEmails', label: 'Super admin emails', type: 'tags', placeholder: 'admin@company.vn, ops@company.vn' }
+          { id: 'security-super-admin-legacy', path: 'superAdminIds', label: 'Super admin khẩn cấp (legacy)', type: 'tags', placeholder: 'user_id_1, user_id_2' },
+          { id: 'security-perm-enabled', path: 'permissionPolicy.enabled', label: 'Bật phân quyền chi tiết', type: 'switch' },
+          { id: 'security-perm-conflict', path: 'permissionPolicy.conflictPolicy', label: 'Chính sách xung đột quyền', type: 'select', options: CONFLICT_POLICY_OPTIONS },
+          { id: 'security-perm-super-admin-ids', path: 'permissionPolicy.superAdminIds', label: 'Danh sách Super admin (ID)', type: 'tags', placeholder: 'user_id_1, user_id_2' },
+          { id: 'security-perm-super-admin-emails', path: 'permissionPolicy.superAdminEmails', label: 'Danh sách Super admin (Email)', type: 'tags', placeholder: 'admin@company.vn, ops@company.vn' }
+        ]
+      },
+      {
+        id: 'security-audit-matrix',
+        title: 'Phân quyền nhật ký hệ thống theo cấp quản lý',
+        description: 'Phạm vi nhật ký tính theo người thực hiện. ADMIN xem toàn công ty.',
+        fields: [
+          { id: 'security-audit-policy-enabled', path: 'auditViewPolicy.enabled', label: 'Bật phân quyền nhật ký theo nhóm quản lý', type: 'switch' },
+          { id: 'security-audit-director', path: 'auditViewPolicy.groups.DIRECTOR.enabled', label: 'Giám đốc: xem toàn công ty', type: 'switch' },
+          { id: 'security-audit-branch', path: 'auditViewPolicy.groups.BRANCH_MANAGER.enabled', label: 'Trưởng chi nhánh: xem trong phạm vi chi nhánh', type: 'switch' },
+          { id: 'security-audit-department', path: 'auditViewPolicy.groups.DEPARTMENT_MANAGER.enabled', label: 'Trưởng phòng: xem trong phạm vi phòng ban', type: 'switch' },
+          { id: 'security-audit-deny-ungrouped', path: 'auditViewPolicy.denyIfUngroupedManager', label: 'Chặn MANAGER chưa được gán vào đơn vị tổ chức', type: 'switch' }
+        ]
+      },
+      {
+        id: 'security-assistant-access',
+        title: 'Chính sách truy cập Trợ lý AI',
+        description: 'Giới hạn dữ liệu AI theo vai trò và chặn vượt quyền.',
+        fields: [
+          { id: 'assistant-policy-enabled', path: 'assistantAccessPolicy.enabled', label: 'Bật chính sách Trợ lý AI', type: 'switch' },
+          { id: 'assistant-policy-admin-scope', path: 'assistantAccessPolicy.roleScopeDefaults.ADMIN', label: 'Phạm vi mặc định cho ADMIN', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
+          { id: 'assistant-policy-manager-scope', path: 'assistantAccessPolicy.roleScopeDefaults.MANAGER', label: 'Phạm vi mặc định cho MANAGER', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
+          { id: 'assistant-policy-staff-scope', path: 'assistantAccessPolicy.roleScopeDefaults.STAFF', label: 'Phạm vi mặc định cho STAFF', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
+          { id: 'assistant-policy-permission-engine', path: 'assistantAccessPolicy.enforcePermissionEngine', label: 'Bắt buộc qua động cơ phân quyền', type: 'switch' },
+          { id: 'assistant-policy-deny-no-scope', path: 'assistantAccessPolicy.denyIfNoScope', label: 'Từ chối khi không xác định được phạm vi', type: 'switch' },
+          { id: 'assistant-policy-allowed-modules', path: 'assistantAccessPolicy.allowedModules', label: 'Phân hệ AI được phép truy vấn', type: 'multiSelect', options: ASSISTANT_ALLOWED_MODULE_OPTIONS },
+          { id: 'assistant-policy-channel-scope', path: 'assistantAccessPolicy.chatChannelScopeEnforced', label: 'Bắt buộc khớp phạm vi khi gửi chat', type: 'switch' }
         ]
       },
       {
         id: 'security-settings-editors',
-        title: 'Phân quyền chỉnh Settings',
-        description: 'ADMIN luôn có quyền. Người dùng khác chỉ sửa được domain đã cấp trong đây.',
+        title: 'Phân quyền chỉnh cấu hình',
+        description: 'ADMIN luôn có quyền. Người dùng khác chỉ sửa được miền đã cấp.',
         fields: [
           {
             id: 'security-policy-manager',
             path: 'settingsEditorPolicy.domainRoleMap.MANAGER',
-            label: 'Domain cho MANAGER',
+            label: 'Miền cấu hình cho MANAGER',
             type: 'multiSelect',
             options: DOMAIN_OPTIONS
           },
           {
             id: 'security-policy-staff',
             path: 'settingsEditorPolicy.domainRoleMap.STAFF',
-            label: 'Domain cho STAFF',
+            label: 'Miền cấu hình cho STAFF',
             type: 'multiSelect',
             options: DOMAIN_OPTIONS
           },
@@ -371,13 +413,13 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
   },
   approval_matrix: {
     title: 'Ma trận phê duyệt',
-    description: 'Định nghĩa tuyến duyệt theo module, giá trị giao dịch và cấp thẩm quyền.',
+    description: 'Định nghĩa tuyến duyệt theo phân hệ, giá trị giao dịch và cấp thẩm quyền.',
     sections: [
       {
         id: 'approval-rule-default',
-        title: 'Rule mặc định',
+        title: 'Quy tắc mặc định',
         fields: [
-          { id: 'approval-module', path: 'rules.0.module', label: 'Module áp dụng', type: 'select', options: MODULE_OPTIONS },
+          { id: 'approval-module', path: 'rules.0.module', label: 'Phân hệ áp dụng', type: 'select', options: MODULE_OPTIONS },
           { id: 'approval-min-amount', path: 'rules.0.minAmount', label: 'Giá trị bắt đầu duyệt', type: 'number', unit: 'VND', min: 0 },
           { id: 'approval-role', path: 'rules.0.approverRole', label: 'Vai trò duyệt', type: 'select', options: ROLE_OPTIONS },
           { id: 'approval-dept', path: 'rules.0.approverDepartment', label: 'Phòng ban duyệt', type: 'text', placeholder: 'Kế toán / Kinh doanh' }
@@ -385,11 +427,11 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       },
       {
         id: 'approval-escalation',
-        title: 'Escalation & ủy quyền',
+        title: 'Leo thang & ủy quyền',
         fields: [
-          { id: 'approval-escalation-enabled', path: 'escalation.enabled', label: 'Bật escalation tự động', type: 'switch' },
-          { id: 'approval-escalation-sla', path: 'escalation.slaHours', label: 'SLA escalation', type: 'number', unit: 'giờ', min: 1, max: 240 },
-          { id: 'approval-escalation-role', path: 'escalation.escalateToRole', label: 'Vai trò nhận escalation', type: 'select', options: ROLE_OPTIONS },
+          { id: 'approval-escalation-enabled', path: 'escalation.enabled', label: 'Bật leo thang tự động', type: 'switch' },
+          { id: 'approval-escalation-sla', path: 'escalation.slaHours', label: 'SLA leo thang', type: 'number', unit: 'giờ', min: 1, max: 240 },
+          { id: 'approval-escalation-role', path: 'escalation.escalateToRole', label: 'Vai trò nhận leo thang', type: 'select', options: ROLE_OPTIONS },
           { id: 'approval-delegation-enabled', path: 'delegation.enabled', label: 'Cho phép ủy quyền duyệt', type: 'switch' },
           { id: 'approval-delegation-days', path: 'delegation.maxDays', label: 'Thời gian ủy quyền tối đa', type: 'number', unit: 'ngày', min: 1, max: 90 }
         ]
@@ -427,7 +469,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
     ]
   },
   sales_crm_policies: {
-    title: 'Chính sách Sales/CRM',
+    title: 'Chính sách CRM/Bán hàng',
     description: 'Quy định sửa đơn, chiết khấu, tín dụng và taxonomy khách hàng.',
     sections: [
       {
@@ -472,7 +514,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
     ]
   },
   catalog_scm_policies: {
-    title: 'Chính sách Catalog/SCM',
+    title: 'Chính sách Danh mục/SCM',
     description: 'Chuẩn mặc định về đơn vị tính, bảng giá, kho và nhận hàng.',
     sections: [
       {
@@ -488,7 +530,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         id: 'catalog-constraints',
         title: 'Ràng buộc nhập/xuất',
         fields: [
-          { id: 'catalog-replenishment-enabled', path: 'replenishment.enabled', label: 'Bật replenishment', type: 'switch' },
+          { id: 'catalog-replenishment-enabled', path: 'replenishment.enabled', label: 'Bật bổ sung tồn kho tự động', type: 'switch' },
           { id: 'catalog-replenishment-threshold', path: 'replenishment.minStockThreshold', label: 'Ngưỡng cảnh báo tồn kho', type: 'number', min: 0 },
           { id: 'catalog-over-receive', path: 'receiving.allowOverReceivePercent', label: 'Cho phép nhận vượt', type: 'number', unit: '%', min: 0, max: 100 }
         ]
@@ -517,12 +559,88 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'hr-leave-role', path: 'approverChain.leaveApproverRole', label: 'Vai trò duyệt nghỉ phép', type: 'select', options: ROLE_OPTIONS },
           { id: 'hr-payroll-role', path: 'approverChain.payrollApproverRole', label: 'Vai trò duyệt lương', type: 'select', options: ROLE_OPTIONS }
         ]
+      },
+      {
+        id: 'hr-appendix-field-library',
+        title: 'Field library toan he thong',
+        description: 'Admin quan ly field dung chung. Muc custom_1..3 cho phep bo sung field tuy chinh nhanh.',
+        fields: [
+          { id: 'hr-field-summary-label', path: 'appendixFieldCatalog.summary.label', label: 'summary - Ten hien thi', type: 'text' },
+          { id: 'hr-field-summary-type', path: 'appendixFieldCatalog.summary.type', label: 'summary - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
+          { id: 'hr-field-summary-analytics', path: 'appendixFieldCatalog.summary.analyticsEnabled', label: 'summary - Dua vao KPI', type: 'switch' },
+          { id: 'hr-field-summary-aggregator', path: 'appendixFieldCatalog.summary.aggregator', label: 'summary - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
+
+          { id: 'hr-field-result-label', path: 'appendixFieldCatalog.result.label', label: 'result - Ten hien thi', type: 'text' },
+          { id: 'hr-field-result-type', path: 'appendixFieldCatalog.result.type', label: 'result - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
+          { id: 'hr-field-result-analytics', path: 'appendixFieldCatalog.result.analyticsEnabled', label: 'result - Dua vao KPI', type: 'switch' },
+          { id: 'hr-field-result-aggregator', path: 'appendixFieldCatalog.result.aggregator', label: 'result - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
+
+          { id: 'hr-field-task-label', path: 'appendixFieldCatalog.taskCount.label', label: 'taskCount - Ten hien thi', type: 'text' },
+          { id: 'hr-field-task-type', path: 'appendixFieldCatalog.taskCount.type', label: 'taskCount - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
+          { id: 'hr-field-task-analytics', path: 'appendixFieldCatalog.taskCount.analyticsEnabled', label: 'taskCount - Dua vao KPI', type: 'switch' },
+          { id: 'hr-field-task-aggregator', path: 'appendixFieldCatalog.taskCount.aggregator', label: 'taskCount - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
+
+          { id: 'hr-field-custom1-key', path: 'appendixFieldCatalog.custom_1.key', label: 'custom_1 - Ma field', type: 'text', placeholder: 'PL05_customerFeedback' },
+          { id: 'hr-field-custom1-label', path: 'appendixFieldCatalog.custom_1.label', label: 'custom_1 - Ten hien thi', type: 'text' },
+          { id: 'hr-field-custom1-type', path: 'appendixFieldCatalog.custom_1.type', label: 'custom_1 - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
+          { id: 'hr-field-custom1-options', path: 'appendixFieldCatalog.custom_1.options', label: 'custom_1 - Lua chon (neu la select)', type: 'tags' },
+          { id: 'hr-field-custom1-analytics', path: 'appendixFieldCatalog.custom_1.analyticsEnabled', label: 'custom_1 - Dua vao KPI', type: 'switch' },
+          { id: 'hr-field-custom1-aggregator', path: 'appendixFieldCatalog.custom_1.aggregator', label: 'custom_1 - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
+
+          { id: 'hr-field-custom2-key', path: 'appendixFieldCatalog.custom_2.key', label: 'custom_2 - Ma field', type: 'text', placeholder: 'PL06_qualityTag' },
+          { id: 'hr-field-custom2-label', path: 'appendixFieldCatalog.custom_2.label', label: 'custom_2 - Ten hien thi', type: 'text' },
+          { id: 'hr-field-custom2-type', path: 'appendixFieldCatalog.custom_2.type', label: 'custom_2 - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
+          { id: 'hr-field-custom2-options', path: 'appendixFieldCatalog.custom_2.options', label: 'custom_2 - Lua chon (neu la select)', type: 'tags' },
+          { id: 'hr-field-custom2-analytics', path: 'appendixFieldCatalog.custom_2.analyticsEnabled', label: 'custom_2 - Dua vao KPI', type: 'switch' },
+          { id: 'hr-field-custom2-aggregator', path: 'appendixFieldCatalog.custom_2.aggregator', label: 'custom_2 - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
+
+          { id: 'hr-field-custom3-key', path: 'appendixFieldCatalog.custom_3.key', label: 'custom_3 - Ma field', type: 'text', placeholder: 'PL10_recoveryRisk' },
+          { id: 'hr-field-custom3-label', path: 'appendixFieldCatalog.custom_3.label', label: 'custom_3 - Ten hien thi', type: 'text' },
+          { id: 'hr-field-custom3-type', path: 'appendixFieldCatalog.custom_3.type', label: 'custom_3 - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
+          { id: 'hr-field-custom3-options', path: 'appendixFieldCatalog.custom_3.options', label: 'custom_3 - Lua chon (neu la select)', type: 'tags' },
+          { id: 'hr-field-custom3-analytics', path: 'appendixFieldCatalog.custom_3.analyticsEnabled', label: 'custom_3 - Dua vao KPI', type: 'switch' },
+          { id: 'hr-field-custom3-aggregator', path: 'appendixFieldCatalog.custom_3.aggregator', label: 'custom_3 - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] }
+        ]
+      },
+      {
+        id: 'hr-appendix-template-design',
+        title: 'Thiet ke form theo phu luc',
+        description: 'Nhap danh sach field cho tung phu luc. Co the dung key hoac nhap ten field (he thong tu map).',
+        fields: [
+          { id: 'hr-pl01-name', path: 'appendixTemplates.PL01.name', label: 'PL01 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl01-description', path: 'appendixTemplates.PL01.description', label: 'PL01 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl01-fields', path: 'appendixTemplates.PL01.fields', label: 'PL01 - Danh sach field', type: 'tags', helper: 'Vi du: summary, result, taskCount, complianceNote, note' },
+
+          { id: 'hr-pl02-name', path: 'appendixTemplates.PL02.name', label: 'PL02 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl02-description', path: 'appendixTemplates.PL02.description', label: 'PL02 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl02-fields', path: 'appendixTemplates.PL02.fields', label: 'PL02 - Danh sach field', type: 'tags' },
+
+          { id: 'hr-pl03-name', path: 'appendixTemplates.PL03.name', label: 'PL03 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl03-description', path: 'appendixTemplates.PL03.description', label: 'PL03 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl03-fields', path: 'appendixTemplates.PL03.fields', label: 'PL03 - Danh sach field', type: 'tags' },
+
+          { id: 'hr-pl04-name', path: 'appendixTemplates.PL04.name', label: 'PL04 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl04-description', path: 'appendixTemplates.PL04.description', label: 'PL04 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl04-fields', path: 'appendixTemplates.PL04.fields', label: 'PL04 - Danh sach field', type: 'tags' },
+
+          { id: 'hr-pl05-name', path: 'appendixTemplates.PL05.name', label: 'PL05 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl05-description', path: 'appendixTemplates.PL05.description', label: 'PL05 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl05-fields', path: 'appendixTemplates.PL05.fields', label: 'PL05 - Danh sach field', type: 'tags' },
+
+          { id: 'hr-pl06-name', path: 'appendixTemplates.PL06.name', label: 'PL06 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl06-description', path: 'appendixTemplates.PL06.description', label: 'PL06 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl06-fields', path: 'appendixTemplates.PL06.fields', label: 'PL06 - Danh sach field', type: 'tags' },
+
+          { id: 'hr-pl10-name', path: 'appendixTemplates.PL10.name', label: 'PL10 - Ten phu luc', type: 'text' },
+          { id: 'hr-pl10-description', path: 'appendixTemplates.PL10.description', label: 'PL10 - Mo ta', type: 'textarea' },
+          { id: 'hr-pl10-fields', path: 'appendixTemplates.PL10.fields', label: 'PL10 - Danh sach field', type: 'tags' }
+        ]
       }
     ]
   },
   integrations: {
     title: 'Tích hợp hệ thống',
-    description: 'Quản lý metadata connector, secretRef và tình trạng kết nối.',
+    description: 'Quản lý kết nối tích hợp, khóa API/token và trạng thái kết nối.',
     sections: [
       {
         id: 'integration-bhtot',
@@ -530,7 +648,8 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         fields: [
           { id: 'int-bhtot-enabled', path: 'bhtot.enabled', label: 'Bật tích hợp BHTOT', type: 'switch' },
           { id: 'int-bhtot-base-url', path: 'bhtot.baseUrl', label: 'BHTOT Base URL', type: 'text', placeholder: 'https://api.example.com' },
-          { id: 'int-bhtot-secret-ref', path: 'bhtot.apiKeyRef', label: 'SecretRef API key', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-bhtot-api-key', path: 'bhtot.apiKey', label: 'API key (nhập trực tiếp)', type: 'secret', helper: 'Đổi key tại đây sẽ áp dụng ngay sau khi lưu.', placeholder: 'sk-...' },
+          { id: 'int-bhtot-secret-ref', path: 'bhtot.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS },
           { id: 'int-bhtot-timeout', path: 'bhtot.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000 },
           { id: 'int-bhtot-orders-key', path: 'bhtot.ordersStateKey', label: 'State key đơn hàng', type: 'text' },
           { id: 'int-bhtot-users-key', path: 'bhtot.usersStateKey', label: 'State key người dùng', type: 'text' },
@@ -545,8 +664,10 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'int-zalo-outbound-url', path: 'zalo.outboundUrl', label: 'Webhook outbound URL', type: 'text' },
           { id: 'int-zalo-api-base', path: 'zalo.apiBaseUrl', label: 'API base URL', type: 'text' },
           { id: 'int-zalo-timeout', path: 'zalo.outboundTimeoutMs', label: 'Timeout outbound', type: 'number', unit: 'ms', min: 2000, max: 180000 },
-          { id: 'int-zalo-secret-ref', path: 'zalo.accessTokenRef', label: 'SecretRef access token', type: 'select', options: SECRET_REF_OPTIONS },
-          { id: 'int-zalo-webhook-secret-ref', path: 'zalo.webhookSecretRef', label: 'SecretRef webhook secret', type: 'select', options: SECRET_REF_OPTIONS }
+          { id: 'int-zalo-access-token', path: 'zalo.accessToken', label: 'Access token (nhập trực tiếp)', type: 'secret', placeholder: 'oa_access_...' },
+          { id: 'int-zalo-secret-ref', path: 'zalo.accessTokenRef', label: 'SecretRef access token (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-zalo-webhook-secret', path: 'zalo.webhookSecret', label: 'Webhook secret (nhập trực tiếp)', type: 'secret' },
+          { id: 'int-zalo-webhook-secret-ref', path: 'zalo.webhookSecretRef', label: 'SecretRef webhook secret (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS }
         ]
       },
       {
@@ -556,7 +677,8 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'int-ai-enabled', path: 'ai.enabled', label: 'Bật AI connector', type: 'switch' },
           { id: 'int-ai-base-url', path: 'ai.baseUrl', label: 'AI base URL', type: 'text' },
           { id: 'int-ai-model', path: 'ai.model', label: 'Model mặc định', type: 'text', placeholder: 'gpt-4o-mini' },
-          { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-ai-api-key', path: 'ai.apiKey', label: 'AI API key (nhập trực tiếp)', type: 'secret', helper: 'Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
+          { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS },
           { id: 'int-ai-timeout', path: 'ai.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000 }
         ]
       }
@@ -594,26 +716,26 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
     ]
   },
   search_performance: {
-    title: 'Search & hiệu năng',
-    description: 'Thiết lập chế độ search engine, timeout và governance reindex.',
+    title: 'Tìm kiếm & hiệu năng',
+    description: 'Thiết lập chế độ tìm kiếm, timeout và quy tắc reindex.',
     sections: [
       {
         id: 'search-runtime',
-        title: 'Runtime',
+        title: 'Vận hành runtime',
         fields: [
-          { id: 'search-engine', path: 'engine', label: 'Search engine mode', type: 'select', options: SEARCH_ENGINE_OPTIONS },
+          { id: 'search-engine', path: 'engine', label: 'Chế độ search engine', type: 'select', options: SEARCH_ENGINE_OPTIONS },
           { id: 'search-timeout', path: 'timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 300000 }
         ]
       },
       {
         id: 'search-reindex',
-        title: 'Reindex governance',
+        title: 'Quy tắc reindex',
         fields: [
           { id: 'search-auto-deploy', path: 'reindexPolicy.autoAfterDeploy', label: 'Tự reindex sau deploy', type: 'switch' },
           {
             id: 'search-allow-entity',
             path: 'reindexPolicy.allowEntity',
-            label: 'Entity được phép reindex',
+            label: 'Đối tượng được phép reindex',
             type: 'multiSelect',
             options: [
               { value: 'customers', label: 'Khách hàng' },
@@ -994,6 +1116,11 @@ function normalizeForComparison(field: FieldConfig, value: unknown) {
 }
 
 function formatFieldValue(field: FieldConfig, value: unknown) {
+  if (field.type === 'secret') {
+    const normalized = String(value ?? '').trim();
+    return normalized ? '********' : 'Chưa nhập';
+  }
+
   if (field.type === 'switch') {
     return value === true ? 'Bật' : 'Tắt';
   }
@@ -1117,7 +1244,7 @@ function toSettingsFriendlyError(error: unknown, fallbackMessage: string) {
     (normalized.includes('request failed (404)') && normalized.includes('settings'));
 
   if (isSettingsEndpoint404) {
-    return 'API backend chưa cập nhật Settings Center (404 endpoint). Vui lòng khởi động lại dịch vụ API và thử lại.';
+    return 'API backend chưa cập nhật Trung tâm cấu hình (endpoint 404). Vui lòng khởi động lại dịch vụ API và thử lại.';
   }
 
   return rawMessage || fallbackMessage;
@@ -1138,6 +1265,7 @@ export function SettingsCenter() {
   const [validationResult, setValidationResult] = useState<Record<string, unknown> | null>(null);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [iamUsers, setIamUsers] = useState<Record<string, unknown>[]>([]);
+  const [selectedIamUserIds, setSelectedIamUserIds] = useState<BulkRowId[]>([]);
   const [orgItems, setOrgItems] = useState<Record<string, unknown>[]>([]);
   const [orgTree, setOrgTree] = useState<Record<string, unknown>[]>([]);
   const [positions, setPositions] = useState<Record<string, unknown>[]>([]);
@@ -1155,11 +1283,16 @@ export function SettingsCenter() {
   const [orgUnitForm, setOrgUnitForm] = useState({
     name: '',
     type: 'TEAM',
-    parentId: ''
+    parentId: '',
+    managerEmployeeId: ''
   });
   const [orgMoveForm, setOrgMoveForm] = useState({
     unitId: '',
     parentId: ''
+  });
+  const [orgManagerForm, setOrgManagerForm] = useState({
+    unitId: '',
+    managerEmployeeId: ''
   });
 
   const domainConfig = DOMAIN_CONFIG[selectedDomain];
@@ -1207,6 +1340,25 @@ export function SettingsCenter() {
       }))
       .filter((item) => item.id && item.name);
   }, [orgItems]);
+
+  const managerEmployeeOptions = useMemo(() => {
+    return iamUsers
+      .map((item) => {
+        const employee = toRecord(item.employee);
+        const employeeId = String(employee.id ?? '').trim();
+        const fullName = String(employee.fullName ?? '').trim();
+        const email = String(item.email ?? '').trim();
+        const roleName = String(item.role ?? '').trim();
+        if (!employeeId) {
+          return null;
+        }
+        return {
+          employeeId,
+          label: `${fullName || employeeId}${email ? ` • ${email}` : ''}${roleName ? ` (${roleName})` : ''}`
+        };
+      })
+      .filter((item): item is { employeeId: string; label: string } => Boolean(item?.employeeId));
+  }, [iamUsers]);
 
   const globalValidationErrors = fieldErrorMap.__global ?? [];
 
@@ -1265,7 +1417,7 @@ export function SettingsCenter() {
     try {
       await Promise.all([loadCenter(), loadDomain(domain), loadEnterpriseData()]);
     } catch (loadError) {
-      setError(toSettingsFriendlyError(loadError, 'Không tải được dữ liệu Settings Center.'));
+      setError(toSettingsFriendlyError(loadError, 'Không tải được dữ liệu Trung tâm cấu hình.'));
     } finally {
       setBusy(false);
     }
@@ -1274,6 +1426,11 @@ export function SettingsCenter() {
   useEffect(() => {
     void reloadAll(selectedDomain);
   }, [selectedDomain]);
+
+  useEffect(() => {
+    const visibleIdSet = new Set(iamUsers.slice(0, 40).map((item) => String(item.id ?? '')));
+    setSelectedIamUserIds((prev) => prev.filter((id) => visibleIdSet.has(String(id))));
+  }, [iamUsers]);
 
   useEffect(() => {
     if (!selectedPositionId) {
@@ -1348,10 +1505,10 @@ export function SettingsCenter() {
         body: submissionData
       });
       setValidationResult(result);
-      setMessage('Validate thành công. Bạn có thể xem lỗi ngay cạnh từng trường nếu có.');
+      setMessage('Kiểm tra thành công. Nếu có lỗi, hệ thống hiển thị ngay cạnh từng trường.');
       await loadCenter();
     } catch (validateError) {
-      setError(toSettingsFriendlyError(validateError, 'Validate thất bại.'));
+      setError(toSettingsFriendlyError(validateError, 'Kiểm tra thất bại.'));
     } finally {
       setBusy(false);
     }
@@ -1534,6 +1691,58 @@ export function SettingsCenter() {
     }
   };
 
+  const handleBulkResetIamPassword = async () => {
+    const ids = selectedIamUserIds.map((id) => String(id)).filter(Boolean);
+    if (ids.length === 0) {
+      setError('Vui lòng chọn ít nhất 1 tài khoản IAM.');
+      return;
+    }
+
+    if (!window.confirm(`Reset mật khẩu tạm cho ${ids.length} tài khoản đã chọn?`)) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await runBulkOperation({
+        ids,
+        continueOnError: true,
+        chunkSize: 10,
+        execute: async (userId) => {
+          await apiRequest(`/settings/iam/users/${userId}/reset-password`, {
+            method: 'POST'
+          });
+        }
+      });
+
+      const normalized: BulkExecutionResult = {
+        ...result,
+        actionLabel: 'Reset mật khẩu IAM',
+        message: formatBulkSummary(
+          {
+            ...result,
+            actionLabel: 'Reset mật khẩu IAM'
+          },
+          'Reset mật khẩu IAM'
+        )
+      };
+
+      if (normalized.successCount > 0) {
+        await loadEnterpriseData();
+      }
+      setMessage(normalized.message ?? null);
+      if (normalized.failedCount > 0) {
+        setError('Một số tài khoản IAM reset mật khẩu thất bại.');
+      }
+    } catch (bulkError) {
+      setError(toSettingsFriendlyError(bulkError, 'Bulk reset mật khẩu thất bại.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleCreateOrgUnit = async () => {
     if (!orgUnitForm.name.trim()) {
       setError('Vui lòng nhập tên node tổ chức.');
@@ -1548,18 +1757,44 @@ export function SettingsCenter() {
         body: {
           name: orgUnitForm.name,
           type: orgUnitForm.type,
-          parentId: orgUnitForm.parentId || undefined
+          parentId: orgUnitForm.parentId || undefined,
+          managerEmployeeId: orgUnitForm.managerEmployeeId || undefined
         }
       });
       setMessage('Đã tạo node tổ chức.');
       setOrgUnitForm({
         name: '',
         type: 'TEAM',
-        parentId: ''
+        parentId: '',
+        managerEmployeeId: ''
       });
       await loadEnterpriseData();
     } catch (createError) {
       setError(toSettingsFriendlyError(createError, 'Tạo node tổ chức thất bại.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAssignOrgManager = async () => {
+    if (!orgManagerForm.unitId) {
+      setError('Vui lòng chọn org unit để gán quản lý.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/settings/organization/units/${orgManagerForm.unitId}`, {
+        method: 'PATCH',
+        body: {
+          managerEmployeeId: orgManagerForm.managerEmployeeId || ''
+        }
+      });
+      setMessage('Đã cập nhật quản lý cho org unit.');
+      await loadEnterpriseData();
+    } catch (assignError) {
+      setError(toSettingsFriendlyError(assignError, 'Cập nhật manager org unit thất bại.'));
     } finally {
       setBusy(false);
     }
@@ -1672,16 +1907,16 @@ export function SettingsCenter() {
     <article className="module-workbench" style={{ background: 'transparent' }}>
       <header className="module-header" style={{ background: 'transparent', borderBottom: 'none', padding: '0 0 1.5rem 0' }}>
         <div>
-          <h1 style={{ fontSize: '1.65rem', fontWeight: 800 }}>Settings Center Enterprise</h1>
+          <h1 style={{ fontSize: '1.65rem', fontWeight: 800 }}>Trung tâm cấu hình hệ thống</h1>
           <p style={{ color: 'var(--muted)', marginTop: '0.4rem' }}>
-            Giao diện dạng form cho người dùng nghiệp vụ: tick chọn, nhập mẫu, validate trước lưu, có audit và snapshot.
+            Cấu hình tập trung cho {SYSTEM_PROFILE.companyName}: tối giản thao tác, chuẩn hóa dữ liệu, tăng tự động hóa và AI giám sát.
           </p>
         </div>
       </header>
 
       <section style={{ display: 'grid', gridTemplateColumns: '240px minmax(0, 1fr) 360px', gap: '1rem' }}>
         <aside style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.75rem', background: '#fff' }}>
-          <h3 style={{ margin: '0.25rem 0 0.75rem 0' }}>Domain</h3>
+          <h3 style={{ margin: '0.25rem 0 0.75rem 0' }}>Miền cấu hình</h3>
           <div style={{ display: 'grid', gap: '0.35rem' }}>
             {DOMAIN_ORDER.map((domain) => {
               const state = center?.domainStates.find((item) => item.domain === domain);
@@ -1699,7 +1934,7 @@ export function SettingsCenter() {
                 >
                   <span>{DOMAIN_LABEL[domain]}</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <span style={{ color: state?.ok ? '#1b8748' : '#d97706', fontWeight: 700 }}>{state?.ok ? 'OK' : 'WARN'}</span>
+                    <span style={{ color: state?.ok ? '#1b8748' : '#d97706', fontWeight: 700 }}>{state?.ok ? 'ỔN' : 'CẢNH BÁO'}</span>
                     <span
                       style={{
                         fontSize: '0.68rem',
@@ -1707,7 +1942,7 @@ export function SettingsCenter() {
                         color: state?.runtimeApplied ? '#1b8748' : '#d97706'
                       }}
                     >
-                      {state?.runtimeApplied ? 'RT' : 'NRT'}
+                      {state?.runtimeApplied ? 'ĐANG DÙNG' : 'CHỜ ÁP DỤNG'}
                     </span>
                   </span>
                 </button>
@@ -1722,14 +1957,14 @@ export function SettingsCenter() {
               <h3 style={{ margin: 0 }}>{domainConfig.title}</h3>
               <p style={{ margin: '0.35rem 0 0 0', color: 'var(--muted)', fontSize: '0.875rem' }}>{domainConfig.description}</p>
               <p style={{ margin: '0.35rem 0 0 0', color: selectedDomainState?.ok ? '#1b8748' : '#d97706', fontSize: '0.8rem', fontWeight: 600 }}>
-                Trạng thái domain: {selectedDomainState?.ok ? 'Ổn định' : 'Cần rà soát'}
+                Trạng thái miền cấu hình: {selectedDomainState?.ok ? 'Ổn định' : 'Cần rà soát'}
               </p>
               <p style={{ margin: '0.2rem 0 0 0', color: 'var(--muted)', fontSize: '0.78rem' }}>
-                Runtime: {selectedDomainState?.runtimeApplied ? 'Applied' : 'Not applied'} · Loaded at: {formatDateTime(selectedDomainState?.runtimeLoadedAt)}
+                Runtime: {selectedDomainState?.runtimeApplied ? 'Đã áp dụng' : 'Chưa áp dụng'} · Cập nhật lúc: {formatDateTime(selectedDomainState?.runtimeLoadedAt)}
               </p>
             </div>
             <button type="button" className="btn btn-ghost" onClick={() => void reloadAll(selectedDomain)} disabled={busy}>
-              Refresh
+              Làm mới
             </button>
           </div>
 
@@ -1850,6 +2085,24 @@ export function SettingsCenter() {
                       );
                     }
 
+                    if (field.type === 'secret') {
+                      return (
+                        <div className="field" key={field.id}>
+                          <label htmlFor={field.id}>{field.label}</label>
+                          <input
+                            id={field.id}
+                            type="password"
+                            value={String(value)}
+                            placeholder={field.placeholder}
+                            autoComplete="off"
+                            onChange={(event) => updateField(field, event.target.value)}
+                          />
+                          {field.helper && <small>{field.helper}</small>}
+                          {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
+                        </div>
+                      );
+                    }
+
                     if (field.type === 'tags') {
                       const text = toStringArray(value).join(', ');
                       return (
@@ -1933,6 +2186,20 @@ export function SettingsCenter() {
                         ))}
                       </select>
                     </div>
+                    <div className="field">
+                      <label>Manager (managerEmployeeId)</label>
+                      <select
+                        value={orgUnitForm.managerEmployeeId}
+                        onChange={(event) => setOrgUnitForm((current) => ({ ...current, managerEmployeeId: event.target.value }))}
+                      >
+                        <option value="">-- Chưa gán --</option>
+                        {managerEmployeeOptions.map((item) => (
+                          <option key={`create-manager-${item.employeeId}`} value={item.employeeId}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <button type="button" className="btn btn-primary" onClick={handleCreateOrgUnit} disabled={busy}>
                       Tạo node
                     </button>
@@ -1974,6 +2241,43 @@ export function SettingsCenter() {
                       Di chuyển node
                     </button>
                   </div>
+
+                  <div style={{ marginTop: '0.65rem', borderTop: '1px dashed #dbe9df', paddingTop: '0.55rem' }}>
+                    <strong style={{ fontSize: '0.82rem' }}>Gán quản lý cho org unit</strong>
+                    <div className="form-grid" style={{ marginTop: '0.45rem' }}>
+                      <div className="field">
+                        <label>Org unit</label>
+                        <select
+                          value={orgManagerForm.unitId}
+                          onChange={(event) => setOrgManagerForm((current) => ({ ...current, unitId: event.target.value }))}
+                        >
+                          <option value="">-- Chọn node --</option>
+                          {orgUnitOptions.map((item) => (
+                            <option key={`manager-unit-${item.id}`} value={item.id}>
+                              {item.name} ({item.type})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>Manager (managerEmployeeId)</label>
+                        <select
+                          value={orgManagerForm.managerEmployeeId}
+                          onChange={(event) => setOrgManagerForm((current) => ({ ...current, managerEmployeeId: event.target.value }))}
+                        >
+                          <option value="">-- Bỏ gán manager --</option>
+                          {managerEmployeeOptions.map((item) => (
+                            <option key={`manager-option-${item.employeeId}`} value={item.employeeId}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button type="button" className="btn btn-primary" onClick={handleAssignOrgManager} disabled={busy}>
+                        Cập nhật manager
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1994,7 +2298,7 @@ export function SettingsCenter() {
             <section style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem', marginTop: '0.9rem' }}>
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Tạo nhân viên + tài khoản đăng nhập</h4>
               <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
-                Luồng provisioning chính trong Settings Center. Hệ thống trả mật khẩu tạm one-time và bắt buộc đổi lần đầu.
+                Luồng cấp tài khoản chuẩn. Hệ thống trả mật khẩu tạm và bắt buộc đổi ở lần đăng nhập đầu tiên.
               </p>
 
               <div className="form-grid" style={{ marginTop: '0.65rem', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
@@ -2063,7 +2367,30 @@ export function SettingsCenter() {
               </div>
 
               <div style={{ marginTop: '0.75rem', border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}>
-                <strong style={{ fontSize: '0.82rem' }}>Danh sách tài khoản IAM</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: '0.82rem' }}>Danh sách tài khoản IAM</strong>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+                      Đã chọn {selectedIamUserIds.length}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => setSelectedIamUserIds([])}
+                      disabled={selectedIamUserIds.length === 0 || busy}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void handleBulkResetIamPassword()}
+                      disabled={selectedIamUserIds.length === 0 || busy}
+                    >
+                      Bulk reset mật khẩu
+                    </button>
+                  </div>
+                </div>
                 {iamUsers.length === 0 ? (
                   <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginTop: '0.35rem' }}>Chưa có tài khoản.</p>
                 ) : (
@@ -2071,6 +2398,19 @@ export function SettingsCenter() {
                     <table className="data-table">
                       <thead>
                         <tr>
+                          <th>
+                            <input
+                              type="checkbox"
+                              checked={
+                                iamUsers.slice(0, 40).length > 0 &&
+                                iamUsers.slice(0, 40).every((item) => selectedIamUserIds.includes(String(item.id ?? '')))
+                              }
+                              onChange={(event) => {
+                                const visibleIds = iamUsers.slice(0, 40).map((item) => String(item.id ?? '')).filter(Boolean);
+                                setSelectedIamUserIds(event.target.checked ? visibleIds : []);
+                              }}
+                            />
+                          </th>
                           <th>Email</th>
                           <th>Vai trò</th>
                           <th>Nhân viên</th>
@@ -2084,6 +2424,20 @@ export function SettingsCenter() {
                           const employee = toRecord(item.employee);
                           return (
                             <tr key={`iam-${userId}`}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIamUserIds.includes(userId)}
+                                  onChange={(event) =>
+                                    setSelectedIamUserIds((prev) => {
+                                      if (event.target.checked) {
+                                        return prev.includes(userId) ? prev : [...prev, userId];
+                                      }
+                                      return prev.filter((id) => String(id) !== userId);
+                                    })
+                                  }
+                                />
+                              </td>
                               <td>{String(item.email ?? '--')}</td>
                               <td>{String(item.role ?? '--')}</td>
                               <td>{String(employee.fullName ?? '--')}</td>
@@ -2261,7 +2615,7 @@ export function SettingsCenter() {
                 </div>
               ) : (
                 <p style={{ margin: '0.45rem 0 0 0', color: 'var(--muted)' }}>
-                  Search health: {String(getByPath(submissionData, 'lastHealthStatus') ?? 'UNKNOWN')} • Lần kiểm tra gần nhất: {formatDateTime(getByPath(submissionData, 'lastValidatedAt'))}
+                  Trạng thái tìm kiếm: {String(getByPath(submissionData, 'lastHealthStatus') ?? 'UNKNOWN')} • Lần kiểm tra gần nhất: {formatDateTime(getByPath(submissionData, 'lastValidatedAt'))}
                 </p>
               )}
               {testResult && (
@@ -2323,18 +2677,18 @@ export function SettingsCenter() {
 
           <div style={{ marginTop: '0.9rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
             <button type="button" className="btn btn-ghost" onClick={handleValidate} disabled={busy}>
-              Validate
+              Kiểm tra
             </button>
             <button type="button" className="btn btn-primary" onClick={handleSave} disabled={busy}>
-              Save Domain
+              Lưu cấu hình
             </button>
             {(selectedDomain === 'integrations' || selectedDomain === 'search_performance') && (
               <button type="button" className="btn btn-ghost" onClick={handleTestConnection} disabled={busy}>
-                Test Connection
+                Kiểm tra kết nối
               </button>
             )}
             <button type="button" className="btn btn-ghost" onClick={handleCreateSnapshot} disabled={busy}>
-              Snapshot Domain
+              Tạo snapshot
             </button>
           </div>
 
@@ -2350,16 +2704,16 @@ export function SettingsCenter() {
 
         <aside style={{ display: 'grid', gap: '0.9rem' }}>
           <section style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.9rem', background: '#fff' }}>
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Onboarding checklist</h3>
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>Checklist khởi tạo</h3>
             <ul style={{ margin: '0.65rem 0 0 1rem' }}>
-              <li>Org: {center?.checklist.org ? 'Done' : 'Pending'}</li>
-              <li>Security: {center?.checklist.security ? 'Done' : 'Pending'}</li>
-              <li>Finance controls: {center?.checklist.financeControls ? 'Done' : 'Pending'}</li>
-              <li>Integrations: {center?.checklist.integrations ? 'Done' : 'Pending'}</li>
-              <li>Module policies: {center?.checklist.modulePolicies ? 'Done' : 'Pending'}</li>
+              <li>Tổ chức: {center?.checklist.org ? 'Hoàn tất' : 'Chờ xử lý'}</li>
+              <li>Bảo mật: {center?.checklist.security ? 'Hoàn tất' : 'Chờ xử lý'}</li>
+              <li>Tài chính: {center?.checklist.financeControls ? 'Hoàn tất' : 'Chờ xử lý'}</li>
+              <li>Tích hợp: {center?.checklist.integrations ? 'Hoàn tất' : 'Chờ xử lý'}</li>
+              <li>Chính sách phân hệ: {center?.checklist.modulePolicies ? 'Hoàn tất' : 'Chờ xử lý'}</li>
             </ul>
             <p style={{ margin: '0.65rem 0 0 0', color: 'var(--muted)', fontSize: '0.82rem' }}>
-              Progress: {center?.summary.validDomains ?? 0}/{center?.summary.totalDomains ?? DOMAIN_ORDER.length} domain valid.
+              Tiến độ: {center?.summary.validDomains ?? 0}/{center?.summary.totalDomains ?? DOMAIN_ORDER.length} miền cấu hình đạt chuẩn.
             </p>
             <p style={{ margin: '0.45rem 0 0 0', color: 'var(--muted)', fontSize: '0.78rem' }}>
               Vai trò hiện tại trên web: {role}
@@ -2367,7 +2721,7 @@ export function SettingsCenter() {
           </section>
 
           <section style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.9rem', background: '#fff' }}>
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Kết quả Validate</h3>
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>Kết quả kiểm tra</h3>
             <p style={{ marginTop: '0.65rem', fontSize: '0.8rem', color: validationErrors.length === 0 ? '#1b8748' : '#b45309' }}>
               {validationErrors.length === 0 ? 'Không có lỗi validate.' : `${validationErrors.length} lỗi cần xử lý.`}
             </p>
@@ -2391,7 +2745,7 @@ export function SettingsCenter() {
           </section>
 
           <section style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.9rem', background: '#fff' }}>
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Snapshots</h3>
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>Ảnh chụp cấu hình</h3>
             <select
               style={{ marginTop: '0.6rem', width: '100%' }}
               value={selectedSnapshotId}
@@ -2414,7 +2768,7 @@ export function SettingsCenter() {
               onClick={handleRestoreSnapshot}
               disabled={busy || !selectedSnapshotId}
             >
-              Restore Selected
+              Khôi phục snapshot đã chọn
             </button>
           </section>
 

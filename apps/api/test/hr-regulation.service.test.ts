@@ -111,7 +111,7 @@ describe('HrRegulationService', () => {
       appendixCode: HrAppendixCode.PL01,
       employeeId: 'emp_1',
       workDate,
-      payloadJson: { content: 'daily log' }
+      payloadJson: { summary: 'daily log', result: 'done', taskCount: 3 }
     });
 
     const createdDueAt = createdSubmission?.dueAt as Date;
@@ -150,6 +150,7 @@ describe('HrRegulationService', () => {
       employeeId: 'emp_1',
       payload: {
         summary: 'daily log',
+        result: 'done',
         taskCount: 5
       }
     });
@@ -530,5 +531,160 @@ describe('HrRegulationService', () => {
         })
       })
     );
+  });
+
+  it('forces employeeId to current staff when auth is enabled', async () => {
+    const prisma = createPrismaMock();
+    const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
+    const cls = {
+      get: vi.fn().mockReturnValue({
+        role: 'STAFF',
+        employeeId: 'emp_self',
+        userId: 'user_staff'
+      })
+    };
+    const service = new HrRegulationService(prisma as any, config as any, cls as any);
+
+    prisma.client.employee.findFirst.mockResolvedValue({
+      id: 'emp_self',
+      department: 'Sales',
+      position: 'Sales Rep',
+      managerId: 'emp_mgr',
+      status: GenericStatus.ACTIVE
+    });
+    prisma.client.hrAppendixSubmission.create.mockResolvedValue({ id: 'sub_auth_1' });
+    prisma.client.hrAppendixSubmission.findFirst.mockResolvedValue({
+      id: 'sub_auth_1',
+      appendixCode: HrAppendixCode.PL01,
+      employeeId: 'emp_self',
+      status: HrAppendixSubmissionStatus.DRAFT,
+      template: null,
+      evidences: [],
+      revisions: []
+    } as any);
+
+    await service.createAppendixSubmission({
+      appendixCode: HrAppendixCode.PL01,
+      employeeId: 'emp_other',
+      payloadJson: { summary: 'locked by auth context', result: 'done' }
+    });
+
+    expect(prisma.client.hrAppendixSubmission.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          employeeId: 'emp_self'
+        })
+      })
+    );
+  });
+
+  it('allows admin to override employeeId when auth is enabled', async () => {
+    const prisma = createPrismaMock();
+    const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
+    const cls = {
+      get: vi.fn().mockReturnValue({
+        role: 'ADMIN',
+        employeeId: 'emp_admin',
+        userId: 'user_admin'
+      })
+    };
+    const service = new HrRegulationService(prisma as any, config as any, cls as any);
+
+    prisma.client.employee.findFirst.mockImplementation(async ({ where }: any) => {
+      if (where?.id === 'emp_override') {
+        return {
+          id: 'emp_override',
+          department: 'Sales',
+          position: 'Sales Rep',
+          managerId: null,
+          status: GenericStatus.ACTIVE
+        };
+      }
+      return null;
+    });
+    prisma.client.hrAppendixSubmission.create.mockResolvedValue({ id: 'sub_auth_admin_1' });
+    prisma.client.hrAppendixSubmission.findFirst.mockResolvedValue({
+      id: 'sub_auth_admin_1',
+      appendixCode: HrAppendixCode.PL02,
+      employeeId: 'emp_override',
+      status: HrAppendixSubmissionStatus.DRAFT,
+      template: null,
+      evidences: [],
+      revisions: []
+    } as any);
+
+    await service.createAppendixSubmission({
+      appendixCode: HrAppendixCode.PL02,
+      employeeId: 'emp_override',
+      payloadJson: { summary: 'admin override', result: 'done' }
+    });
+
+    expect(prisma.client.hrAppendixSubmission.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          employeeId: 'emp_override'
+        })
+      })
+    );
+  });
+
+  it('applies self scope filter to submission listing for staff users', async () => {
+    const prisma = createPrismaMock();
+    const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
+    const cls = {
+      get: vi.fn().mockReturnValue({
+        role: 'STAFF',
+        employeeId: 'emp_self',
+        userId: 'user_staff'
+      })
+    };
+    const service = new HrRegulationService(prisma as any, config as any, cls as any);
+
+    prisma.client.hrAppendixSubmission.findMany.mockResolvedValue([]);
+
+    const payload = await service.listAppendixSubmissions({ limit: 20 } as any, {});
+
+    expect(payload.viewerScope).toBe('self');
+    expect(prisma.client.hrAppendixSubmission.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          employeeId: { in: ['emp_self'] }
+        })
+      })
+    );
+  });
+
+  it('returns metadata with appendix catalog and access flags', async () => {
+    const prisma = createPrismaMock();
+    const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
+    const cls = {
+      get: vi.fn().mockReturnValue({
+        role: 'STAFF',
+        employeeId: 'emp_self',
+        userId: 'user_staff'
+      })
+    };
+    const runtimeSettings = {
+      getHrPolicyRuntime: vi.fn().mockResolvedValue({
+        appendixCatalog: [
+          {
+            code: 'PL01',
+            name: 'Phụ lục nhật ký',
+            description: 'Mô tả test',
+            fields: ['summary', 'result']
+          }
+        ]
+      })
+    };
+    const service = new HrRegulationService(prisma as any, config as any, cls as any, runtimeSettings as any);
+
+    const metadata = await service.getRegulationMetadata();
+    expect(metadata.viewerScope).toBe('self');
+    expect(metadata.canOverrideEmployeeId).toBe(false);
+    expect(metadata.requesterEmployeeId).toBe('emp_self');
+    expect(metadata.appendices[0]).toMatchObject({
+      code: 'PL01',
+      name: 'Phụ lục nhật ký'
+    });
   });
 });

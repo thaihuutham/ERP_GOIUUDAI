@@ -4,6 +4,13 @@ import { ClsService } from 'nestjs-cls';
 import { Prisma } from '@prisma/client';
 import { AUTH_USER_CONTEXT_KEY, REQUEST_ID_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import {
+  decryptSettingsSecret,
+  encryptSettingsSecret,
+  getSettingsSecretEncryptionEnvKey,
+  isEncryptedSettingsSecret,
+  SettingsSecretCryptoError
+} from '../../common/settings/settings-secret-crypto.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SearchService } from '../search/search.service';
 import {
@@ -29,6 +36,14 @@ const SENSITIVE_SETTINGS_DOMAINS = new Set<SettingsDomain>([
 ]);
 const RUNTIME_TOGGLABLE_MODULES = new Set<string>(RUNTIME_TOGGLABLE_ERP_MODULES);
 const AUDIT_MODULE_KEY = 'audit';
+const ASSISTANT_MODULE_KEY = 'assistant';
+const HR_APPENDIX_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] as const;
+const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as const;
+const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
+
+type HrAppendixFieldType = (typeof HR_APPENDIX_FIELD_TYPES)[number];
+type HrAppendixFieldAggregator = (typeof HR_APPENDIX_AGGREGATORS)[number];
+type HrAppendixFieldStatus = (typeof HR_APPENDIX_FIELD_STATUS)[number];
 
 type AuthContext = {
   role: string;
@@ -41,6 +56,31 @@ type AuthContext = {
 type SettingsEditorPolicy = {
   domainRoleMap: Record<string, SettingsDomain[]>;
   userDomainMap: Record<string, SettingsDomain[]>;
+};
+
+type AuditViewPolicy = {
+  enabled: boolean;
+  groups: {
+    DIRECTOR: { enabled: boolean };
+    BRANCH_MANAGER: { enabled: boolean };
+    DEPARTMENT_MANAGER: { enabled: boolean };
+  };
+  denyIfUngroupedManager: boolean;
+};
+
+type AssistantScopeType = 'company' | 'branch' | 'department' | 'self';
+
+type AssistantAccessPolicy = {
+  enabled: boolean;
+  roleScopeDefaults: {
+    ADMIN: AssistantScopeType;
+    MANAGER: AssistantScopeType;
+    STAFF: AssistantScopeType;
+  };
+  enforcePermissionEngine: boolean;
+  denyIfNoScope: boolean;
+  allowedModules: string[];
+  chatChannelScopeEnforced: boolean;
 };
 
 type UpdateDomainOptions = {
@@ -95,6 +135,23 @@ export class SettingsPolicyService {
     return this.cleanString(process.env[ref]);
   }
 
+  resolveSecretValue(secretValue: unknown, secretRef: unknown, envFallbackKey = '') {
+    const directValue = this.readDecryptedSecret(secretValue, 'integrations.secret', { strict: false });
+    if (directValue) {
+      return directValue;
+    }
+
+    const resolvedByRef = this.resolveSecretByRef(secretRef);
+    if (resolvedByRef) {
+      return resolvedByRef;
+    }
+
+    if (!envFallbackKey) {
+      return '';
+    }
+    return this.cleanString(process.env[envFallbackKey]);
+  }
+
   async getDomain(domainRaw: string) {
     const domain = this.assertDomain(domainRaw);
     const row = await this.prisma.client.setting.findFirst({
@@ -102,18 +159,19 @@ export class SettingsPolicyService {
     });
 
     const normalized = this.normalizeDomain(domain, row?.settingValue);
+    const persistedValue = this.serializeDomainForStorage(domain, normalized, row?.settingValue);
     if (!row) {
       await this.prisma.client.setting.create({
         data: {
           tenant_Id: this.prisma.getTenantId(),
           settingKey: this.domainKey(domain),
-          settingValue: normalized as Prisma.InputJsonValue
+          settingValue: persistedValue as Prisma.InputJsonValue
         }
       });
-    } else if (this.hashJson(row.settingValue) !== this.hashJson(normalized)) {
+    } else if (this.hashJson(row.settingValue) !== this.hashJson(persistedValue)) {
       await this.prisma.client.setting.updateMany({
         where: { id: row.id },
-        data: { settingValue: normalized as Prisma.InputJsonValue }
+        data: { settingValue: persistedValue as Prisma.InputJsonValue }
       });
     }
 
@@ -165,19 +223,21 @@ export class SettingsPolicyService {
       };
     }
 
+    const persistedValue = this.serializeDomainForStorage(domain, nextValue, currentRow?.settingValue);
+
     if (!currentRow) {
       await this.prisma.client.setting.create({
         data: {
           tenant_Id: this.prisma.getTenantId(),
           settingKey: this.domainKey(domain),
-          settingValue: nextValue as Prisma.InputJsonValue
+          settingValue: persistedValue as Prisma.InputJsonValue
         }
       });
     } else {
       await this.prisma.client.setting.updateMany({
         where: { id: currentRow.id },
         data: {
-          settingValue: nextValue as Prisma.InputJsonValue
+          settingValue: persistedValue as Prisma.InputJsonValue
         }
       });
     }
@@ -274,10 +334,10 @@ export class SettingsPolicyService {
     const ai = this.ensureRecord(domainData.ai);
     const zalo = this.ensureRecord(domainData.zalo);
 
-    const bhtotApiKey = this.resolveSecretByRef(bhtot.apiKeyRef);
-    const aiApiKey = this.resolveSecretByRef(ai.apiKeyRef);
-    const zaloToken = this.resolveSecretByRef(zalo.accessTokenRef);
-    const zaloWebhookSecret = this.resolveSecretByRef(zalo.webhookSecretRef);
+    const bhtotApiKey = this.resolveSecretValue(bhtot.apiKey, bhtot.apiKeyRef, 'BHTOT_API_KEY');
+    const aiApiKey = this.resolveSecretValue(ai.apiKey, ai.apiKeyRef, 'AI_OPENAI_COMPAT_API_KEY');
+    const zaloToken = this.resolveSecretValue(zalo.accessToken, zalo.accessTokenRef, 'ZALO_OA_ACCESS_TOKEN');
+    const zaloWebhookSecret = this.resolveSecretValue(zalo.webhookSecret, zalo.webhookSecretRef, 'ZALO_OA_WEBHOOK_SECRET');
 
     const bhtotResult = await this.probeUrl({
       baseUrl: this.cleanString(bhtot.baseUrl),
@@ -332,13 +392,13 @@ export class SettingsPolicyService {
         bhtot: {
           ok: bhtotResult.ok,
           message: bhtotResult.message,
-          isConfigured: Boolean(this.cleanString(bhtot.baseUrl) && this.cleanString(bhtot.apiKeyRef)),
+          isConfigured: Boolean(this.cleanString(bhtot.baseUrl) && (this.cleanString(bhtot.apiKey) || this.cleanString(bhtot.apiKeyRef))),
           hasSecret: Boolean(bhtotApiKey)
         },
         ai: {
           ok: aiResult.ok,
           message: aiResult.message,
-          isConfigured: Boolean(this.cleanString(ai.baseUrl) && this.cleanString(ai.apiKeyRef)),
+          isConfigured: Boolean(this.cleanString(ai.baseUrl) && (this.cleanString(ai.apiKey) || this.cleanString(ai.apiKeyRef))),
           hasSecret: Boolean(aiApiKey)
         },
         zalo: {
@@ -399,7 +459,8 @@ export class SettingsPolicyService {
     const snapshotDomains: Record<string, unknown> = {};
     for (const domain of domains) {
       const current = await this.getDomain(domain);
-      snapshotDomains[domain] = current.data;
+      const normalizedCurrent = this.normalizeDomain(domain, current.data);
+      snapshotDomains[domain] = this.serializeDomainForStorage(domain, normalizedCurrent);
     }
 
     const snapshot: SettingsSnapshot = {
@@ -559,7 +620,7 @@ export class SettingsPolicyService {
     const bhtot = this.ensureRecord(integrations.bhtot);
 
     return {
-      companyName: this.cleanString(org.companyName) || 'Digital Retail ERP Co.',
+      companyName: this.cleanString(org.companyName) || 'GOIUUDAI',
       taxCode: this.cleanString(org.taxCode),
       address: this.cleanString(org.address),
       currency: this.cleanString(locale.currency) || 'VND',
@@ -569,7 +630,7 @@ export class SettingsPolicyService {
       bhtotSync: {
         enabled: this.toBool(bhtot.enabled, false),
         baseUrl: this.cleanString(bhtot.baseUrl),
-        apiKey: '',
+        apiKey: this.cleanString(bhtot.apiKey),
         apiKeyRef: this.cleanString(bhtot.apiKeyRef),
         timeoutMs: this.toInt(bhtot.timeoutMs, 12000, 1000, 120000),
         ordersStateKey: this.cleanString(bhtot.ordersStateKey) || 'bhtot_orders',
@@ -587,10 +648,11 @@ export class SettingsPolicyService {
     const bhtotSync = this.ensureRecord(config.bhtotSync);
 
     let apiKeyRef = this.cleanString(bhtotSync.apiKeyRef);
-    const legacyApiKey = this.cleanString(bhtotSync.apiKey);
+    const legacyApiKey = this.readDecryptedSecret(bhtotSync.apiKey, 'legacy.bhtotSync.apiKey', { strict: false });
     if (!apiKeyRef && legacyApiKey) {
-      apiKeyRef = this.isAllowedSecretRef(legacyApiKey) ? legacyApiKey : 'BHTOT_API_KEY';
+      apiKeyRef = this.isAllowedSecretRef(legacyApiKey) ? legacyApiKey : '';
     }
+    const apiKey = legacyApiKey && !this.isAllowedSecretRef(legacyApiKey) ? legacyApiKey : '';
 
     await this.updateDomain('org_profile', {
       companyName: config.companyName,
@@ -624,6 +686,7 @@ export class SettingsPolicyService {
       bhtot: {
         enabled: bhtotSync.enabled,
         baseUrl: bhtotSync.baseUrl,
+        apiKey,
         apiKeyRef,
         timeoutMs: bhtotSync.timeoutMs,
         ordersStateKey: bhtotSync.ordersStateKey,
@@ -781,11 +844,310 @@ export class SettingsPolicyService {
     };
   }
 
+  private normalizeAuditViewPolicy(value: unknown): AuditViewPolicy {
+    const policy = this.ensureRecord(value);
+    const groups = this.ensureRecord(policy.groups);
+    const director = this.ensureRecord(groups.DIRECTOR);
+    const branchManager = this.ensureRecord(groups.BRANCH_MANAGER);
+    const departmentManager = this.ensureRecord(groups.DEPARTMENT_MANAGER);
+
+    return {
+      enabled: this.toBool(policy.enabled, true),
+      groups: {
+        DIRECTOR: {
+          enabled: this.toBool(director.enabled, true)
+        },
+        BRANCH_MANAGER: {
+          enabled: this.toBool(branchManager.enabled, true)
+        },
+        DEPARTMENT_MANAGER: {
+          enabled: this.toBool(departmentManager.enabled, true)
+        }
+      },
+      denyIfUngroupedManager: this.toBool(policy.denyIfUngroupedManager, true)
+    };
+  }
+
+  private normalizeAssistantAccessPolicy(value: unknown): AssistantAccessPolicy {
+    const policy = this.ensureRecord(value);
+    const roleScopeDefaults = this.ensureRecord(policy.roleScopeDefaults);
+
+    return {
+      enabled: this.toBool(policy.enabled, false),
+      roleScopeDefaults: {
+        ADMIN: this.normalizeAssistantScope(roleScopeDefaults.ADMIN, 'company'),
+        MANAGER: this.normalizeAssistantScope(roleScopeDefaults.MANAGER, 'department'),
+        STAFF: this.normalizeAssistantScope(roleScopeDefaults.STAFF, 'self')
+      },
+      enforcePermissionEngine: this.toBool(policy.enforcePermissionEngine, true),
+      denyIfNoScope: this.toBool(policy.denyIfNoScope, true),
+      allowedModules: this.normalizeEnabledModules(policy.allowedModules, { includeAuditFallback: false }),
+      chatChannelScopeEnforced: this.toBool(policy.chatChannelScopeEnforced, true)
+    };
+  }
+
+  private normalizeAssistantScope(value: unknown, fallback: AssistantScopeType): AssistantScopeType {
+    const normalized = this.cleanString(value).toLowerCase();
+    if (normalized === 'company' || normalized === 'branch' || normalized === 'department' || normalized === 'self') {
+      return normalized;
+    }
+    return fallback;
+  }
+
   private normalizeDomainList(value: unknown): SettingsDomain[] {
     return this.toStringArray(value)
       .map((item) => this.cleanString(item) as SettingsDomain)
       .filter((item): item is SettingsDomain => SETTINGS_DOMAIN_SET.has(item))
       .filter((item, index, list) => list.indexOf(item) === index);
+  }
+
+  private normalizeHrAppendixFieldType(value: unknown, fallback: HrAppendixFieldType = 'text'): HrAppendixFieldType {
+    const normalized = this.cleanString(value).toLowerCase();
+    return (HR_APPENDIX_FIELD_TYPES as readonly string[]).includes(normalized)
+      ? (normalized as HrAppendixFieldType)
+      : fallback;
+  }
+
+  private normalizeHrAppendixAggregator(value: unknown, fallback: HrAppendixFieldAggregator = 'none'): HrAppendixFieldAggregator {
+    const normalized = this.cleanString(value).toLowerCase();
+    return (HR_APPENDIX_AGGREGATORS as readonly string[]).includes(normalized)
+      ? (normalized as HrAppendixFieldAggregator)
+      : fallback;
+  }
+
+  private normalizeHrAppendixFieldStatus(value: unknown, fallback: HrAppendixFieldStatus = 'ACTIVE'): HrAppendixFieldStatus {
+    const normalized = this.cleanString(value).toUpperCase();
+    return (HR_APPENDIX_FIELD_STATUS as readonly string[]).includes(normalized)
+      ? (normalized as HrAppendixFieldStatus)
+      : fallback;
+  }
+
+  private slugifyAppendixFieldKey(value: unknown, fallback = '') {
+    const normalized = this.cleanString(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+    if (normalized) {
+      return normalized;
+    }
+    return this.cleanString(fallback)
+      .replace(/[^a-zA-Z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  private resolveFieldKeyFromCatalog(raw: unknown, fieldCatalog: Record<string, unknown>) {
+    const candidate = this.cleanString(raw);
+    if (!candidate) {
+      return '';
+    }
+    const slug = this.slugifyAppendixFieldKey(candidate);
+    const direct = Object.keys(fieldCatalog).find((key) => this.cleanString(key).toLowerCase() === candidate.toLowerCase());
+    if (direct) {
+      return direct;
+    }
+    for (const [key, rawField] of Object.entries(fieldCatalog)) {
+      const field = this.ensureRecord(rawField);
+      const fieldKey = this.cleanString(field.key || key);
+      const fieldId = this.cleanString(field.id);
+      const label = this.cleanString(field.label);
+      if (!fieldKey && !fieldId && !label) {
+        continue;
+      }
+      const candidates = [
+        fieldKey.toLowerCase(),
+        fieldId.toLowerCase(),
+        this.slugifyAppendixFieldKey(label)
+      ];
+      if (candidates.includes(candidate.toLowerCase()) || candidates.includes(slug)) {
+        return key;
+      }
+    }
+    return '';
+  }
+
+  private normalizeHrAppendixFieldCatalog(value: unknown, defaults?: unknown) {
+    const inputCatalog = this.ensureRecord(value);
+    const defaultCatalog = this.ensureRecord(defaults);
+
+    const rawKeys = Array.from(
+      new Set([...Object.keys(defaultCatalog), ...Object.keys(inputCatalog)])
+    ).map((item) => this.cleanString(item)).filter(Boolean);
+
+    const catalog: Record<string, unknown> = {};
+    for (const rawKey of rawKeys) {
+      const defaultItem = this.ensureRecord(defaultCatalog[rawKey]);
+      const inputItem = this.ensureRecord(inputCatalog[rawKey]);
+      const merged = this.ensureRecord(this.mergeRecords(defaultItem, inputItem));
+      const key = this.slugifyAppendixFieldKey(merged.key ?? rawKey, rawKey);
+      if (!key) {
+        continue;
+      }
+      const type = this.normalizeHrAppendixFieldType(merged.type, this.normalizeHrAppendixFieldType(defaultItem.type, 'text'));
+      const analyticsEnabled = this.toBool(merged.analyticsEnabled, this.toBool(defaultItem.analyticsEnabled, false));
+      const aggregator = this.normalizeHrAppendixAggregator(
+        merged.aggregator,
+        this.normalizeHrAppendixAggregator(defaultItem.aggregator, analyticsEnabled ? 'count' : 'none')
+      );
+      const validation = this.ensureRecord(merged.validation);
+      const normalizedValidation: Record<string, unknown> = {};
+      if (validation.required !== undefined) {
+        normalizedValidation.required = this.toBool(validation.required, false);
+      }
+      if (validation.min !== undefined) {
+        normalizedValidation.min = this.toNumber(validation.min) ?? 0;
+      }
+      if (validation.max !== undefined) {
+        normalizedValidation.max = this.toNumber(validation.max) ?? 0;
+      }
+      if (validation.minLength !== undefined) {
+        normalizedValidation.minLength = this.toInt(validation.minLength, 0, 0, 20_000);
+      }
+      if (validation.maxLength !== undefined) {
+        normalizedValidation.maxLength = this.toInt(validation.maxLength, 0, 0, 20_000);
+      }
+      if (validation.pattern !== undefined) {
+        const pattern = this.cleanString(validation.pattern);
+        if (pattern) {
+          normalizedValidation.pattern = pattern;
+        }
+      }
+
+      catalog[key] = {
+        id: this.cleanString(merged.id) || key,
+        key,
+        label: this.cleanString(merged.label) || key,
+        description: this.cleanString(merged.description),
+        type,
+        options: this.toStringArray(merged.options),
+        validation: normalizedValidation,
+        analyticsEnabled,
+        aggregator: analyticsEnabled ? aggregator : 'none',
+        status: this.normalizeHrAppendixFieldStatus(merged.status, this.normalizeHrAppendixFieldStatus(defaultItem.status, 'ACTIVE')),
+        version: this.toInt(merged.version, this.toInt(defaultItem.version, 1, 1, 1000), 1, 1000)
+      };
+    }
+
+    return catalog;
+  }
+
+  private normalizeHrAppendixTemplateFields(value: unknown, fieldCatalog: Record<string, unknown>, code: string) {
+    const rows = Array.isArray(value) ? value : [];
+    const fields: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+
+    for (const row of rows) {
+      let fieldKey = '';
+      const raw = this.ensureRecord(row);
+      if (typeof row === 'string') {
+        fieldKey = this.resolveFieldKeyFromCatalog(row, fieldCatalog) || this.slugifyAppendixFieldKey(row);
+      } else {
+        fieldKey = this.resolveFieldKeyFromCatalog(raw.fieldKey ?? raw.key ?? raw.fieldId, fieldCatalog);
+        if (!fieldKey) {
+          fieldKey = this.slugifyAppendixFieldKey(raw.fieldKey ?? raw.key ?? raw.fieldId);
+        }
+      }
+
+      if (!fieldKey) {
+        continue;
+      }
+      if (!fieldCatalog[fieldKey] && !fieldKey.startsWith(`${code.toLowerCase()}_`)) {
+        continue;
+      }
+      if (seen.has(fieldKey)) {
+        continue;
+      }
+      seen.add(fieldKey);
+
+      fields.push({
+        fieldKey,
+        required: this.toBool(raw.required, false),
+        placeholder: this.cleanString(raw.placeholder),
+        defaultValue: raw.defaultValue ?? null,
+        helpText: this.cleanString(raw.helpText),
+        visibility: this.cleanString(raw.visibility).toLowerCase() === 'hidden' ? 'hidden' : 'visible',
+        kpiAlias: this.cleanString(raw.kpiAlias)
+      });
+    }
+
+    return fields;
+  }
+
+  private normalizeHrAppendixTemplates(value: unknown, defaults: unknown, fieldCatalog: Record<string, unknown>) {
+    const inputTemplates = this.ensureRecord(value);
+    const defaultTemplates = this.ensureRecord(defaults);
+    const codes = Array.from(
+      new Set([...Object.keys(defaultTemplates), ...Object.keys(inputTemplates)].map((item) => this.cleanString(item).toUpperCase()))
+    ).filter((item) => /^PL\d{2}$/.test(item));
+
+    const templates: Record<string, unknown> = {};
+    for (const code of codes) {
+      const defaultItem = this.ensureRecord(defaultTemplates[code]);
+      const inputItem = this.ensureRecord(inputTemplates[code]);
+      const merged = this.ensureRecord(this.mergeRecords(defaultItem, inputItem));
+      const normalizedFields = this.normalizeHrAppendixTemplateFields(
+        merged.fields ?? merged.fieldRefs,
+        fieldCatalog,
+        code
+      );
+      templates[code] = {
+        name: this.cleanString(merged.name) || code,
+        description: this.cleanString(merged.description),
+        fields: normalizedFields
+      };
+    }
+    return templates;
+  }
+
+  private buildLegacyHrAppendixCatalog(
+    templates: Record<string, unknown>,
+    fieldCatalog: Record<string, unknown>,
+    defaults?: unknown
+  ) {
+    const defaultCatalog = this.ensureRecord(defaults);
+    const output: Record<string, unknown> = {};
+    for (const [code, rawTemplate] of Object.entries(templates)) {
+      const template = this.ensureRecord(rawTemplate);
+      const fields = Array.isArray(template.fields) ? template.fields : [];
+      const fieldKeys = fields
+        .map((item) => this.ensureRecord(item))
+        .map((item) => this.cleanString(item.fieldKey))
+        .filter(Boolean)
+        .filter((item, index, list) => list.indexOf(item) === index);
+      const fallback = this.ensureRecord(defaultCatalog[code]);
+      output[code] = {
+        name: this.cleanString(template.name) || this.cleanString(fallback.name) || code,
+        description: this.cleanString(template.description) || this.cleanString(fallback.description),
+        fields: fieldKeys.length > 0 ? fieldKeys : this.toStringArray(fallback.fields)
+      };
+    }
+    return output;
+  }
+
+  private normalizeHrAppendixCatalog(value: unknown, defaults?: unknown) {
+    const inputCatalog = this.ensureRecord(value);
+    const defaultCatalog = this.ensureRecord(defaults);
+    const codes = Array.from(
+      new Set([...Object.keys(defaultCatalog), ...Object.keys(inputCatalog)].map((item) => this.cleanString(item).toUpperCase()))
+    ).filter((item) => item.startsWith('PL'));
+
+    const catalog: Record<string, unknown> = {};
+    for (const code of codes) {
+      const merged = this.mergeRecords(
+        this.ensureRecord(defaultCatalog[code]),
+        this.ensureRecord(inputCatalog[code])
+      );
+      const item = this.ensureRecord(merged);
+      catalog[code] = {
+        name: this.cleanString(item.name) || code,
+        description: this.cleanString(item.description),
+        fields: this.toStringArray(item.fields)
+      };
+    }
+
+    return catalog;
   }
 
   private async probeUrl(args: { baseUrl: string; timeoutMs: number; headers?: Record<string, string> }) {
@@ -865,7 +1227,7 @@ export class SettingsPolicyService {
       const orgProfile = this.ensureRecord(merged);
       return {
         ...orgProfile,
-        enabledModules: this.normalizeEnabledModules(orgProfile.enabledModules)
+        enabledModules: this.normalizeEnabledModules(orgProfile.enabledModules, { includeAuditFallback: true })
       };
     }
 
@@ -876,7 +1238,6 @@ export class SettingsPolicyService {
       const zalo = this.ensureRecord(integrations.zalo);
 
       const {
-        apiKey: _bhtotApiKey,
         apiSecret: _bhtotApiSecret,
         token: _bhtotToken,
         hasSecret: _bhtotHasSecret,
@@ -884,8 +1245,6 @@ export class SettingsPolicyService {
         ...bhtotSafe
       } = bhtot;
       const {
-        apiKey: _aiApiKey,
-        accessToken: _aiAccessToken,
         token: _aiToken,
         hasSecret: _aiHasSecret,
         isConfigured: _aiIsConfigured,
@@ -902,16 +1261,20 @@ export class SettingsPolicyService {
       } = zalo;
 
       const normalizedApiKeyRef = this.cleanString(bhtot.apiKeyRef);
+      const normalizedApiKey = this.readDecryptedSecret(bhtot.apiKey, 'integrations.bhtot.apiKey', { strict: false });
       const normalizedAiKeyRef = this.cleanString(ai.apiKeyRef);
+      const normalizedAiApiKey = this.readDecryptedSecret(ai.apiKey, 'integrations.ai.apiKey', { strict: false });
       const normalizedZaloTokenRef = this.cleanString(zalo.accessTokenRef);
+      const normalizedZaloAccessToken = this.readDecryptedSecret(zalo.accessToken, 'integrations.zalo.accessToken', { strict: false });
       const normalizedZaloWebhookSecretRef = this.cleanString(zalo.webhookSecretRef);
+      const normalizedZaloWebhookSecret = this.readDecryptedSecret(zalo.webhookSecret, 'integrations.zalo.webhookSecret', { strict: false });
 
       return {
         ...integrations,
         bhtot: {
           ...bhtotSafe,
           enabled: this.toBool(bhtot.enabled, false),
-          apiKey: '',
+          apiKey: normalizedApiKey,
           apiKeyRef: normalizedApiKeyRef,
           timeoutMs: this.toInt(bhtot.timeoutMs, 12000, 1000, 120000),
           lastSyncAt: bhtot.lastSyncAt ? String(bhtot.lastSyncAt) : null,
@@ -920,7 +1283,7 @@ export class SettingsPolicyService {
         ai: {
           ...aiSafe,
           enabled: this.toBool(ai.enabled, false),
-          apiKey: '',
+          apiKey: normalizedAiApiKey,
           apiKeyRef: normalizedAiKeyRef,
           timeoutMs: this.toInt(ai.timeoutMs, 45000, 1000, 120000),
           lastValidatedAt: ai.lastValidatedAt ? String(ai.lastValidatedAt) : null
@@ -928,8 +1291,9 @@ export class SettingsPolicyService {
         zalo: {
           ...zaloSafe,
           enabled: this.toBool(zalo.enabled, false),
-          accessToken: '',
+          accessToken: normalizedZaloAccessToken,
           accessTokenRef: normalizedZaloTokenRef,
+          webhookSecret: normalizedZaloWebhookSecret,
           webhookSecretRef: normalizedZaloWebhookSecretRef,
           outboundTimeoutMs: this.toInt(zalo.outboundTimeoutMs, 20000, 2000, 180000),
           lastValidatedAt: zalo.lastValidatedAt ? String(zalo.lastValidatedAt) : null
@@ -950,11 +1314,52 @@ export class SettingsPolicyService {
       };
     }
 
+    if (domain === 'hr_policies') {
+      const hr = this.ensureRecord(merged);
+      const leave = this.ensureRecord(hr.leave);
+      const payroll = this.ensureRecord(hr.payroll);
+      const approverChain = this.ensureRecord(hr.approverChain);
+      const defaultHr = this.ensureRecord(DEFAULT_SETTINGS_DOMAINS.hr_policies);
+      const appendixFieldCatalog = this.normalizeHrAppendixFieldCatalog(
+        hr.appendixFieldCatalog,
+        defaultHr.appendixFieldCatalog
+      );
+      const appendixTemplates = this.normalizeHrAppendixTemplates(
+        hr.appendixTemplates ?? hr.appendixCatalog,
+        defaultHr.appendixTemplates ?? defaultHr.appendixCatalog,
+        appendixFieldCatalog
+      );
+      const appendixCatalog = this.buildLegacyHrAppendixCatalog(
+        appendixTemplates,
+        appendixFieldCatalog,
+        defaultHr.appendixCatalog
+      );
+      return {
+        ...hr,
+        leave: {
+          annualDefaultDays: this.toInt(leave.annualDefaultDays, 12, 0, 366),
+          maxCarryOverDays: this.toInt(leave.maxCarryOverDays, 5, 0, 120)
+        },
+        payroll: {
+          cycle: this.cleanString(payroll.cycle) || 'monthly',
+          cutoffDay: this.toInt(payroll.cutoffDay, 25, 1, 31)
+        },
+        approverChain: {
+          leaveApproverRole: this.cleanString(approverChain.leaveApproverRole).toUpperCase() || 'MANAGER',
+          payrollApproverRole: this.cleanString(approverChain.payrollApproverRole).toUpperCase() || 'ADMIN'
+        },
+        appendixFieldCatalog,
+        appendixTemplates,
+        appendixCatalog
+      };
+    }
+
     if (domain === 'access_security') {
       const security = this.ensureRecord(merged);
       const passwordPolicy = this.ensureRecord(security.passwordPolicy);
       const loginPolicy = this.ensureRecord(security.loginPolicy);
       const permissionPolicy = this.ensureRecord(security.permissionPolicy);
+      const auditViewPolicy = this.normalizeAuditViewPolicy(security.auditViewPolicy);
       const conflictPolicy = this.cleanString(permissionPolicy.conflictPolicy).toUpperCase() === 'ALLOW_OVERRIDES'
         ? 'ALLOW_OVERRIDES'
         : 'DENY_OVERRIDES';
@@ -982,6 +1387,8 @@ export class SettingsPolicyService {
           lockoutMinutes: this.toInt(loginPolicy.lockoutMinutes, 15, 1, 240),
           mfaRequired: this.toBool(loginPolicy.mfaRequired, false)
         },
+        auditViewPolicy,
+        assistantAccessPolicy: this.normalizeAssistantAccessPolicy(security.assistantAccessPolicy),
         settingsEditorPolicy: this.normalizeSettingsEditorPolicy(security.settingsEditorPolicy)
       };
     }
@@ -1008,6 +1415,54 @@ export class SettingsPolicyService {
     }
 
     return merged;
+  }
+
+  private serializeDomainForStorage(domain: SettingsDomain, payload: Record<string, unknown>, existingPayload?: unknown) {
+    if (domain !== 'integrations') {
+      return payload;
+    }
+
+    const integrations = this.ensureRecord(payload);
+    const existing = this.ensureRecord(existingPayload);
+    const bhtot = this.ensureRecord(integrations.bhtot);
+    const existingBhtot = this.ensureRecord(existing.bhtot);
+    const ai = this.ensureRecord(integrations.ai);
+    const existingAi = this.ensureRecord(existing.ai);
+    const zalo = this.ensureRecord(integrations.zalo);
+    const existingZalo = this.ensureRecord(existing.zalo);
+
+    return {
+      ...integrations,
+      bhtot: {
+        ...bhtot,
+        apiKey: this.encryptSecretForStorage(
+          bhtot.apiKey,
+          'integrations.bhtot.apiKey',
+          existingBhtot.apiKey
+        )
+      },
+      ai: {
+        ...ai,
+        apiKey: this.encryptSecretForStorage(
+          ai.apiKey,
+          'integrations.ai.apiKey',
+          existingAi.apiKey
+        )
+      },
+      zalo: {
+        ...zalo,
+        accessToken: this.encryptSecretForStorage(
+          zalo.accessToken,
+          'integrations.zalo.accessToken',
+          existingZalo.accessToken
+        ),
+        webhookSecret: this.encryptSecretForStorage(
+          zalo.webhookSecret,
+          'integrations.zalo.webhookSecret',
+          existingZalo.webhookSecret
+        )
+      }
+    };
   }
 
   private validateDomainPayload(domain: SettingsDomain, payload: unknown): DomainValidationResult {
@@ -1047,6 +1502,38 @@ export class SettingsPolicyService {
       const password = this.ensureRecord(value.passwordPolicy);
       if (this.toInt(password.minLength, 8, 6, 64) < 6) {
         errors.push('passwordPolicy.minLength phải >= 6.');
+      }
+      const auditViewPolicy = this.ensureRecord(value.auditViewPolicy);
+      const groups = this.ensureRecord(auditViewPolicy.groups);
+      for (const groupKey of ['DIRECTOR', 'BRANCH_MANAGER', 'DEPARTMENT_MANAGER']) {
+        const group = this.ensureRecord(groups[groupKey]);
+        if (group.enabled === undefined) {
+          errors.push(`auditViewPolicy.groups.${groupKey}.enabled là bắt buộc.`);
+        }
+      }
+      if (auditViewPolicy.denyIfUngroupedManager === undefined) {
+        errors.push('auditViewPolicy.denyIfUngroupedManager là bắt buộc.');
+      }
+
+      const assistantAccessPolicy = this.ensureRecord(value.assistantAccessPolicy);
+      const roleScopeDefaults = this.ensureRecord(assistantAccessPolicy.roleScopeDefaults);
+      for (const role of ['ADMIN', 'MANAGER', 'STAFF']) {
+        const scope = this.cleanString(roleScopeDefaults[role]).toLowerCase();
+        if (!scope || !['company', 'branch', 'department', 'self'].includes(scope)) {
+          errors.push(`assistantAccessPolicy.roleScopeDefaults.${role} phải là company|branch|department|self.`);
+        }
+      }
+
+      const assistantModules = this.toStringArray(assistantAccessPolicy.allowedModules);
+      const invalidModules = assistantModules
+        .map((item) => item.toLowerCase())
+        .filter((item) => !RUNTIME_TOGGLABLE_MODULES.has(item));
+      if (invalidModules.length > 0) {
+        errors.push(`assistantAccessPolicy.allowedModules có module không hợp lệ: ${invalidModules.join(', ')}.`);
+      }
+
+      if (this.toBool(assistantAccessPolicy.enabled, false) && assistantModules.length === 0) {
+        warnings.push('assistantAccessPolicy.enabled=true nhưng allowedModules đang rỗng.');
       }
 
       const policy = this.ensureRecord(value.settingsEditorPolicy);
@@ -1103,24 +1590,77 @@ export class SettingsPolicyService {
       }
     }
 
+    if (domain === 'hr_policies') {
+      const appendixFieldCatalog = this.ensureRecord(value.appendixFieldCatalog);
+      const fieldKeys = Object.keys(appendixFieldCatalog);
+      if (fieldKeys.length === 0) {
+        warnings.push('hr_policies.appendixFieldCatalog đang rỗng.');
+      }
+
+      for (const fieldKeyRaw of fieldKeys) {
+        const fieldKey = this.cleanString(fieldKeyRaw);
+        const field = this.ensureRecord(appendixFieldCatalog[fieldKeyRaw]);
+        if (!fieldKey) {
+          errors.push('appendixFieldCatalog chứa key rỗng.');
+          continue;
+        }
+        if (!this.cleanString(field.label)) {
+          errors.push(`appendixFieldCatalog.${fieldKeyRaw}.label là bắt buộc.`);
+        }
+        const type = this.cleanString(field.type).toLowerCase();
+        if (type && !(HR_APPENDIX_FIELD_TYPES as readonly string[]).includes(type)) {
+          errors.push(`appendixFieldCatalog.${fieldKeyRaw}.type không hợp lệ.`);
+        }
+        const aggregator = this.cleanString(field.aggregator).toLowerCase();
+        if (aggregator && !(HR_APPENDIX_AGGREGATORS as readonly string[]).includes(aggregator)) {
+          errors.push(`appendixFieldCatalog.${fieldKeyRaw}.aggregator không hợp lệ.`);
+        }
+      }
+
+      const appendixTemplates = this.ensureRecord(value.appendixTemplates);
+      const appendixCatalog = this.ensureRecord(value.appendixCatalog);
+      const templateSource = Object.keys(appendixTemplates).length > 0 ? appendixTemplates : appendixCatalog;
+      const codes = Object.keys(templateSource);
+      if (codes.length === 0) {
+        warnings.push('hr_policies.appendixTemplates đang rỗng.');
+      }
+
+      for (const codeRaw of codes) {
+        const code = this.cleanString(codeRaw).toUpperCase();
+        const item = this.ensureRecord(templateSource[codeRaw]);
+        if (!/^PL\d{2}$/.test(code)) {
+          errors.push(`appendixTemplates.${codeRaw} không đúng định dạng mã phụ lục (PLxx).`);
+        }
+        if (!this.cleanString(item.name)) {
+          errors.push(`appendixTemplates.${codeRaw}.name là bắt buộc.`);
+        }
+
+        const fieldRows = Array.isArray(item.fields) ? item.fields : [];
+        if (fieldRows.length === 0) {
+          warnings.push(`appendixTemplates.${codeRaw}.fields đang rỗng.`);
+        }
+        for (let index = 0; index < fieldRows.length; index += 1) {
+          const row = fieldRows[index];
+          const fieldKey = typeof row === 'string'
+            ? this.cleanString(row)
+            : this.cleanString(this.ensureRecord(row).fieldKey ?? this.ensureRecord(row).key);
+          if (!fieldKey) {
+            errors.push(`appendixTemplates.${codeRaw}.fields.${index}.fieldKey là bắt buộc.`);
+            continue;
+          }
+          const existsInCatalog = Boolean(appendixFieldCatalog[fieldKey]);
+          if (!existsInCatalog && !fieldKey.toLowerCase().startsWith(`${code.toLowerCase()}_`)) {
+            errors.push(`appendixTemplates.${codeRaw}.fields.${index}.fieldKey (${fieldKey}) không tồn tại trong appendixFieldCatalog hoặc không đúng namespace ${code}_*.`);
+          }
+        }
+      }
+    }
+
     if (domain === 'integrations') {
       const integrations = this.ensureRecord(value);
       const bhtot = this.ensureRecord(integrations.bhtot);
       const ai = this.ensureRecord(integrations.ai);
       const zalo = this.ensureRecord(integrations.zalo);
-
-      if (this.cleanString(bhtot.apiKey)) {
-        errors.push('Không được gửi integrations.bhtot.apiKey. Dùng apiKeyRef + secret store.');
-      }
-      if (this.cleanString(ai.apiKey)) {
-        errors.push('Không được gửi integrations.ai.apiKey. Dùng apiKeyRef + secret store.');
-      }
-      if (this.cleanString(zalo.accessToken)) {
-        errors.push('Không được gửi integrations.zalo.accessToken. Dùng accessTokenRef + secret store.');
-      }
-      if (this.cleanString(zalo.webhookSecret)) {
-        errors.push('Không được gửi integrations.zalo.webhookSecret. Dùng webhookSecretRef + secret store.');
-      }
 
       for (const [field, ref] of [
         ['integrations.bhtot.apiKeyRef', this.cleanString(bhtot.apiKeyRef)],
@@ -1136,20 +1676,20 @@ export class SettingsPolicyService {
       if (this.toBool(bhtot.enabled, false) && !this.cleanString(bhtot.baseUrl)) {
         errors.push('BHTOT enabled nhưng thiếu baseUrl.');
       }
-      if (this.toBool(bhtot.enabled, false) && !this.cleanString(bhtot.apiKeyRef)) {
-        warnings.push('BHTOT enabled nhưng chưa có apiKeyRef.');
+      if (this.toBool(bhtot.enabled, false) && !this.cleanString(bhtot.apiKey) && !this.cleanString(bhtot.apiKeyRef)) {
+        warnings.push('BHTOT enabled nhưng chưa có apiKey hoặc apiKeyRef.');
       }
       if (this.toBool(ai.enabled, false) && !this.cleanString(ai.baseUrl)) {
         errors.push('AI enabled nhưng thiếu baseUrl.');
       }
-      if (this.toBool(ai.enabled, false) && !this.cleanString(ai.apiKeyRef)) {
-        warnings.push('AI enabled nhưng chưa có apiKeyRef.');
+      if (this.toBool(ai.enabled, false) && !this.cleanString(ai.apiKey) && !this.cleanString(ai.apiKeyRef)) {
+        warnings.push('AI enabled nhưng chưa có apiKey hoặc apiKeyRef.');
       }
-      if (this.toBool(zalo.enabled, false) && !this.cleanString(zalo.accessTokenRef)) {
-        warnings.push('Zalo enabled nhưng chưa có accessTokenRef.');
+      if (this.toBool(zalo.enabled, false) && !this.cleanString(zalo.accessToken) && !this.cleanString(zalo.accessTokenRef)) {
+        warnings.push('Zalo enabled nhưng chưa có accessToken hoặc accessTokenRef.');
       }
-      if (this.toBool(zalo.enabled, false) && !this.cleanString(zalo.webhookSecretRef)) {
-        warnings.push('Zalo enabled nhưng chưa có webhookSecretRef.');
+      if (this.toBool(zalo.enabled, false) && !this.cleanString(zalo.webhookSecret) && !this.cleanString(zalo.webhookSecretRef)) {
+        warnings.push('Zalo enabled nhưng chưa có webhookSecret hoặc webhookSecretRef.');
       }
     }
 
@@ -1197,32 +1737,75 @@ export class SettingsPolicyService {
     const bhtot = this.ensureRecord(integrations.bhtot);
     const ai = this.ensureRecord(integrations.ai);
     const zalo = this.ensureRecord(integrations.zalo);
+    const bhtotSecret = this.resolveSecretValue(bhtot.apiKey, bhtot.apiKeyRef, 'BHTOT_API_KEY');
+    const aiSecret = this.resolveSecretValue(ai.apiKey, ai.apiKeyRef, 'AI_OPENAI_COMPAT_API_KEY');
+    const zaloToken = this.resolveSecretValue(zalo.accessToken, zalo.accessTokenRef, 'ZALO_OA_ACCESS_TOKEN');
+    const zaloWebhookSecret = this.resolveSecretValue(zalo.webhookSecret, zalo.webhookSecretRef, 'ZALO_OA_WEBHOOK_SECRET');
 
     return {
       ...integrations,
       bhtot: {
         ...bhtot,
-        apiKey: '',
-        isConfigured: Boolean(this.cleanString(bhtot.baseUrl) && this.cleanString(bhtot.apiKeyRef)),
-        hasSecret: Boolean(this.resolveSecretByRef(bhtot.apiKeyRef))
+        isConfigured: Boolean(this.cleanString(bhtot.baseUrl) && (this.cleanString(bhtot.apiKey) || this.cleanString(bhtot.apiKeyRef))),
+        hasSecret: Boolean(bhtotSecret)
       },
       ai: {
         ...ai,
-        apiKey: '',
-        isConfigured: Boolean(this.cleanString(ai.baseUrl) && this.cleanString(ai.apiKeyRef)),
-        hasSecret: Boolean(this.resolveSecretByRef(ai.apiKeyRef))
+        isConfigured: Boolean(this.cleanString(ai.baseUrl) && (this.cleanString(ai.apiKey) || this.cleanString(ai.apiKeyRef))),
+        hasSecret: Boolean(aiSecret)
       },
       zalo: {
         ...zalo,
-        accessToken: '',
         isConfigured: Boolean(this.cleanString(zalo.outboundUrl) || this.cleanString(zalo.apiBaseUrl)),
-        hasSecret: Boolean(this.resolveSecretByRef(zalo.accessTokenRef) || this.resolveSecretByRef(zalo.webhookSecretRef))
+        hasSecret: Boolean(zaloToken || zaloWebhookSecret)
       }
     };
   }
 
   private isAllowedSecretRef(ref: string) {
     return (SETTINGS_SECRET_ALLOWLIST as readonly string[]).includes(ref);
+  }
+
+  private readDecryptedSecret(secretValue: unknown, fieldPath: string, options: { strict: boolean }) {
+    const raw = this.cleanString(secretValue);
+    if (!raw) {
+      return '';
+    }
+    try {
+      return this.cleanString(decryptSettingsSecret(raw));
+    } catch (error) {
+      if (options.strict) {
+        const message = error instanceof SettingsSecretCryptoError
+          ? error.message
+          : 'Không thể giải mã secret.';
+        throw new BadRequestException(`${fieldPath}: ${message}`);
+      }
+      return '';
+    }
+  }
+
+  private encryptSecretForStorage(secretValue: unknown, fieldPath: string, existingCipher?: unknown) {
+    const plain = this.cleanString(secretValue);
+    if (!plain) {
+      return '';
+    }
+    const existingRaw = this.cleanString(existingCipher);
+    if (existingRaw && isEncryptedSettingsSecret(existingRaw)) {
+      const existingPlain = this.readDecryptedSecret(existingRaw, fieldPath, { strict: false });
+      if (existingPlain && existingPlain === plain) {
+        return existingRaw;
+      }
+    }
+    try {
+      return this.cleanString(encryptSettingsSecret(plain));
+    } catch (error) {
+      const baseMessage = error instanceof SettingsSecretCryptoError
+        ? error.message
+        : 'Không thể mã hóa secret.';
+      throw new BadRequestException(
+        `${fieldPath}: ${baseMessage} (env: ${getSettingsSecretEncryptionEnvKey()})`
+      );
+    }
   }
 
   private resolveActor(explicitActor?: string) {
@@ -1342,6 +1925,11 @@ export class SettingsPolicyService {
     return Math.min(Math.max(Math.trunc(parsed), min), max);
   }
 
+  private toNumber(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   private toBool(value: unknown, fallback: boolean) {
     return typeof value === 'boolean' ? value : fallback;
   }
@@ -1353,7 +1941,12 @@ export class SettingsPolicyService {
     return value.map((item) => this.cleanString(item)).filter(Boolean);
   }
 
-  private normalizeEnabledModules(value: unknown) {
+  private normalizeEnabledModules(
+    value: unknown,
+    options: {
+      includeAuditFallback?: boolean;
+    } = {}
+  ) {
     const normalized: string[] = [];
 
     for (const moduleKey of this.toStringArray(value)) {
@@ -1366,9 +1959,12 @@ export class SettingsPolicyService {
       }
     }
 
-    // Backward compatibility: keep newly introduced audit module visible for legacy org_profile rows.
-    if (RUNTIME_TOGGLABLE_MODULES.has(AUDIT_MODULE_KEY) && !normalized.includes(AUDIT_MODULE_KEY)) {
+    // Backward compatibility: keep newly introduced audit/assistant module visible for legacy org_profile rows.
+    if (options.includeAuditFallback && RUNTIME_TOGGLABLE_MODULES.has(AUDIT_MODULE_KEY) && !normalized.includes(AUDIT_MODULE_KEY)) {
       normalized.push(AUDIT_MODULE_KEY);
+    }
+    if (options.includeAuditFallback && RUNTIME_TOGGLABLE_MODULES.has(ASSISTANT_MODULE_KEY) && !normalized.includes(ASSISTANT_MODULE_KEY)) {
+      normalized.push(ASSISTANT_MODULE_KEY);
     }
 
     return normalized;

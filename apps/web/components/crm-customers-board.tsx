@@ -19,8 +19,9 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
-import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
+import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -146,6 +147,7 @@ export function CrmCustomersBoard() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<GenericStatus>('ALL');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [isDetailEditing, setIsDetailEditing] = useState(false);
   const [isSavingDetail, setIsSavingDetail] = useState(false);
   const [isArchivingCustomer, setIsArchivingCustomer] = useState(false);
@@ -379,6 +381,109 @@ export function CrmCustomersBoard() {
     }
   ];
 
+  const runCustomerBulkAction = async (
+    actionLabel: string,
+    execute: (customerId: string) => Promise<void>
+  ): Promise<BulkExecutionResult> => {
+    const selectedIds = selectedRowIds.map((id) => String(id)).filter(Boolean);
+    if (selectedIds.length === 0) {
+      return {
+        total: 0,
+        successCount: 0,
+        failedCount: 0,
+        failedIds: [],
+        failures: [],
+        actionLabel,
+        message: `${actionLabel}: không có bản ghi được chọn.`
+      };
+    }
+
+    const result = await runBulkOperation({
+      ids: selectedIds,
+      continueOnError: true,
+      chunkSize: 10,
+      execute: async (customerId) => {
+        await execute(String(customerId));
+      }
+    });
+
+    const normalized: BulkExecutionResult = {
+      ...result,
+      actionLabel,
+      message: formatBulkSummary(
+        {
+          ...result,
+          actionLabel
+        },
+        actionLabel
+      )
+    };
+
+    if (normalized.successCount > 0) {
+      await loadCustomers();
+    }
+    setResultMessage(normalized.message ?? null);
+    if (normalized.failedCount > 0) {
+      setErrorMessage(`Một số khách hàng lỗi khi chạy "${actionLabel}".`);
+    } else {
+      setErrorMessage(null);
+    }
+    return normalized;
+  };
+
+  const bulkActions: StandardTableBulkAction<Customer>[] = canMutate
+    ? [
+        {
+          key: 'bulk-status-active',
+          label: 'Set ACTIVE',
+          tone: 'primary',
+          execute: async () =>
+            runCustomerBulkAction('Set trạng thái ACTIVE', async (customerId) => {
+              await apiRequest(`/crm/customers/${customerId}`, {
+                method: 'PATCH',
+                body: { status: 'ACTIVE' }
+              });
+            })
+        },
+        {
+          key: 'bulk-status-inactive',
+          label: 'Set INACTIVE',
+          tone: 'ghost',
+          execute: async () =>
+            runCustomerBulkAction('Set trạng thái INACTIVE', async (customerId) => {
+              await apiRequest(`/crm/customers/${customerId}`, {
+                method: 'PATCH',
+                body: { status: 'INACTIVE' }
+              });
+            })
+        },
+        {
+          key: 'bulk-status-draft',
+          label: 'Set DRAFT',
+          tone: 'ghost',
+          execute: async () =>
+            runCustomerBulkAction('Set trạng thái DRAFT', async (customerId) => {
+              await apiRequest(`/crm/customers/${customerId}`, {
+                method: 'PATCH',
+                body: { status: 'DRAFT' }
+              });
+            })
+        },
+        {
+          key: 'bulk-archive-customers',
+          label: 'Archive',
+          tone: 'danger',
+          confirmMessage: (rows) => `Lưu trữ ${rows.length} khách hàng đã chọn?`,
+          execute: async () =>
+            runCustomerBulkAction('Lưu trữ khách hàng', async (customerId) => {
+              await apiRequest(`/crm/customers/${customerId}`, {
+                method: 'DELETE'
+              });
+            })
+        }
+      ]
+    : [];
+
   if (!canView) {
     return <div style={{ padding: '2rem', textAlign: 'center' }}>Bạn không có quyền truy cập module này.</div>;
   }
@@ -440,6 +545,11 @@ export function CrmCustomersBoard() {
         onRowClick={(c) => setSelectedCustomer(c)}
         editableKeys={canMutate ? ['fullName', 'phone', 'email', 'customerStage', 'status'] : []}
         onSaveRow={handleSaveCustomer}
+        enableRowSelection
+        selectedRowIds={selectedRowIds}
+        onSelectedRowIdsChange={setSelectedRowIds}
+        bulkActions={bulkActions}
+        showDefaultBulkUtilities
       />
 
       {/* Detail Side Panel */}

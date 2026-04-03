@@ -5,6 +5,8 @@ import { defineConfig, devices } from '@playwright/test';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../../..');
+const testPort = Number(process.env.PLAYWRIGHT_PORT ?? process.env.PORT ?? 3100);
+const testBaseUrl = `http://127.0.0.1:${testPort}`;
 
 export default defineConfig({
   testDir: './tests',
@@ -17,15 +19,15 @@ export default defineConfig({
   },
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:3100',
+    baseURL: testBaseUrl,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'
   },
   webServer: {
     cwd: repoRoot,
-    command: 'NEXT_DEV_INSTANCE=e2e PORT=3100 npm run dev --workspace @erp/web',
-    url: 'http://127.0.0.1:3100',
+    command: `NEXT_DEV_INSTANCE=e2e PORT=${testPort} npm run dev --workspace @erp/web`,
+    url: testBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000
   },

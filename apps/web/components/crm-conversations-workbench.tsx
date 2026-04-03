@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
@@ -156,6 +157,20 @@ type CreateJobForm = {
 
 const CHANNEL_FILTER_OPTIONS: ChannelFilter[] = ['ALL', 'ZALO_PERSONAL', 'ZALO_OA', 'FACEBOOK', 'OTHER'];
 const THREAD_LIMIT_OPTIONS = [20, 50, 100] as const;
+const CHANNEL_LABELS: Record<ChannelFilter, string> = {
+  ALL: 'Tất cả',
+  ZALO_PERSONAL: 'Zalo cá nhân',
+  ZALO_OA: 'Zalo OA',
+  FACEBOOK: 'Facebook',
+  OTHER: 'Kênh khác'
+};
+
+function channelLabel(value: string | null | undefined) {
+  if (!value) {
+    return '--';
+  }
+  return CHANNEL_LABELS[value as ChannelFilter] ?? value;
+}
 
 function toDateTime(value: string | null | undefined) {
   if (!value) {
@@ -211,6 +226,25 @@ function readSummaryCounter(summaryJson: unknown, key: string) {
   return String(value);
 }
 
+async function copyToClipboard(value: string) {
+  if (!value.trim()) {
+    return;
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
 export function CrmConversationsWorkbench() {
   const { role } = useUserRole();
   const canView = canAccessModule(role, 'crm');
@@ -243,10 +277,13 @@ export function CrmConversationsWorkbench() {
   const [selectedThreadId, setSelectedThreadId] = useState('');
   const [selectedJobId, setSelectedJobId] = useState('');
   const [selectedRunId, setSelectedRunId] = useState('');
+  const [selectedThreadIds, setSelectedThreadIds] = useState<BulkRowId[]>([]);
+  const [selectedJobIds, setSelectedJobIds] = useState<BulkRowId[]>([]);
+  const [selectedRunIds, setSelectedRunIds] = useState<BulkRowId[]>([]);
   const [sendMessageContent, setSendMessageContent] = useState('');
 
   const [createJobForm, setCreateJobForm] = useState<CreateJobForm>({
-    name: 'QC Zalo định kỳ',
+    name: 'Đánh giá Zalo định kỳ',
     intervalMinutes: '120',
     lookbackHours: '24',
     maxConversationsPerRun: '30',
@@ -280,7 +317,7 @@ export function CrmConversationsWorkbench() {
       });
       setZaloAccounts(Array.isArray(payload) ? payload : []);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách Zalo account.');
+      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách tài khoản Zalo.');
     }
   };
 
@@ -354,7 +391,7 @@ export function CrmConversationsWorkbench() {
         return rows[0]?.id ?? '';
       });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách job AI.');
+      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách lịch đánh giá AI.');
     } finally {
       setIsLoadingJobs(false);
     }
@@ -377,7 +414,7 @@ export function CrmConversationsWorkbench() {
         return rows[0]?.id ?? '';
       });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách run.');
+      setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách phiên chạy.');
     } finally {
       setIsLoadingRuns(false);
     }
@@ -390,7 +427,7 @@ export function CrmConversationsWorkbench() {
       setRunDetail(payload ?? null);
     } catch (error) {
       setRunDetail(null);
-      setErrorMessage(error instanceof Error ? error.message : 'Không tải được chi tiết run.');
+      setErrorMessage(error instanceof Error ? error.message : 'Không tải được chi tiết phiên chạy.');
     } finally {
       setIsLoadingRunDetail(false);
     }
@@ -446,6 +483,21 @@ export function CrmConversationsWorkbench() {
     void loadRunDetail(selectedRunId);
   }, [canView, selectedRunId]);
 
+  useEffect(() => {
+    const idSet = new Set(threads.map((item) => item.id));
+    setSelectedThreadIds((prev) => prev.filter((id) => idSet.has(String(id))));
+  }, [threads]);
+
+  useEffect(() => {
+    const idSet = new Set(jobs.map((item) => item.id));
+    setSelectedJobIds((prev) => prev.filter((id) => idSet.has(String(id))));
+  }, [jobs]);
+
+  useEffect(() => {
+    const idSet = new Set(runs.map((item) => item.id));
+    setSelectedRunIds((prev) => prev.filter((id) => idSet.has(String(id))));
+  }, [runs]);
+
   const onSendMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clearNotice();
@@ -472,7 +524,7 @@ export function CrmConversationsWorkbench() {
         });
       } else if (selectedThread.channel === 'ZALO_OA') {
         if (!selectedThread.channelAccountId) {
-          throw new Error('Hội thoại OA chưa gắn channelAccountId nên chưa thể gửi outbound.');
+          throw new Error('Hội thoại OA chưa gắn mã tài khoản kênh nên chưa thể gửi tin.');
         }
         await apiRequest(`/zalo/accounts/${selectedThread.channelAccountId}/oa/messages/send`, {
           method: 'POST',
@@ -504,7 +556,7 @@ export function CrmConversationsWorkbench() {
     event.preventDefault();
     clearNotice();
     if (!canMutate) {
-      setErrorMessage('Vai trò hiện tại không có quyền tạo job.');
+      setErrorMessage('Vai trò hiện tại không có quyền tạo lịch đánh giá.');
       return;
     }
 
@@ -530,30 +582,94 @@ export function CrmConversationsWorkbench() {
         }
       });
 
-      setResultMessage('Đã tạo job AI thành công.');
+      setResultMessage('Đã tạo lịch đánh giá AI thành công.');
       await loadJobs();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo job AI.');
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo lịch đánh giá AI.');
     }
   };
 
   const onRunJobNow = async (jobId: string) => {
     clearNotice();
     if (!canMutate) {
-      setErrorMessage('Vai trò hiện tại không có quyền chạy job.');
+      setErrorMessage('Vai trò hiện tại không có quyền chạy lịch.');
       return;
     }
 
     try {
       await apiRequest(`/conversation-quality/jobs/${jobId}/run-now`, { method: 'POST' });
-      setResultMessage('Đã trigger chạy job AI.');
+      setResultMessage('Đã kích hoạt chạy lịch đánh giá AI.');
       await Promise.all([loadJobs(), loadRuns(selectedJobId || jobId), loadThreads()]);
       if (selectedThreadId) {
         await loadLatestEvaluation(selectedThreadId);
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể chạy job ngay.');
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể chạy lịch ngay.');
     }
+  };
+
+  const onBulkRunJobsNow = async () => {
+    clearNotice();
+    if (!canMutate) {
+      setErrorMessage('Vai trò hiện tại không có quyền chạy lịch.');
+      return;
+    }
+
+    const ids = selectedJobIds.map((id) => String(id)).filter(Boolean);
+    if (ids.length === 0) {
+      setErrorMessage('Vui lòng chọn ít nhất 1 lịch.');
+      return;
+    }
+
+    if (!window.confirm(`Chạy ngay ${ids.length} lịch đã chọn?`)) {
+      return;
+    }
+
+    try {
+      const result = await runBulkOperation({
+        ids,
+        continueOnError: true,
+        chunkSize: 5,
+        execute: async (jobId) => {
+          await apiRequest(`/conversation-quality/jobs/${jobId}/run-now`, { method: 'POST' });
+        }
+      });
+
+      const normalized: BulkExecutionResult = {
+        ...result,
+        actionLabel: 'Chạy ngay lịch',
+        message: formatBulkSummary(
+          {
+            ...result,
+            actionLabel: 'Chạy ngay lịch'
+          },
+          'Chạy ngay lịch'
+        )
+      };
+
+      setResultMessage(normalized.message ?? null);
+      if (normalized.failedCount > 0) {
+        setErrorMessage('Một số lịch chạy ngay thất bại.');
+      }
+
+      if (normalized.successCount > 0) {
+        await Promise.all([loadJobs(), loadRuns(selectedJobId || undefined), loadThreads()]);
+        if (selectedThreadId) {
+          await loadLatestEvaluation(selectedThreadId);
+        }
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Chạy ngay hàng loạt thất bại.');
+    }
+  };
+
+  const onCopySelectedIds = async (ids: BulkRowId[], label: string) => {
+    const values = ids.map((id) => String(id)).filter(Boolean);
+    if (values.length === 0) {
+      return;
+    }
+    await copyToClipboard(values.join(', '));
+    setResultMessage(`Đã sao chép ${values.length} ID ${label}.`);
   };
 
   if (!canView) {
@@ -561,7 +677,7 @@ export function CrmConversationsWorkbench() {
       <article className="module-workbench">
         <header className="module-header">
           <div>
-            <h1>CRM Conversations Inbox</h1>
+            <h1>Hội thoại khách hàng CRM</h1>
             <p>Bạn không có quyền truy cập phân hệ CRM với vai trò hiện tại.</p>
           </div>
           <ul>
@@ -577,11 +693,11 @@ export function CrmConversationsWorkbench() {
     <article className="module-workbench" data-testid="crm-conversations-workbench">
       <header className="module-header">
         <div>
-          <h1>CRM Conversations Inbox</h1>
-          <p>Hộp hội thoại Zalo tích hợp ERP, theo dõi thread/message và kết quả AI chấm điểm theo lịch.</p>
+          <h1>Hội thoại khách hàng CRM</h1>
+            <p>Quản trị hội thoại đa kênh và kết quả đánh giá AI theo lịch.</p>
           <div className="action-buttons" style={{ marginTop: '0.6rem' }}>
             <Link className="btn btn-ghost" href="/modules/crm">
-              Quay lại CRM Operations
+              Quay lại vận hành CRM
             </Link>
             <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>
               Tải lại toàn bộ
@@ -589,9 +705,8 @@ export function CrmConversationsWorkbench() {
           </div>
         </div>
         <ul>
-          <li>Ưu tiên Zalo personal, vẫn theo dõi OA ingest.</li>
-          <li>Hiển thị QC verdict/score ngay trên từng hội thoại.</li>
-          <li>Job batch AI: tạo lịch, chạy tay, xem lịch sử run.</li>
+          <li>Vận hành hội thoại theo chuẩn xử lý tập trung.</li>
+          <li>Tự động đánh giá AI, nhân sự giám sát theo phân quyền.</li>
         </ul>
       </header>
 
@@ -602,8 +717,8 @@ export function CrmConversationsWorkbench() {
       <section className="crm-grid">
         <section className="panel-surface crm-panel">
           <div className="crm-panel-head">
-            <h2>Threads</h2>
-            <span className={statusClass('CONNECTED')}>Total: {threads.length}</span>
+            <h2>Danh sách hội thoại</h2>
+            <span className={statusClass('CONNECTED')}>Tổng: {threads.length}</span>
           </div>
 
           <div className="filter-grid">
@@ -613,11 +728,11 @@ export function CrmConversationsWorkbench() {
                 id="conversation-thread-search"
                 value={threadQuery}
                 onChange={(event) => setThreadQuery(event.target.value)}
-                placeholder="Tên khách, external thread..."
+                placeholder="Tên khách, mã hội thoại..."
               />
             </div>
             <div className="field">
-              <label htmlFor="conversation-thread-channel">Channel</label>
+              <label htmlFor="conversation-thread-channel">Kênh</label>
               <select
                 id="conversation-thread-channel"
                 value={threadChannel}
@@ -625,19 +740,19 @@ export function CrmConversationsWorkbench() {
               >
                 {CHANNEL_FILTER_OPTIONS.map((item) => (
                   <option key={item} value={item}>
-                    {item}
+                    {channelLabel(item)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="field">
-              <label htmlFor="conversation-thread-account">Zalo account</label>
+              <label htmlFor="conversation-thread-account">Tài khoản Zalo</label>
               <select
                 id="conversation-thread-account"
                 value={threadAccountId}
                 onChange={(event) => setThreadAccountId(event.target.value)}
               >
-                <option value="">ALL</option>
+                <option value="">Tất cả</option>
                 {zaloAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.displayName || account.zaloUid || account.id}
@@ -646,7 +761,7 @@ export function CrmConversationsWorkbench() {
               </select>
             </div>
             <div className="field">
-              <label htmlFor="conversation-thread-limit">Limit</label>
+              <label htmlFor="conversation-thread-limit">Giới hạn</label>
               <select
                 id="conversation-thread-limit"
                 value={String(threadLimit)}
@@ -664,62 +779,106 @@ export function CrmConversationsWorkbench() {
           {isLoadingThreads ? <p className="muted">Đang tải hội thoại...</p> : null}
           {!isLoadingThreads && threads.length === 0 ? <p className="muted">Chưa có hội thoại phù hợp.</p> : null}
 
-          {threads.length > 0 ? (
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Khách hàng</th>
-                    <th>Channel</th>
-                    <th>Unread</th>
-                    <th>QC</th>
-                    <th>Last message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {threads.map((thread) => {
-                    const latest = thread.evaluations?.[0];
-                    return (
-                      <tr key={thread.id} className={selectedThreadId === thread.id ? 'table-row-selected' : ''}>
-                        <td>
-                          <button
-                            type="button"
-                            className="record-link row-select-trigger"
-                            onClick={() => setSelectedThreadId(thread.id)}
-                          >
-                            {thread.customerDisplayName || thread.customer?.fullName || thread.externalThreadId}
-                            <span>Xem</span>
-                          </button>
-                        </td>
-                        <td>
-                          <span className={statusClass(thread.channel)}>
-                            {thread.channel}
-                          </span>
-                        </td>
-                        <td>{thread.unreadCount ?? 0}</td>
-                        <td>
-                          {latest ? (
-                            <span className={statusClass(latest.verdict)}>
-                              {latest.verdict}
-                              {latest.score !== null && latest.score !== undefined ? ` (${latest.score})` : ''}
-                            </span>
-                          ) : (
-                            '--'
-                          )}
-                        </td>
-                        <td>{toDateTime(thread.lastMessageAt)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            {threads.length > 0 ? (
+            <div style={{ display: 'grid', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span className="muted">Đã chọn {selectedThreadIds.length} hội thoại</span>
+                <div className="action-buttons">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setSelectedThreadIds([])}
+                  disabled={selectedThreadIds.length === 0}
+                >
+                  Bỏ chọn
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void onCopySelectedIds(selectedThreadIds, 'hội thoại')}
+                  disabled={selectedThreadIds.length === 0}
+                >
+                  Sao chép ID
+                </button>
+              </div>
+            </div>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>
+                        <input
+                          type="checkbox"
+                          checked={threads.length > 0 && threads.every((thread) => selectedThreadIds.includes(thread.id))}
+                          onChange={(event) =>
+                            setSelectedThreadIds(event.target.checked ? threads.map((thread) => thread.id) : [])
+                          }
+                        />
+                      </th>
+                      <th>Khách hàng</th>
+                      <th>Kênh</th>
+                      <th>Chưa đọc</th>
+                      <th>Đánh giá AI</th>
+                      <th>Tin nhắn gần nhất</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {threads.map((thread) => {
+                      const latest = thread.evaluations?.[0];
+                      return (
+                        <tr key={thread.id} className={selectedThreadId === thread.id ? 'table-row-selected' : ''}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selectedThreadIds.includes(thread.id)}
+                              onChange={(event) =>
+                                setSelectedThreadIds((prev) => {
+                                  if (event.target.checked) {
+                                    return prev.includes(thread.id) ? prev : [...prev, thread.id];
+                                  }
+                                  return prev.filter((id) => String(id) !== thread.id);
+                                })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="record-link row-select-trigger"
+                              onClick={() => setSelectedThreadId(thread.id)}
+                            >
+                              {thread.customerDisplayName || thread.customer?.fullName || thread.externalThreadId}
+                              <span>Xem</span>
+                            </button>
+                          </td>
+                          <td>
+                            <span className={statusClass(thread.channel)}>{channelLabel(thread.channel)}</span>
+                          </td>
+                          <td>{thread.unreadCount ?? 0}</td>
+                          <td>
+                            {latest ? (
+                              <span className={statusClass(latest.verdict)}>
+                                {latest.verdict}
+                                {latest.score !== null && latest.score !== undefined ? ` (${latest.score})` : ''}
+                              </span>
+                            ) : (
+                              '--'
+                            )}
+                          </td>
+                          <td>{toDateTime(thread.lastMessageAt)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : null}
         </section>
 
         <section className="panel-surface crm-panel">
           <div className="crm-panel-head">
-            <h2>Messages & Evaluation</h2>
+            <h2>Tin nhắn và đánh giá AI</h2>
             <button
               type="button"
               className="btn btn-ghost"
@@ -735,26 +894,26 @@ export function CrmConversationsWorkbench() {
           </div>
 
           <p className="muted">
-            Thread: {selectedThread ? `${selectedThread.externalThreadId} • ${selectedThread.channel}` : '--'}
+            Hội thoại: {selectedThread ? `${selectedThread.externalThreadId} • ${channelLabel(selectedThread.channel)}` : '--'}
           </p>
           <p className="muted">
-            Account: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
+            Tài khoản: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
           </p>
 
           <div className="filter-grid">
             <div className="field">
-              <label htmlFor="conversation-message-search">Tìm kiếm message</label>
+              <label htmlFor="conversation-message-search">Tìm kiếm tin nhắn</label>
               <input
                 id="conversation-message-search"
                 value={messageQuery}
                 onChange={(event) => setMessageQuery(event.target.value)}
-                placeholder="Nội dung, sender..."
+                placeholder="Nội dung, người gửi..."
               />
             </div>
           </div>
 
           {isLoadingMessages ? <p className="muted">Đang tải tin nhắn...</p> : null}
-          {!isLoadingMessages && messages.length === 0 ? <p className="muted">Chưa có message cho hội thoại này.</p> : null}
+          {!isLoadingMessages && messages.length === 0 ? <p className="muted">Chưa có tin nhắn cho hội thoại này.</p> : null}
 
           {messages.length > 0 ? (
             <div className="table-wrap">
@@ -762,7 +921,7 @@ export function CrmConversationsWorkbench() {
                 <thead>
                   <tr>
                     <th>Thời gian</th>
-                    <th>Sender</th>
+                    <th>Người gửi</th>
                     <th>Loại</th>
                     <th>Nội dung</th>
                   </tr>
@@ -820,37 +979,37 @@ export function CrmConversationsWorkbench() {
               <>
                 <div className="finance-bucket-list">
                   <div className="finance-bucket-item">
-                    <span>Score</span>
+                    <span>Điểm</span>
                     <strong>{latestEvaluation.score ?? '--'}</strong>
                   </div>
                   <div className="finance-bucket-item">
-                    <span>Model</span>
+                    <span>Mô hình</span>
                     <strong>{latestEvaluation.model || '--'}</strong>
                   </div>
                   <div className="finance-bucket-item">
-                    <span>Provider</span>
+                    <span>Nhà cung cấp</span>
                     <strong>{latestEvaluation.provider || '--'}</strong>
                   </div>
                   <div className="finance-bucket-item">
-                    <span>Evaluated at</span>
+                    <span>Thời điểm đánh giá</span>
                     <strong>{toDateTime(latestEvaluation.evaluatedAt)}</strong>
                   </div>
                 </div>
                 <p className="muted" style={{ marginTop: '0.45rem' }}>
-                  Summary: {latestEvaluation.summary || '--'}
+                  Tóm tắt: {latestEvaluation.summary || '--'}
                 </p>
                 <p className="muted" style={{ marginTop: '0.25rem' }}>
-                  Review: {latestEvaluation.review || '--'}
+                  Nhận xét: {latestEvaluation.review || '--'}
                 </p>
                 {latestEvaluation.violations && latestEvaluation.violations.length > 0 ? (
                   <div className="table-wrap" style={{ marginTop: '0.55rem' }}>
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Severity</th>
-                          <th>Rule</th>
-                          <th>Evidence</th>
-                          <th>Suggestion</th>
+                          <th>Mức độ</th>
+                          <th>Quy tắc</th>
+                          <th>Bằng chứng</th>
+                          <th>Khuyến nghị</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -873,14 +1032,14 @@ export function CrmConversationsWorkbench() {
 
         <section className="panel-surface crm-panel">
           <div className="crm-panel-head">
-            <h2>AI QC Jobs & Runs</h2>
+            <h2>Lịch đánh giá AI và phiên chạy</h2>
             <span className={statusClass(selectedJob?.lastRunStatus)}>{selectedJob?.lastRunStatus || '--'}</span>
           </div>
 
           <form className="form-grid" onSubmit={onCreateJob}>
-            <h3>Tạo job chấm điểm</h3>
+            <h3>Tạo lịch đánh giá</h3>
             <div className="field">
-              <label htmlFor="qc-job-name">Tên job</label>
+              <label htmlFor="qc-job-name">Tên lịch</label>
               <input
                 id="qc-job-name"
                 required
@@ -889,7 +1048,7 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-interval">Interval (phút)</label>
+              <label htmlFor="qc-job-interval">Chu kỳ chạy (phút)</label>
               <input
                 id="qc-job-interval"
                 type="number"
@@ -899,7 +1058,7 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-lookback">Lookback (giờ)</label>
+              <label htmlFor="qc-job-lookback">Khoảng quét dữ liệu (giờ)</label>
               <input
                 id="qc-job-lookback"
                 type="number"
@@ -909,7 +1068,7 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-max-threads">Max threads/run</label>
+              <label htmlFor="qc-job-max-threads">Số hội thoại tối đa mỗi phiên</label>
               <input
                 id="qc-job-max-threads"
                 type="number"
@@ -919,7 +1078,7 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-batch-size">Batch size</label>
+              <label htmlFor="qc-job-batch-size">Kích thước lô xử lý</label>
               <input
                 id="qc-job-batch-size"
                 type="number"
@@ -929,7 +1088,7 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-model">AI model (optional)</label>
+              <label htmlFor="qc-job-model">Mô hình AI (tuỳ chọn)</label>
               <input
                 id="qc-job-model"
                 value={createJobForm.aiModel}
@@ -938,7 +1097,7 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-channel">Channel filter</label>
+              <label htmlFor="qc-job-channel">Bộ lọc kênh</label>
               <select
                 id="qc-job-channel"
                 value={createJobForm.channel}
@@ -946,13 +1105,13 @@ export function CrmConversationsWorkbench() {
               >
                 {CHANNEL_FILTER_OPTIONS.map((item) => (
                   <option key={item} value={item}>
-                    {item}
+                    {channelLabel(item)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="field">
-              <label htmlFor="qc-job-account-ids">Account IDs (comma, optional)</label>
+              <label htmlFor="qc-job-account-ids">ID tài khoản (dấu phẩy, tuỳ chọn)</label>
               <input
                 id="qc-job-account-ids"
                 value={createJobForm.accountIds}
@@ -961,16 +1120,16 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-rules">Rules content (optional)</label>
+              <label htmlFor="qc-job-rules">Bộ quy tắc đánh giá (tuỳ chọn)</label>
               <textarea
                 id="qc-job-rules"
                 value={createJobForm.rulesContent}
                 onChange={(event) => setCreateJobForm((prev) => ({ ...prev, rulesContent: event.target.value }))}
-                placeholder="Rule checklist cho AI QC..."
+                placeholder="Danh sách quy tắc chấm điểm..."
               />
             </div>
             <div className="field">
-              <label htmlFor="qc-job-skip">Skip conditions (optional)</label>
+              <label htmlFor="qc-job-skip">Điều kiện bỏ qua (tuỳ chọn)</label>
               <textarea
                 id="qc-job-skip"
                 value={createJobForm.skipConditions}
@@ -980,36 +1139,86 @@ export function CrmConversationsWorkbench() {
             </div>
             <div className="action-buttons">
               <button type="submit" className="btn btn-primary" disabled={!canMutate}>
-                Tạo job
+                Tạo lịch
               </button>
             </div>
           </form>
 
           <section className="panel-surface">
             <div className="crm-panel-head">
-              <h3>Danh sách jobs</h3>
+              <h3>Danh sách lịch đánh giá</h3>
               <button type="button" className="btn btn-ghost" onClick={() => void loadJobs()}>
-                Tải lại jobs
+                Tải lại danh sách
               </button>
             </div>
-            {isLoadingJobs ? <p className="muted">Đang tải jobs...</p> : null}
-            {!isLoadingJobs && jobs.length === 0 ? <p className="muted">Chưa có job nào.</p> : null}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <span className="muted">Đã chọn {selectedJobIds.length} lịch</span>
+              <div className="action-buttons">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setSelectedJobIds([])}
+                  disabled={selectedJobIds.length === 0}
+                >
+                  Bỏ chọn
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void onCopySelectedIds(selectedJobIds, 'lịch')}
+                  disabled={selectedJobIds.length === 0}
+                >
+                  Sao chép ID
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void onBulkRunJobsNow()}
+                  disabled={selectedJobIds.length === 0 || !canMutate}
+                >
+                  Chạy ngay mục đã chọn
+                </button>
+              </div>
+            </div>
+            {isLoadingJobs ? <p className="muted">Đang tải lịch đánh giá...</p> : null}
+            {!isLoadingJobs && jobs.length === 0 ? <p className="muted">Chưa có lịch đánh giá nào.</p> : null}
 
             {jobs.length > 0 ? (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Job</th>
-                      <th>Interval</th>
-                      <th>Last status</th>
-                      <th>Next run</th>
-                      <th>Action</th>
+                      <th>
+                        <input
+                          type="checkbox"
+                          checked={jobs.length > 0 && jobs.every((job) => selectedJobIds.includes(job.id))}
+                          onChange={(event) => setSelectedJobIds(event.target.checked ? jobs.map((job) => job.id) : [])}
+                        />
+                      </th>
+                      <th>Tên lịch</th>
+                      <th>Chu kỳ</th>
+                      <th>Trạng thái gần nhất</th>
+                      <th>Lần chạy kế tiếp</th>
+                      <th>Thao tác</th>
                     </tr>
                   </thead>
                   <tbody>
                     {jobs.map((job) => (
                       <tr key={job.id} className={selectedJobId === job.id ? 'table-row-selected' : ''}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedJobIds.includes(job.id)}
+                            onChange={(event) =>
+                              setSelectedJobIds((prev) => {
+                                if (event.target.checked) {
+                                  return prev.includes(job.id) ? prev : [...prev, job.id];
+                                }
+                                return prev.filter((id) => String(id) !== job.id);
+                              })
+                            }
+                          />
+                        </td>
                         <td>
                           <button
                             type="button"
@@ -1038,7 +1247,7 @@ export function CrmConversationsWorkbench() {
                               void onRunJobNow(job.id);
                             }}
                           >
-                            Run now
+                            Chạy ngay
                           </button>
                         </td>
                       </tr>
@@ -1051,29 +1260,71 @@ export function CrmConversationsWorkbench() {
 
           <section className="panel-surface">
             <div className="crm-panel-head">
-              <h3>Runs ({selectedJob ? selectedJob.name : 'ALL'})</h3>
+              <h3>Phiên chạy ({selectedJob ? selectedJob.name : 'TẤT CẢ'})</h3>
               <button type="button" className="btn btn-ghost" onClick={() => void loadRuns(selectedJobId || undefined)}>
-                Tải lại runs
+                Tải lại phiên chạy
               </button>
             </div>
-            {isLoadingRuns ? <p className="muted">Đang tải runs...</p> : null}
-            {!isLoadingRuns && runs.length === 0 ? <p className="muted">Chưa có run.</p> : null}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <span className="muted">Đã chọn {selectedRunIds.length} phiên</span>
+              <div className="action-buttons">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setSelectedRunIds([])}
+                  disabled={selectedRunIds.length === 0}
+                >
+                  Bỏ chọn
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void onCopySelectedIds(selectedRunIds, 'phiên')}
+                  disabled={selectedRunIds.length === 0}
+                >
+                  Sao chép ID
+                </button>
+              </div>
+            </div>
+            {isLoadingRuns ? <p className="muted">Đang tải phiên chạy...</p> : null}
+            {!isLoadingRuns && runs.length === 0 ? <p className="muted">Chưa có phiên chạy.</p> : null}
 
             {runs.length > 0 ? (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Started</th>
-                      <th>Status</th>
-                      <th>Evaluated</th>
-                      <th>Failed</th>
-                      <th>Violations</th>
+                      <th>
+                        <input
+                          type="checkbox"
+                          checked={runs.length > 0 && runs.every((run) => selectedRunIds.includes(run.id))}
+                          onChange={(event) => setSelectedRunIds(event.target.checked ? runs.map((run) => run.id) : [])}
+                        />
+                      </th>
+                      <th>Bắt đầu</th>
+                      <th>Trạng thái</th>
+                      <th>Đã chấm</th>
+                      <th>Lỗi</th>
+                      <th>Vi phạm</th>
                     </tr>
                   </thead>
                   <tbody>
                     {runs.map((run) => (
                       <tr key={run.id} className={selectedRunId === run.id ? 'table-row-selected' : ''}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedRunIds.includes(run.id)}
+                            onChange={(event) =>
+                              setSelectedRunIds((prev) => {
+                                if (event.target.checked) {
+                                  return prev.includes(run.id) ? prev : [...prev, run.id];
+                                }
+                                return prev.filter((id) => String(id) !== run.id);
+                              })
+                            }
+                          />
+                        </td>
                         <td>
                           <button
                             type="button"
@@ -1102,31 +1353,31 @@ export function CrmConversationsWorkbench() {
             ) : null}
 
             <div className="crm-panel-head" style={{ marginTop: '0.5rem' }}>
-              <h3>Run detail</h3>
+              <h3>Chi tiết phiên chạy</h3>
               <span className={statusClass(runDetail?.status)}>{runDetail?.status || '--'}</span>
             </div>
-            {isLoadingRunDetail ? <p className="muted">Đang tải run detail...</p> : null}
-            {!isLoadingRunDetail && !runDetail ? <p className="muted">Chọn 1 run để xem chi tiết.</p> : null}
+            {isLoadingRunDetail ? <p className="muted">Đang tải chi tiết phiên chạy...</p> : null}
+            {!isLoadingRunDetail && !runDetail ? <p className="muted">Chọn 1 phiên để xem chi tiết.</p> : null}
             {runDetail ? (
               <>
-                <p className="muted">Started: {toDateTime(runDetail.startedAt)}</p>
-                <p className="muted">Finished: {toDateTime(runDetail.finishedAt)}</p>
+                <p className="muted">Bắt đầu: {toDateTime(runDetail.startedAt)}</p>
+                <p className="muted">Kết thúc: {toDateTime(runDetail.finishedAt)}</p>
                 {runDetail.errorMessage ? <p className="banner banner-error">{runDetail.errorMessage}</p> : null}
                 <div className="finance-bucket-list" style={{ marginTop: '0.45rem' }}>
                   <div className="finance-bucket-item">
-                    <span>Total threads</span>
+                    <span>Tổng hội thoại</span>
                     <strong>{readSummaryCounter(runDetail.summaryJson, 'totalThreads')}</strong>
                   </div>
                   <div className="finance-bucket-item">
-                    <span>Evaluated</span>
+                    <span>Đã chấm</span>
                     <strong>{readSummaryCounter(runDetail.summaryJson, 'evaluatedCount')}</strong>
                   </div>
                   <div className="finance-bucket-item">
-                    <span>Skipped</span>
+                    <span>Bỏ qua</span>
                     <strong>{readSummaryCounter(runDetail.summaryJson, 'skippedCount')}</strong>
                   </div>
                   <div className="finance-bucket-item">
-                    <span>Violations</span>
+                    <span>Vi phạm</span>
                     <strong>{readSummaryCounter(runDetail.summaryJson, 'totalViolationCount')}</strong>
                   </div>
                 </div>
@@ -1135,10 +1386,10 @@ export function CrmConversationsWorkbench() {
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Thread</th>
-                          <th>Verdict</th>
-                          <th>Score</th>
-                          <th>Violations</th>
+                          <th>Hội thoại</th>
+                          <th>Kết luận</th>
+                          <th>Điểm</th>
+                          <th>Vi phạm</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1156,7 +1407,7 @@ export function CrmConversationsWorkbench() {
                     </table>
                   </div>
                 ) : (
-                  <p className="muted">Run này chưa có evaluation record.</p>
+                  <p className="muted">Phiên chạy này chưa có bản ghi đánh giá.</p>
                 )}
               </>
             ) : null}

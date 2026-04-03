@@ -9,7 +9,7 @@ function json(route: Route, payload: unknown, status = 200) {
 }
 
 const REPORTS_DISABLED_NOTICE =
-  "Phân hệ 'reports' đang tắt. Vui lòng bật lại trong Settings Center Enterprise > Tổ chức > Phân hệ đang bật.";
+  "Phân hệ 'reports' đang tắt. Vui lòng bật lại tại Cấu hình hệ thống > Hồ sơ tổ chức > Phân hệ đang bật.";
 
 test.describe('Home dashboard reports availability', () => {
   test('shows friendly warning and skips overview call when reports module is disabled', async ({ page }) => {

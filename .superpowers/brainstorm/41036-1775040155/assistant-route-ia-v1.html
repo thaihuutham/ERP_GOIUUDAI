@@ -1,0 +1,73 @@
+<h2>Chọn kiến trúc route cho AI Assistant</h2>
+<p class="subtitle">Bạn đã chọn phạm vi "Đầy đủ theo API". Bước này chốt cấu trúc điều hướng frontend.</p>
+
+<div class="options">
+  <div class="option" data-choice="A" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>1 Route + Tabs (đề xuất)</h3>
+      <p><code>/modules/assistant</code> chứa các tab: Access, Proxy, Knowledge, Runs, Channels.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Ưu điểm</h4>
+          <ul>
+            <li>Đơn giản cho user vận hành.</li>
+            <li>Giống pattern board hiện có (Workflows/Settings).</li>
+            <li>Triển khai nhanh, ít thay đổi cấu trúc app.</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Hạn chế</h4>
+          <ul>
+            <li>URL deep-link theo từng khu vực yếu hơn.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="B" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Nested Routes (đậm cấu trúc)</h3>
+      <p><code>/modules/assistant/access</code>, <code>/proxy</code>, <code>/knowledge</code>, <code>/runs</code>, <code>/channels</code>.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Ưu điểm</h4>
+          <ul>
+            <li>Deep-link và phân quyền theo route rõ ràng.</li>
+            <li>Dễ mở rộng từng khu vực thành module con.</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Hạn chế</h4>
+          <ul>
+            <li>Nhiều route/file hơn, chi phí triển khai cao hơn.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="C" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid</h3>
+      <p>Giữ route chính <code>/modules/assistant</code>, nhưng khu vực phức tạp (Runs/Channels) tách route con.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Ưu điểm</h4>
+          <ul>
+            <li>Cân bằng tốc độ và khả năng mở rộng.</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Hạn chế</h4>
+          <ul>
+            <li>Tăng độ phức tạp điều hướng do có 2 kiểu cùng lúc.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

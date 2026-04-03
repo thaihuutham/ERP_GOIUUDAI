@@ -4,7 +4,9 @@ import { getModuleDefinition } from '../lib/module-definitions';
 import { canAccessModule } from '../lib/rbac';
 import type { ModuleDefinition } from '../lib/module-ui';
 import { HR_SECTION_MAP, type HrSectionKey } from '../lib/hr-sections';
+import { HrAttendanceBoard } from './hr-attendance-board';
 import { HrGoalsTrackingBoard } from './hr-goals-tracking-board';
+import { HrRegulationBoard } from './hr-regulation-board';
 import { HrRecruitmentPipelineBoard } from './hr-recruitment-pipeline-board';
 import { ModuleWorkbench } from './module-workbench';
 import { useUserRole } from './user-role-context';
@@ -35,6 +37,12 @@ export function HrSectionScreen({ sectionKey }: { sectionKey: HrSectionKey }) {
   }
   if (sectionKey === 'goals') {
     return <HrGoalsTrackingBoard />;
+  }
+  if (sectionKey === 'attendance') {
+    return <HrAttendanceBoard />;
+  }
+  if (sectionKey === 'regulation') {
+    return <HrRegulationBoard />;
   }
 
   const hrModule = getModuleDefinition('hr');

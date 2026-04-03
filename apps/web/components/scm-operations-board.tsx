@@ -23,6 +23,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
+import type { BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -98,6 +99,7 @@ export function ScmOperationsBoard() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [selectedPo, setSelectedPo] = useState<PurchaseOrder | null>(null);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
@@ -233,6 +235,10 @@ export function ScmOperationsBoard() {
           isLoading={isLoading}
           storageKey={SCM_PO_STORAGE_KEY}
           onRowClick={(p) => setSelectedPo(p)}
+          enableRowSelection
+          selectedRowIds={selectedRowIds}
+          onSelectedRowIdsChange={setSelectedRowIds}
+          showDefaultBulkUtilities
         />
       )}
 
@@ -242,6 +248,10 @@ export function ScmOperationsBoard() {
           columns={vendorColumns}
           isLoading={isLoading}
           storageKey={SCM_VENDOR_STORAGE_KEY}
+          enableRowSelection
+          selectedRowIds={selectedRowIds}
+          onSelectedRowIdsChange={setSelectedRowIds}
+          showDefaultBulkUtilities
         />
       )}
 

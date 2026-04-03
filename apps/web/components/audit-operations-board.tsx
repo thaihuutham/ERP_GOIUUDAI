@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
+import type { BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, type ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -12,6 +13,7 @@ import { SidePanel } from './ui/side-panel';
 type AuditOperationType = 'READ' | 'WRITE';
 type AuditQueryTier = 'hot' | 'cold' | 'mixed';
 type AuditRowTier = 'hot' | 'cold';
+type AuditAccessScope = 'company' | 'branch' | 'department';
 
 type AuditLogRow = {
   id: string;
@@ -48,6 +50,7 @@ type AuditPageInfo = {
   hasMore: boolean;
   nextCursor?: string | null;
   tier?: AuditQueryTier;
+  accessScope?: AuditAccessScope;
   coldScanStats?: {
     scannedFiles: number;
     scannedRows: number;
@@ -161,6 +164,31 @@ function tierLabel(value: AuditRowTier | undefined) {
   return value === 'cold' ? 'Archive' : 'Hot';
 }
 
+function accessScopeLabel(scope: AuditAccessScope | undefined) {
+  if (scope === 'branch') {
+    return 'Theo phạm vi chi nhánh (actor thực hiện)';
+  }
+  if (scope === 'department') {
+    return 'Theo phạm vi phòng ban (actor thực hiện)';
+  }
+  return 'Toàn công ty';
+}
+
+function toAuditFriendlyError(error: unknown, fallbackMessage: string) {
+  const message = error instanceof Error ? error.message : '';
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('chưa được gán nhóm quản lý') ||
+    normalized.includes('không được bật quyền xem audit') ||
+    normalized.includes('forbidden')
+  ) {
+    return 'Bạn chưa được cấp quyền xem audit theo ma trận ủy quyền hiện tại. Vui lòng liên hệ Admin để được cấu hình nhóm quản lý.';
+  }
+
+  return message || fallbackMessage;
+}
+
 export function AuditOperationsBoard() {
   const { role } = useUserRole();
   const canView = canAccessModule(role, 'audit');
@@ -172,6 +200,7 @@ export function AuditOperationsBoard() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<AuditLogRow | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [pageInfo, setPageInfo] = useState<AuditPageInfo | null>(null);
 
   const archiveLikely = useMemo(() => likelyTouchesArchive(filters), [filters]);
@@ -186,7 +215,7 @@ export function AuditOperationsBoard() {
       const payload = await apiRequest<AuditActionsPayload>('/audit/actions');
       setActionItems(Array.isArray(payload.items) ? payload.items : []);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể tải danh mục hành động audit.');
+      setErrorMessage(toAuditFriendlyError(error, 'Không thể tải danh mục hành động audit.'));
     }
   };
 
@@ -239,7 +268,7 @@ export function AuditOperationsBoard() {
       setRows((prev) => (append ? mergeRowsById(prev, fetchedRows) : fetchedRows));
       setPageInfo(payload.pageInfo ?? null);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể tải audit log.');
+      setErrorMessage(toAuditFriendlyError(error, 'Không thể tải audit log.'));
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
@@ -481,12 +510,22 @@ export function AuditOperationsBoard() {
         </div>
       )}
 
+      {pageInfo?.accessScope && (
+        <div className="banner banner-info" style={{ marginBottom: '0.75rem' }}>
+          Phạm vi xem audit hiện tại: {accessScopeLabel(pageInfo.accessScope)}.
+        </div>
+      )}
+
       <StandardDataTable
         data={rows}
         columns={columns}
         storageKey={AUDIT_COLUMN_SETTINGS_KEY}
         isLoading={isLoading}
         onRowClick={(row) => setSelectedRow(row)}
+        enableRowSelection
+        selectedRowIds={selectedRowIds}
+        onSelectedRowIdsChange={setSelectedRowIds}
+        showDefaultBulkUtilities
       />
 
       {pageInfo?.hasMore && (

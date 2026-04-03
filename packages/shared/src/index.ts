@@ -16,6 +16,7 @@ export const ERP_MODULES = [
   'projects',
   'workflows',
   'reports',
+  'assistant',
   'audit',
   'settings',
   'notifications'

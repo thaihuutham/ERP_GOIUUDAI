@@ -248,9 +248,9 @@ const ACTION_PRESETS: Record<string, ActionPreset[]> = {
   ],
   'save-system-config': [
     {
-      label: 'Preset công ty bán lẻ',
+      label: 'Preset GOIUUDAI',
       values: {
-        companyName: 'Công ty ERP Bán lẻ',
+        companyName: 'GOIUUDAI',
         taxCode: '0312345678',
         address: 'Thành phố Hồ Chí Minh',
         currency: 'VND',

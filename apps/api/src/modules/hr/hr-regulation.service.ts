@@ -1,4 +1,5 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   GenericStatus,
   HrAppendixCode,
@@ -6,9 +7,14 @@ import {
   HrAppendixSubmissionStatus,
   HrDailyScoreStatus,
   HrPipCaseStatus,
-  Prisma
+  Prisma,
+  UserRole
 } from '@prisma/client';
+import { ClsService } from 'nestjs-cls';
+import { AuthUser } from '../../common/auth/auth-user.type';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WorkflowsService } from '../workflows/workflows.service';
@@ -30,6 +36,51 @@ type RoleTemplateRuntime = {
   };
 };
 
+type RegulationScope = 'self' | 'team' | 'department' | 'company';
+
+type RegulationAccessContext = {
+  scope: RegulationScope;
+  role: UserRole | 'ANONYMOUS';
+  requesterEmployeeId: string | null;
+  allowedEmployeeIds: string[] | null;
+  canOverrideEmployeeId: boolean;
+};
+
+type AppendixFieldType = 'text' | 'number' | 'date' | 'select' | 'boolean';
+type AppendixFieldAggregator = 'none' | 'count' | 'sum' | 'avg' | 'min' | 'max';
+type AppendixFieldStatus = 'ACTIVE' | 'DRAFT' | 'INACTIVE' | 'ARCHIVED';
+
+type AppendixFieldCatalogItemRuntime = {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  type: AppendixFieldType;
+  options: string[];
+  validation: Record<string, unknown>;
+  analyticsEnabled: boolean;
+  aggregator: AppendixFieldAggregator;
+  status: AppendixFieldStatus;
+  version: number;
+};
+
+type AppendixTemplateFieldRuntime = AppendixFieldCatalogItemRuntime & {
+  required: boolean;
+  placeholder: string;
+  defaultValue: unknown;
+  helpText: string;
+  visibility: 'visible' | 'hidden';
+  kpiAlias: string;
+  source: 'global' | 'appendix-local';
+};
+
+type AppendixCatalogItemRuntime = {
+  code: string;
+  name: string;
+  description: string;
+  fields: AppendixTemplateFieldRuntime[];
+};
+
 const TZ_OFFSET_MINUTES = 7 * 60;
 const APPROVAL_REQUIRED_CODES = new Set<HrAppendixCode>([
   HrAppendixCode.PL04,
@@ -39,6 +90,9 @@ const APPROVAL_REQUIRED_CODES = new Set<HrAppendixCode>([
 ]);
 const DAILY_REQUIRED_CODES: HrAppendixCode[] = [HrAppendixCode.PL01, HrAppendixCode.PL02];
 const APPENDIX_CODE_VALUES = Object.values(HrAppendixCode) as string[];
+const APPENDIX_FIELD_TYPES: AppendixFieldType[] = ['text', 'number', 'date', 'select', 'boolean'];
+const APPENDIX_FIELD_AGGREGATORS: AppendixFieldAggregator[] = ['none', 'count', 'sum', 'avg', 'min', 'max'];
+const APPENDIX_FIELD_STATUSES: AppendixFieldStatus[] = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'];
 
 const DEFAULT_ROLE_TEMPLATES: Record<string, RoleTemplateRuntime> = {
   SALES: {
@@ -68,13 +122,191 @@ const DEFAULT_ROLE_TEMPLATES: Record<string, RoleTemplateRuntime> = {
   }
 };
 
+const DEFAULT_APPENDIX_FIELD_CATALOG: AppendixFieldCatalogItemRuntime[] = [
+  {
+    id: 'summary',
+    key: 'summary',
+    label: 'Tom tat cong viec',
+    description: 'Noi dung tong hop cong viec da thuc hien.',
+    type: 'text',
+    options: [],
+    validation: { required: true, maxLength: 1000 },
+    analyticsEnabled: false,
+    aggregator: 'none',
+    status: 'ACTIVE',
+    version: 1
+  },
+  {
+    id: 'result',
+    key: 'result',
+    label: 'Ket qua',
+    description: 'Ket qua dau ra cua cong viec.',
+    type: 'text',
+    options: [],
+    validation: { required: true, maxLength: 1000 },
+    analyticsEnabled: false,
+    aggregator: 'none',
+    status: 'ACTIVE',
+    version: 1
+  },
+  {
+    id: 'taskCount',
+    key: 'taskCount',
+    label: 'So dau viec hoan thanh',
+    description: 'So luong dau viec da xu ly.',
+    type: 'number',
+    options: [],
+    validation: { min: 0, max: 10000 },
+    analyticsEnabled: true,
+    aggregator: 'sum',
+    status: 'ACTIVE',
+    version: 1
+  },
+  {
+    id: 'complianceNote',
+    key: 'complianceNote',
+    label: 'Ghi chu tuan thu',
+    description: 'Ghi nhan tuan thu quy trinh/han muc.',
+    type: 'text',
+    options: [],
+    validation: { maxLength: 1000 },
+    analyticsEnabled: false,
+    aggregator: 'none',
+    status: 'ACTIVE',
+    version: 1
+  },
+  {
+    id: 'qualityNote',
+    key: 'qualityNote',
+    label: 'Ghi chu chat luong',
+    description: 'Danh gia chat luong ket qua cong viec.',
+    type: 'text',
+    options: [],
+    validation: { maxLength: 1000 },
+    analyticsEnabled: false,
+    aggregator: 'none',
+    status: 'ACTIVE',
+    version: 1
+  },
+  {
+    id: 'note',
+    key: 'note',
+    label: 'Ghi chu bo sung',
+    description: 'Thong tin mo rong khac.',
+    type: 'text',
+    options: [],
+    validation: { maxLength: 2000 },
+    analyticsEnabled: false,
+    aggregator: 'none',
+    status: 'ACTIVE',
+    version: 1
+  }
+];
+
+const DEFAULT_APPENDIX_TEMPLATE_FIELDS: Record<string, Array<Record<string, unknown>>> = {
+  PL01: [
+    { fieldKey: 'summary', required: true, helpText: 'Tom tat cong viec ngay.' },
+    { fieldKey: 'result', required: true, helpText: 'Ket qua chinh cua cong viec.' },
+    { fieldKey: 'taskCount', required: false, helpText: 'Nhap so dau viec hoan thanh.' },
+    { fieldKey: 'complianceNote', required: false },
+    { fieldKey: 'note', required: false }
+  ],
+  PL02: [
+    { fieldKey: 'summary', required: true },
+    { fieldKey: 'result', required: true },
+    { fieldKey: 'taskCount', required: false },
+    { fieldKey: 'qualityNote', required: false },
+    { fieldKey: 'note', required: false }
+  ],
+  PL03: [
+    { fieldKey: 'summary', required: true },
+    { fieldKey: 'result', required: true },
+    { fieldKey: 'qualityNote', required: false },
+    { fieldKey: 'note', required: false }
+  ],
+  PL04: [
+    { fieldKey: 'summary', required: true },
+    { fieldKey: 'result', required: true },
+    { fieldKey: 'complianceNote', required: false },
+    { fieldKey: 'qualityNote', required: false },
+    { fieldKey: 'note', required: false }
+  ],
+  PL05: [
+    { fieldKey: 'summary', required: true },
+    { fieldKey: 'result', required: true },
+    { fieldKey: 'taskCount', required: false },
+    { fieldKey: 'complianceNote', required: false },
+    { fieldKey: 'note', required: false }
+  ],
+  PL06: [
+    { fieldKey: 'summary', required: true },
+    { fieldKey: 'result', required: true },
+    { fieldKey: 'taskCount', required: false },
+    { fieldKey: 'qualityNote', required: false },
+    { fieldKey: 'note', required: false }
+  ],
+  PL10: [
+    { fieldKey: 'summary', required: true },
+    { fieldKey: 'result', required: true },
+    { fieldKey: 'complianceNote', required: false },
+    { fieldKey: 'qualityNote', required: false },
+    { fieldKey: 'note', required: false }
+  ]
+};
+
+const DEFAULT_APPENDIX_TEMPLATE_META: Record<string, { name: string; description: string }> = {
+  PL01: {
+    name: 'Phu luc nhat ky cong viec ngay',
+    description: 'Ghi nhan hoat dong trong ngay theo quy che 2026.'
+  },
+  PL02: {
+    name: 'Phu luc ket qua cong viec ngay',
+    description: 'Tong hop ket qua va chat luong thuc thi trong ngay.'
+  },
+  PL03: {
+    name: 'Phu luc bao cao theo yeu cau',
+    description: 'Bao cao bo sung theo yeu cau quan ly truc tiep.'
+  },
+  PL04: {
+    name: 'Phu luc tuan thu quy trinh',
+    description: 'Theo doi viec tuan thu va cac sai lech can khac phuc.'
+  },
+  PL05: {
+    name: 'Phu luc phoi hop lien phong ban',
+    description: 'Ghi nhan tien do phoi hop voi don vi lien quan.'
+  },
+  PL06: {
+    name: 'Phu luc cai tien chat luong',
+    description: 'Theo doi de xuat cai tien va ket qua trien khai.'
+  },
+  PL10: {
+    name: 'Phu luc ke hoach cai thien hieu suat (PIP)',
+    description: 'Dung cho truong hop can theo doi cai thien hieu suat.'
+  }
+};
+
 @Injectable()
 export class HrRegulationService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(ConfigService) private readonly config?: ConfigService,
+    @Optional() @Inject(ClsService) private readonly cls?: ClsService,
+    @Optional() @Inject(RuntimeSettingsService) private readonly runtimeSettings?: RuntimeSettingsService,
     @Optional() @Inject(WorkflowsService) private readonly workflowsService?: WorkflowsService,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService
   ) {}
+
+  async getRegulationMetadata() {
+    const access = await this.resolveRegulationAccessContext();
+    const appendixRuntime = await this.getAppendixRuntime();
+    return {
+      viewerScope: access.scope,
+      canOverrideEmployeeId: access.canOverrideEmployeeId,
+      requesterEmployeeId: access.requesterEmployeeId,
+      fieldCatalog: appendixRuntime.fieldCatalog,
+      appendices: appendixRuntime.appendices
+    };
+  }
 
   async listAppendixTemplates(query: PaginationQueryDto, appendixCode?: string, status?: string) {
     const where: Prisma.HrAppendixTemplateWhereInput = {};
@@ -124,6 +356,7 @@ export class HrRegulationService {
   }
 
   async listAppendixSubmissions(query: PaginationQueryDto, filters: HrPayload = {}) {
+    const access = await this.resolveRegulationAccessContext();
     const where: Prisma.HrAppendixSubmissionWhereInput = {};
 
     const appendixCode = this.toAppendixCode(filters.appendixCode ?? filters.code, null);
@@ -133,6 +366,7 @@ export class HrRegulationService {
 
     const employeeId = this.readString(filters.employeeId, null);
     if (employeeId) {
+      this.assertEmployeeIdReadable(access, employeeId);
       where.employeeId = employeeId;
     }
 
@@ -155,7 +389,9 @@ export class HrRegulationService {
       };
     }
 
-    return this.prisma.client.hrAppendixSubmission.findMany({
+    this.applyEmployeeScope(where, access);
+
+    const items = await this.prisma.client.hrAppendixSubmission.findMany({
       where,
       include: {
         template: true,
@@ -168,20 +404,34 @@ export class HrRegulationService {
       orderBy: [{ workDate: 'desc' }, { createdAt: 'desc' }],
       take: this.take(query.limit, 300)
     });
+
+    return {
+      viewerScope: access.scope,
+      items
+    };
   }
 
   async createAppendixSubmission(payload: HrPayload) {
+    const access = await this.resolveRegulationAccessContext();
     const appendixCode = this.requireAppendixCode(payload.appendixCode ?? payload.code);
-    const employeeId = this.readString(payload.employeeId, null);
+    const appendixRuntime = await this.getAppendixRuntime();
+    const appendixDefinition = this.findAppendixDefinition(appendixRuntime.appendices, appendixCode);
+    const employeeId = this.resolveWritableEmployeeId(
+      access,
+      this.readString(payload.employeeId, null)
+    );
     if (!employeeId) {
       throw new BadRequestException('Thiếu employeeId.');
     }
-
     await this.ensureEmployee(employeeId);
 
     const workDate = this.toWorkDate(payload.workDate, null);
     const templateId = this.readString(payload.templateId, null);
     const dueAt = this.toDate(payload.dueAt, null) ?? this.computeDefaultDueAt(appendixCode, workDate);
+    const normalizedPayload = this.normalizeSubmissionPayload(
+      appendixDefinition,
+      payload.payloadJson ?? payload.payload ?? {}
+    );
 
     const submission = await this.prisma.client.hrAppendixSubmission.create({
       data: {
@@ -191,7 +441,7 @@ export class HrRegulationService {
         employeeId,
         workDate,
         period: this.readString(payload.period, null),
-        payloadJson: this.toNullableInputJson(payload.payloadJson ?? payload.payload ?? {}),
+        payloadJson: this.toNullableInputJson(normalizedPayload),
         status: this.toAppendixSubmissionStatus(payload.status, HrAppendixSubmissionStatus.DRAFT) ?? HrAppendixSubmissionStatus.DRAFT,
         dueAt,
         createdBy: this.readString(payload.createdBy ?? payload.actorId, null),
@@ -216,13 +466,21 @@ export class HrRegulationService {
 
   async patchAppendixSubmission(id: string, payload: HrPayload) {
     const submission = await this.ensureAppendixSubmission(id);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdWritable(access, submission.employeeId);
 
     if (submission.status !== HrAppendixSubmissionStatus.DRAFT) {
       throw new BadRequestException('Chỉ cho phép chỉnh bản nháp (DRAFT).');
     }
 
     const appendixCode = this.toAppendixCode(payload.appendixCode ?? payload.code, submission.appendixCode) ?? submission.appendixCode;
-    const employeeId = this.readString(payload.employeeId, submission.employeeId);
+    const appendixRuntime = await this.getAppendixRuntime();
+    const appendixDefinition = this.findAppendixDefinition(appendixRuntime.appendices, appendixCode);
+    const employeeId = this.resolveWritableEmployeeId(
+      access,
+      this.readString(payload.employeeId, submission.employeeId),
+      submission.employeeId
+    );
     if (!employeeId) {
       throw new BadRequestException('Thiếu employeeId.');
     }
@@ -233,6 +491,10 @@ export class HrRegulationService {
     const dueAt = payload.dueAt !== undefined
       ? this.toDate(payload.dueAt, null)
       : (submission.dueAt ?? this.computeDefaultDueAt(appendixCode, workDate));
+    const shouldUpdatePayload = payload.payloadJson !== undefined || payload.payload !== undefined;
+    const normalizedPayload = shouldUpdatePayload
+      ? this.normalizeSubmissionPayload(appendixDefinition, payload.payloadJson ?? payload.payload)
+      : null;
 
     await this.prisma.client.hrAppendixSubmission.updateMany({
       where: { id },
@@ -242,9 +504,7 @@ export class HrRegulationService {
         employeeId,
         workDate,
         period: payload.period !== undefined ? this.readString(payload.period, null) : undefined,
-        payloadJson: payload.payloadJson !== undefined || payload.payload !== undefined
-          ? this.toNullableInputJson(payload.payloadJson ?? payload.payload)
-          : undefined,
+        payloadJson: shouldUpdatePayload ? this.toNullableInputJson(normalizedPayload) : undefined,
         dueAt,
         updatedBy: this.readString(payload.updatedBy ?? payload.actorId, submission.updatedBy ?? null)
       }
@@ -269,6 +529,8 @@ export class HrRegulationService {
 
   async submitAppendixSubmission(id: string, payload: HrPayload) {
     const submission = await this.ensureAppendixSubmission(id);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdWritable(access, submission.employeeId);
     if (submission.status === HrAppendixSubmissionStatus.APPROVED) {
       return submission;
     }
@@ -317,6 +579,8 @@ export class HrRegulationService {
 
   async approveAppendixSubmission(id: string, payload: HrPayload) {
     const submission = await this.ensureAppendixSubmission(id);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdReadable(access, submission.employeeId);
     const approverId = this.readString(payload.approverId ?? payload.actorId, null);
     if (!approverId) {
       throw new BadRequestException('Thiếu approverId.');
@@ -342,6 +606,8 @@ export class HrRegulationService {
 
   async rejectAppendixSubmission(id: string, payload: HrPayload) {
     const submission = await this.ensureAppendixSubmission(id);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdReadable(access, submission.employeeId);
     const approverId = this.readString(payload.approverId ?? payload.actorId, null);
     if (!approverId) {
       throw new BadRequestException('Thiếu approverId.');
@@ -367,6 +633,8 @@ export class HrRegulationService {
 
   async createAppendixRevision(submissionId: string, payload: HrPayload) {
     const submission = await this.ensureAppendixSubmission(submissionId);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdWritable(access, submission.employeeId);
     if (!submission.workDate) {
       throw new BadRequestException('Submission không có workDate để áp dụng revision T+1.');
     }
@@ -424,6 +692,8 @@ export class HrRegulationService {
     }
 
     const submission = await this.ensureAppendixSubmission(revision.submissionId);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdReadable(access, submission.employeeId);
     if (!submission.workDate) {
       throw new BadRequestException('Submission không có workDate để áp dụng revision.');
     }
@@ -467,6 +737,10 @@ export class HrRegulationService {
       throw new BadRequestException('Revision không còn ở trạng thái chờ duyệt.');
     }
 
+    const submission = await this.ensureAppendixSubmission(revision.submissionId);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdReadable(access, submission.employeeId);
+
     const approverId = this.readString(payload.approverId ?? payload.actorId, null);
     if (!approverId) {
       throw new BadRequestException('Thiếu approverId.');
@@ -488,9 +762,11 @@ export class HrRegulationService {
   }
 
   async listDailyScores(query: PaginationQueryDto, filters: HrPayload = {}) {
+    const access = await this.resolveRegulationAccessContext();
     const where: Prisma.HrDailyScoreSnapshotWhereInput = {};
     const employeeId = this.readString(filters.employeeId, null);
     if (employeeId) {
+      this.assertEmployeeIdReadable(access, employeeId);
       where.employeeId = employeeId;
     }
 
@@ -508,11 +784,18 @@ export class HrRegulationService {
       };
     }
 
-    return this.prisma.client.hrDailyScoreSnapshot.findMany({
+    this.applyEmployeeScope(where, access);
+
+    const items = await this.prisma.client.hrDailyScoreSnapshot.findMany({
       where,
       orderBy: [{ workDate: 'desc' }, { employeeId: 'asc' }],
       take: this.take(query.limit, 500)
     });
+
+    return {
+      viewerScope: access.scope,
+      items
+    };
   }
 
   async listScoreRoleTemplates() {
@@ -750,10 +1033,12 @@ export class HrRegulationService {
   }
 
   async listPipCases(query: PaginationQueryDto, employeeId?: string, status?: string) {
+    const access = await this.resolveRegulationAccessContext();
     const where: Prisma.HrPipCaseWhereInput = {};
 
     const normalizedEmployeeId = this.readString(employeeId, null);
     if (normalizedEmployeeId) {
+      this.assertEmployeeIdReadable(access, normalizedEmployeeId);
       where.employeeId = normalizedEmployeeId;
     }
 
@@ -762,7 +1047,9 @@ export class HrRegulationService {
       where.status = normalizedStatus;
     }
 
-    return this.prisma.client.hrPipCase.findMany({
+    this.applyEmployeeScope(where, access);
+
+    const items = await this.prisma.client.hrPipCase.findMany({
       where,
       include: {
         sourceSubmission: {
@@ -778,10 +1065,19 @@ export class HrRegulationService {
       orderBy: [{ createdAt: 'desc' }],
       take: this.take(query.limit, 300)
     });
+
+    return {
+      viewerScope: access.scope,
+      items
+    };
   }
 
   async createPipCase(payload: HrPayload) {
-    const employeeId = this.readString(payload.employeeId, null);
+    const access = await this.resolveRegulationAccessContext();
+    const employeeId = this.resolveWritableEmployeeId(
+      access,
+      this.readString(payload.employeeId, null)
+    );
     if (!employeeId) {
       throw new BadRequestException('Thiếu employeeId.');
     }
@@ -808,6 +1104,8 @@ export class HrRegulationService {
 
   async patchPipCase(id: string, payload: HrPayload) {
     const pipCase = await this.ensurePipCase(id);
+    const access = await this.resolveRegulationAccessContext();
+    this.assertEmployeeIdWritable(access, pipCase.employeeId);
 
     const status = this.toPipStatus(payload.status, pipCase.status) ?? pipCase.status;
     const now = new Date();
@@ -1593,6 +1891,553 @@ export class HrRegulationService {
     const dayDate = this.parseIctDateKey(dayKey);
     const utcMillis = dayDate.getTime() + TZ_OFFSET_MINUTES * 60 * 1000;
     return new Date(utcMillis).getUTCDay();
+  }
+
+  private normalizeAppendixFieldType(value: unknown, fallback: AppendixFieldType = 'text'): AppendixFieldType {
+    const normalized = (this.readString(value, '') ?? '').toLowerCase();
+    return APPENDIX_FIELD_TYPES.includes(normalized as AppendixFieldType)
+      ? (normalized as AppendixFieldType)
+      : fallback;
+  }
+
+  private normalizeAppendixAggregator(value: unknown, fallback: AppendixFieldAggregator = 'none'): AppendixFieldAggregator {
+    const normalized = (this.readString(value, '') ?? '').toLowerCase();
+    return APPENDIX_FIELD_AGGREGATORS.includes(normalized as AppendixFieldAggregator)
+      ? (normalized as AppendixFieldAggregator)
+      : fallback;
+  }
+
+  private normalizeAppendixStatus(value: unknown, fallback: AppendixFieldStatus = 'ACTIVE'): AppendixFieldStatus {
+    const normalized = (this.readString(value, '') ?? '').toUpperCase();
+    return APPENDIX_FIELD_STATUSES.includes(normalized as AppendixFieldStatus)
+      ? (normalized as AppendixFieldStatus)
+      : fallback;
+  }
+
+  private normalizeAppendixFieldKey(value: unknown, fallback = '') {
+    const normalized = (this.readString(value, '') ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+    if (normalized) {
+      return normalized;
+    }
+    return (this.readString(fallback, '') ?? '')
+      .replace(/[^a-zA-Z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  private normalizeAppendixFieldVisibility(value: unknown): 'visible' | 'hidden' {
+    return (this.readString(value, '') ?? '').toLowerCase() === 'hidden' ? 'hidden' : 'visible';
+  }
+
+  private normalizeAppendixFieldCatalog(raw: unknown): AppendixFieldCatalogItemRuntime[] {
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    const normalized: AppendixFieldCatalogItemRuntime[] = [];
+    const seen = new Set<string>();
+    for (const row of raw) {
+      const item = this.toJsonObject(row);
+      const key = this.normalizeAppendixFieldKey(item.key ?? item.id, item.id as string);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      const analyticsEnabled = Boolean(item.analyticsEnabled === true);
+      normalized.push({
+        id: this.readString(item.id, key) ?? key,
+        key,
+        label: this.readString(item.label, key) ?? key,
+        description: this.readString(item.description, '') ?? '',
+        type: this.normalizeAppendixFieldType(item.type, 'text'),
+        options: Array.isArray(item.options)
+          ? item.options.map((entry) => this.readString(entry, null)).filter((entry): entry is string => Boolean(entry))
+          : [],
+        validation: this.toJsonObject(item.validation),
+        analyticsEnabled,
+        aggregator: analyticsEnabled
+          ? this.normalizeAppendixAggregator(item.aggregator, 'count')
+          : 'none',
+        status: this.normalizeAppendixStatus(item.status, 'ACTIVE'),
+        version: this.toInt(item.version, 1, 1, 1000)
+      });
+    }
+    return normalized.sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  private resolveDefaultAppendixRuntime(): { fieldCatalog: AppendixFieldCatalogItemRuntime[]; appendices: AppendixCatalogItemRuntime[] } {
+    const fieldCatalog = DEFAULT_APPENDIX_FIELD_CATALOG.map((item) => ({ ...item }));
+    const fieldMap = new Map(fieldCatalog.map((field) => [field.key, field]));
+    const appendices: AppendixCatalogItemRuntime[] = APPENDIX_CODE_VALUES.map((code) => {
+      const defaultMeta = DEFAULT_APPENDIX_TEMPLATE_META[code] ?? { name: code, description: '' };
+      const templateRows = DEFAULT_APPENDIX_TEMPLATE_FIELDS[code] ?? [];
+      const fields: AppendixTemplateFieldRuntime[] = [];
+      for (const rowRaw of templateRows) {
+        const row = this.toJsonObject(rowRaw);
+        const fieldKey = this.normalizeAppendixFieldKey(row.fieldKey);
+        const globalField = fieldMap.get(fieldKey);
+        if (!globalField) {
+          continue;
+        }
+        fields.push({
+          ...globalField,
+          required: Boolean(row.required === true),
+          placeholder: this.readString(row.placeholder, '') ?? '',
+          defaultValue: row.defaultValue ?? null,
+          helpText: this.readString(row.helpText, '') ?? '',
+          visibility: this.normalizeAppendixFieldVisibility(row.visibility),
+          kpiAlias: this.readString(row.kpiAlias, '') ?? '',
+          source: 'global'
+        });
+      }
+      return {
+        code,
+        name: defaultMeta.name,
+        description: defaultMeta.description,
+        fields
+      };
+    });
+    return { fieldCatalog, appendices };
+  }
+
+  private resolveAppendixFieldFromCatalog(
+    raw: unknown,
+    fieldMap: Map<string, AppendixFieldCatalogItemRuntime>
+  ): string {
+    const candidate = this.readString(raw, '');
+    if (!candidate) {
+      return '';
+    }
+    const normalizedCandidate = this.normalizeAppendixFieldKey(candidate);
+    for (const field of fieldMap.values()) {
+      if (field.key === candidate || field.key === normalizedCandidate) {
+        return field.key;
+      }
+      if (this.normalizeAppendixFieldKey(field.id) === normalizedCandidate) {
+        return field.key;
+      }
+      if (this.normalizeAppendixFieldKey(field.label) === normalizedCandidate) {
+        return field.key;
+      }
+    }
+    return '';
+  }
+
+  private normalizeAppendixCatalog(
+    raw: unknown,
+    fieldCatalog: AppendixFieldCatalogItemRuntime[]
+  ): AppendixCatalogItemRuntime[] {
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    const catalogMap = new Map(fieldCatalog.map((field) => [field.key, field]));
+    const normalized: AppendixCatalogItemRuntime[] = [];
+    for (const row of raw) {
+      const item = this.toJsonObject(row);
+      const code = this.readString(item.code, null)?.toUpperCase() ?? '';
+      if (!code || !/^PL\d{2}$/.test(code)) {
+        continue;
+      }
+      const rawFields = Array.isArray(item.fields) ? item.fields : [];
+      const seen = new Set<string>();
+      const fields: AppendixTemplateFieldRuntime[] = [];
+      for (const rawField of rawFields) {
+        const fieldRecord = this.toJsonObject(rawField);
+        const resolvedFromCatalog = this.resolveAppendixFieldFromCatalog(
+          fieldRecord.fieldKey ?? fieldRecord.key ?? fieldRecord.id ?? rawField,
+          catalogMap
+        );
+        const fieldKey = resolvedFromCatalog || this.normalizeAppendixFieldKey(fieldRecord.fieldKey ?? fieldRecord.key ?? fieldRecord.id ?? rawField);
+        if (!fieldKey || seen.has(fieldKey)) {
+          continue;
+        }
+        seen.add(fieldKey);
+
+        const globalField = catalogMap.get(fieldKey);
+        if (globalField) {
+          fields.push({
+            ...globalField,
+            required: Boolean(fieldRecord.required === true),
+            placeholder: this.readString(fieldRecord.placeholder, '') ?? '',
+            defaultValue: fieldRecord.defaultValue ?? null,
+            helpText: this.readString(fieldRecord.helpText, '') ?? '',
+            visibility: this.normalizeAppendixFieldVisibility(fieldRecord.visibility),
+            kpiAlias: this.readString(fieldRecord.kpiAlias, '') ?? '',
+            source: 'global'
+          });
+          continue;
+        }
+
+        if (!fieldKey.toLowerCase().startsWith(`${code.toLowerCase()}_`)) {
+          continue;
+        }
+
+        fields.push({
+          id: fieldKey,
+          key: fieldKey,
+          label: this.readString(fieldRecord.label, fieldKey) ?? fieldKey,
+          description: this.readString(fieldRecord.description, '') ?? '',
+          type: this.normalizeAppendixFieldType(fieldRecord.type, 'text'),
+          options: Array.isArray(fieldRecord.options)
+            ? fieldRecord.options.map((entry) => this.readString(entry, null)).filter((entry): entry is string => Boolean(entry))
+            : [],
+          validation: this.toJsonObject(fieldRecord.validation),
+          analyticsEnabled: Boolean(fieldRecord.analyticsEnabled === true),
+          aggregator: this.normalizeAppendixAggregator(fieldRecord.aggregator, 'none'),
+          status: this.normalizeAppendixStatus(fieldRecord.status, 'ACTIVE'),
+          version: this.toInt(fieldRecord.version, 1, 1, 1000),
+          required: Boolean(fieldRecord.required === true),
+          placeholder: this.readString(fieldRecord.placeholder, '') ?? '',
+          defaultValue: fieldRecord.defaultValue ?? null,
+          helpText: this.readString(fieldRecord.helpText, '') ?? '',
+          visibility: this.normalizeAppendixFieldVisibility(fieldRecord.visibility),
+          kpiAlias: this.readString(fieldRecord.kpiAlias, '') ?? '',
+          source: 'appendix-local'
+        });
+      }
+
+      normalized.push({
+        code,
+        name: this.readString(item.name, code) ?? code,
+        description: this.readString(item.description, '') ?? '',
+        fields
+      });
+    }
+    return normalized.sort((left, right) => left.code.localeCompare(right.code));
+  }
+
+  private async getAppendixRuntime(): Promise<{ fieldCatalog: AppendixFieldCatalogItemRuntime[]; appendices: AppendixCatalogItemRuntime[] }> {
+    const fallbackRuntime = this.resolveDefaultAppendixRuntime();
+    if (!this.runtimeSettings) {
+      return fallbackRuntime;
+    }
+
+    try {
+      const runtime = await this.runtimeSettings.getHrPolicyRuntime();
+      const runtimeRecord = this.toJsonObject(runtime);
+      const fieldCatalogRaw = runtimeRecord.appendixFieldCatalog;
+      const appendicesRaw = runtimeRecord.appendixCatalog;
+      const fieldCatalog = this.normalizeAppendixFieldCatalog(fieldCatalogRaw);
+      const effectiveFieldCatalog = fieldCatalog.length > 0 ? fieldCatalog : fallbackRuntime.fieldCatalog;
+      const appendices = this.normalizeAppendixCatalog(appendicesRaw, effectiveFieldCatalog);
+      return {
+        fieldCatalog: effectiveFieldCatalog,
+        appendices: appendices.length > 0 ? appendices : fallbackRuntime.appendices
+      };
+    } catch {
+      return fallbackRuntime;
+    }
+  }
+
+  private findAppendixDefinition(appendices: AppendixCatalogItemRuntime[], appendixCode: HrAppendixCode) {
+    const matched = appendices.find((item) => item.code === appendixCode);
+    if (matched) {
+      return matched;
+    }
+    const fallback = this.resolveDefaultAppendixRuntime().appendices.find((item) => item.code === appendixCode);
+    if (fallback) {
+      return fallback;
+    }
+    throw new BadRequestException(`Không tìm thấy cấu hình appendix ${appendixCode}.`);
+  }
+
+  private normalizeSubmissionFieldValue(field: AppendixTemplateFieldRuntime, rawValue: unknown) {
+    if (rawValue === null || rawValue === undefined || rawValue === '') {
+      return null;
+    }
+
+    const validation = this.toJsonObject(field.validation);
+
+    if (field.type === 'number') {
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) {
+        throw new BadRequestException(`Truong ${field.label} bat buoc la so.`);
+      }
+      const min = this.toNumber(validation.min);
+      const max = this.toNumber(validation.max);
+      if (min !== null && numeric < min) {
+        throw new BadRequestException(`Truong ${field.label} phai >= ${min}.`);
+      }
+      if (max !== null && numeric > max) {
+        throw new BadRequestException(`Truong ${field.label} phai <= ${max}.`);
+      }
+      return numeric;
+    }
+
+    if (field.type === 'boolean') {
+      if (typeof rawValue === 'boolean') {
+        return rawValue;
+      }
+      const normalized = String(rawValue).trim().toLowerCase();
+      if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+        return true;
+      }
+      if (['0', 'false', 'no', 'off'].includes(normalized)) {
+        return false;
+      }
+      throw new BadRequestException(`Truong ${field.label} bat buoc la true/false.`);
+    }
+
+    if (field.type === 'date') {
+      const text = String(rawValue).trim();
+      if (!text) {
+        return null;
+      }
+      const datePart = text.includes('T') ? text.slice(0, 10) : text;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+        throw new BadRequestException(`Truong ${field.label} bat buoc theo dinh dang YYYY-MM-DD.`);
+      }
+      return datePart;
+    }
+
+    const textValue = String(rawValue).trim();
+    if (!textValue) {
+      return null;
+    }
+
+    if (field.type === 'select' && field.options.length > 0 && !field.options.includes(textValue)) {
+      throw new BadRequestException(`Truong ${field.label} khong nam trong danh muc cho phep.`);
+    }
+
+    const minLength = this.toNumber(validation.minLength);
+    const maxLength = this.toNumber(validation.maxLength);
+    if (minLength !== null && textValue.length < minLength) {
+      throw new BadRequestException(`Truong ${field.label} toi thieu ${minLength} ky tu.`);
+    }
+    if (maxLength !== null && textValue.length > maxLength) {
+      throw new BadRequestException(`Truong ${field.label} toi da ${maxLength} ky tu.`);
+    }
+    const pattern = this.readString(validation.pattern, null);
+    if (pattern) {
+      try {
+        const regex = new RegExp(pattern);
+        if (!regex.test(textValue)) {
+          throw new BadRequestException(`Truong ${field.label} khong dung dinh dang.`);
+        }
+      } catch {
+        // Ignore invalid regex pattern from settings to avoid breaking runtime forms.
+      }
+    }
+
+    return textValue;
+  }
+
+  private normalizeSubmissionPayload(appendix: AppendixCatalogItemRuntime, rawPayload: unknown) {
+    const inputPayload = this.toJsonObject(rawPayload);
+    const outputPayload: Record<string, unknown> = {};
+    const appendixFields = appendix.fields.filter((field) => field.visibility !== 'hidden');
+
+    for (const field of appendixFields) {
+      const fallbackValue = field.defaultValue ?? null;
+      const rawValue = Object.prototype.hasOwnProperty.call(inputPayload, field.key)
+        ? inputPayload[field.key]
+        : fallbackValue;
+      const normalizedValue = this.normalizeSubmissionFieldValue(field, rawValue);
+      const requiredByValidation = this.toJsonObject(field.validation).required === true;
+      if ((field.required || requiredByValidation) && (normalizedValue === null || normalizedValue === undefined || normalizedValue === '')) {
+        throw new BadRequestException(`Truong ${field.label} la bat buoc.`);
+      }
+      outputPayload[field.key] = normalizedValue;
+    }
+
+    for (const [rawKey, rawValue] of Object.entries(inputPayload)) {
+      if (rawKey === '_schema') {
+        continue;
+      }
+      if (Object.prototype.hasOwnProperty.call(outputPayload, rawKey)) {
+        continue;
+      }
+      outputPayload[rawKey] = rawValue;
+    }
+
+    outputPayload._schema = {
+      appendixCode: appendix.code,
+      capturedAt: new Date().toISOString(),
+      fieldVersions: Object.fromEntries(appendix.fields.map((field) => [field.key, field.version]))
+    };
+
+    return outputPayload;
+  }
+
+  private isAuthEnabled() {
+    const env = String(this.config?.get<string>('AUTH_ENABLED', 'false') ?? 'false').trim().toLowerCase();
+    return env === 'true';
+  }
+
+  private resolveRegulationActor() {
+    const authUserRaw = this.cls?.get(AUTH_USER_CONTEXT_KEY) as AuthUser | undefined;
+    const authUser = authUserRaw && typeof authUserRaw === 'object' ? authUserRaw : undefined;
+    const roleRaw = this.readString(authUser?.role, null)?.toUpperCase();
+    const role = (Object.values(UserRole) as string[]).includes(roleRaw ?? '')
+      ? (roleRaw as UserRole)
+      : ('ANONYMOUS' as const);
+    const employeeId = this.readString(authUser?.employeeId, null)
+      ?? this.readString(authUser?.userId, null)
+      ?? this.readString(authUser?.sub, null);
+
+    return {
+      authEnabled: this.isAuthEnabled(),
+      role,
+      employeeId
+    };
+  }
+
+  private async collectManagedEmployeeIds(managerId: string) {
+    const allEmployees = await this.prisma.client.employee.findMany({
+      where: {
+        status: { not: GenericStatus.ARCHIVED }
+      },
+      select: { id: true, managerId: true }
+    });
+    const byManager = new Map<string, string[]>();
+    for (const employee of allEmployees) {
+      if (!employee.managerId) continue;
+      if (!byManager.has(employee.managerId)) {
+        byManager.set(employee.managerId, []);
+      }
+      byManager.get(employee.managerId)?.push(employee.id);
+    }
+
+    const result = new Set<string>();
+    const queue = [...(byManager.get(managerId) ?? [])];
+    while (queue.length > 0) {
+      const current = queue.shift() as string;
+      if (result.has(current)) continue;
+      result.add(current);
+      for (const child of byManager.get(current) ?? []) {
+        queue.push(child);
+      }
+    }
+
+    return Array.from(result);
+  }
+
+  private async resolveRegulationAccessContext(): Promise<RegulationAccessContext> {
+    const actor = this.resolveRegulationActor();
+    if (actor.role === 'ANONYMOUS') {
+      return {
+        scope: actor.authEnabled ? 'self' : 'company',
+        role: actor.role,
+        requesterEmployeeId: actor.employeeId,
+        allowedEmployeeIds: actor.authEnabled && actor.employeeId ? [actor.employeeId] : null,
+        canOverrideEmployeeId: !actor.authEnabled
+      };
+    }
+
+    if (actor.role === UserRole.ADMIN) {
+      return {
+        scope: 'company',
+        role: actor.role,
+        requesterEmployeeId: actor.employeeId,
+        allowedEmployeeIds: null,
+        canOverrideEmployeeId: true
+      };
+    }
+
+    const requesterEmployeeId = actor.employeeId;
+    if (!requesterEmployeeId) {
+      throw new ForbiddenException('Tài khoản chưa liên kết employeeId để truy cập dữ liệu quy chế.');
+    }
+
+    if (actor.role === UserRole.STAFF) {
+      return {
+        scope: 'self',
+        role: actor.role,
+        requesterEmployeeId,
+        allowedEmployeeIds: [requesterEmployeeId],
+        canOverrideEmployeeId: false
+      };
+    }
+
+    const requesterEmployee = await this.prisma.client.employee.findFirst({
+      where: { id: requesterEmployeeId },
+      select: { id: true, departmentId: true, department: true }
+    });
+    if (!requesterEmployee) {
+      return {
+        scope: 'self',
+        role: actor.role,
+        requesterEmployeeId,
+        allowedEmployeeIds: [requesterEmployeeId],
+        canOverrideEmployeeId: false
+      };
+    }
+
+    const teamEmployeeIds = await this.collectManagedEmployeeIds(requesterEmployee.id);
+    const departmentEmployees = await this.prisma.client.employee.findMany({
+      where: {
+        OR: [
+          ...(requesterEmployee.departmentId ? [{ departmentId: requesterEmployee.departmentId }] : []),
+          ...(requesterEmployee.department ? [{ department: requesterEmployee.department }] : [])
+        ]
+      },
+      select: { id: true }
+    });
+
+    const allowedEmployeeIds = departmentEmployees.length > 0
+      ? departmentEmployees.map((employee) => employee.id)
+      : Array.from(new Set([requesterEmployee.id, ...teamEmployeeIds]));
+
+    return {
+      scope: departmentEmployees.length > 0 ? 'department' : 'team',
+      role: actor.role,
+      requesterEmployeeId,
+      allowedEmployeeIds,
+      canOverrideEmployeeId: false
+    };
+  }
+
+  private applyEmployeeScope(where: Record<string, unknown>, access: RegulationAccessContext) {
+    if (access.allowedEmployeeIds === null) {
+      return;
+    }
+    if (access.allowedEmployeeIds.length === 0) {
+      where.employeeId = '__NO_ACCESS__';
+      return;
+    }
+    if (typeof where.employeeId === 'string' && where.employeeId.trim()) {
+      return;
+    }
+    where.employeeId = {
+      in: access.allowedEmployeeIds
+    };
+  }
+
+  private assertEmployeeIdReadable(access: RegulationAccessContext, employeeId: string) {
+    if (access.allowedEmployeeIds === null) {
+      return;
+    }
+    if (!access.allowedEmployeeIds.includes(employeeId)) {
+      throw new ForbiddenException('Không có quyền xem dữ liệu nhân viên này.');
+    }
+  }
+
+  private assertEmployeeIdWritable(access: RegulationAccessContext, employeeId: string) {
+    if (access.canOverrideEmployeeId) {
+      this.assertEmployeeIdReadable(access, employeeId);
+      return;
+    }
+    if (!access.requesterEmployeeId || access.requesterEmployeeId !== employeeId) {
+      throw new ForbiddenException('Bạn chỉ được thao tác trên dữ liệu của chính mình.');
+    }
+  }
+
+  private resolveWritableEmployeeId(
+    access: RegulationAccessContext,
+    requestedEmployeeId: string | null,
+    fallbackEmployeeId?: string | null
+  ) {
+    if (access.canOverrideEmployeeId) {
+      return requestedEmployeeId ?? fallbackEmployeeId ?? access.requesterEmployeeId;
+    }
+    if (!access.requesterEmployeeId) {
+      throw new ForbiddenException('Không xác định được employeeId của tài khoản hiện tại.');
+    }
+    return access.requesterEmployeeId;
   }
 
   private async ensureEmployee(employeeId: string) {

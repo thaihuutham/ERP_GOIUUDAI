@@ -50,10 +50,55 @@ enum EmploymentType {
   INTERN
 }
 
+enum AttendanceMethod {
+  REMOTE_TRACKED
+  OFFICE_EXCEL
+  EXEMPT
+}
+
 enum HrGoalTrackingMode {
   MANUAL
   AUTO
   HYBRID
+}
+
+enum HrAppendixCode {
+  PL01
+  PL02
+  PL03
+  PL04
+  PL05
+  PL06
+  PL10
+}
+
+enum HrAppendixSubmissionStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum HrAppendixEvidenceType {
+  LINK
+  FILE
+}
+
+enum HrAppendixRevisionStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum HrDailyScoreStatus {
+  PROVISIONAL
+  FINAL
+}
+
+enum HrPipCaseStatus {
+  DRAFT
+  OPEN
+  CLOSED
 }
 
 enum PayrollComponentType {
@@ -201,6 +246,7 @@ model Employee {
   workShiftId  String?
   joinDate     DateTime?
   employmentType EmploymentType @default(FULL_TIME)
+  attendanceMethod AttendanceMethod @default(REMOTE_TRACKED)
   baseSalary   Decimal? @db.Decimal(18, 2)
   status       GenericStatus @default(ACTIVE)
   createdAt    DateTime @default(now())
@@ -213,6 +259,7 @@ model Employee {
   @@index([tenant_Id, positionId])
   @@index([tenant_Id, managerId])
   @@index([tenant_Id, workShiftId])
+  @@index([tenant_Id, attendanceMethod])
 }
 
 model OrgUnit {
@@ -527,8 +574,10 @@ model Attendance {
   checkOutAt  DateTime?
   scheduledStartAt DateTime?
   scheduledEndAt DateTime?
+  workedMinutes Int   @default(0)
   lateMinutes Int      @default(0)
   overtimeMinutes Int  @default(0)
+  attendanceMethod AttendanceMethod @default(REMOTE_TRACKED)
   note        String?
   status      String?
   createdAt   DateTime @default(now())
@@ -537,6 +586,7 @@ model Attendance {
   @@index([tenant_Id])
   @@index([tenant_Id, employeeId, workDate])
   @@index([tenant_Id, workShiftId])
+  @@index([tenant_Id, attendanceMethod])
 }
 
 model LeaveRequest {
@@ -772,6 +822,160 @@ model HrGoalTimeline {
 
   @@index([tenant_Id])
   @@index([tenant_Id, goalId, createdAt])
+}
+
+model HrAppendixTemplate {
+  id             String          @id @default(cuid())
+  tenant_Id      String
+  appendixCode   HrAppendixCode
+  version        Int             @default(1)
+  formSchemaJson Json?
+  activeRulesJson Json?
+  status         GenericStatus   @default(ACTIVE)
+  createdBy      String?
+  updatedBy      String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  submissions    HrAppendixSubmission[]
+
+  @@unique([tenant_Id, appendixCode, version])
+  @@index([tenant_Id])
+  @@index([tenant_Id, appendixCode, status])
+}
+
+model HrAppendixSubmission {
+  id                   String                    @id @default(cuid())
+  tenant_Id            String
+  appendixCode         HrAppendixCode
+  templateId           String?
+  employeeId           String
+  workDate             DateTime?
+  period               String?
+  payloadJson          Json?
+  status               HrAppendixSubmissionStatus @default(DRAFT)
+  dueAt                DateTime?
+  submittedAt          DateTime?
+  decidedAt            DateTime?
+  approverId           String?
+  decisionNote         String?
+  workflowDefinitionId String?
+  workflowInstanceId   String?
+  createdBy            String?
+  updatedBy            String?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  template             HrAppendixTemplate?       @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  evidences            HrAppendixEvidence[]
+  revisions            HrAppendixRevision[]
+  pipCases             HrPipCase[]               @relation("PipSourceSubmission")
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, appendixCode, status])
+  @@index([tenant_Id, employeeId, workDate])
+  @@index([tenant_Id, employeeId, period])
+  @@index([tenant_Id, workflowInstanceId])
+}
+
+model HrAppendixEvidence {
+  id           String                 @id @default(cuid())
+  tenant_Id    String
+  submissionId String
+  evidenceType HrAppendixEvidenceType
+  url          String?
+  objectKey    String?
+  note         String?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  submission   HrAppendixSubmission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, submissionId])
+  @@index([tenant_Id, evidenceType])
+}
+
+model HrAppendixRevision {
+  id           String                  @id @default(cuid())
+  tenant_Id    String
+  submissionId String
+  requestedBy  String?
+  payloadJson  Json?
+  reason       String?
+  status       HrAppendixRevisionStatus @default(PENDING_APPROVAL)
+  approverId   String?
+  decisionNote String?
+  approvedAt   DateTime?
+  rejectedAt   DateTime?
+  appliedAt    DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  submission   HrAppendixSubmission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, submissionId, status])
+  @@index([tenant_Id, createdAt])
+}
+
+model HrScoreRoleTemplate {
+  id           String        @id @default(cuid())
+  tenant_Id    String
+  roleGroup    String
+  pillarWeights Json?
+  thresholds   Json?
+  status       GenericStatus @default(ACTIVE)
+  createdBy    String?
+  updatedBy    String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([tenant_Id, roleGroup])
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+}
+
+model HrDailyScoreSnapshot {
+  id            String            @id @default(cuid())
+  tenant_Id     String
+  employeeId    String
+  workDate      DateTime
+  outputScore   Float             @default(0)
+  activityScore Float             @default(0)
+  complianceScore Float           @default(0)
+  qualityScore  Float             @default(0)
+  totalScore    Float             @default(0)
+  status        HrDailyScoreStatus @default(PROVISIONAL)
+  freezeAt      DateTime?
+  finalizedAt   DateTime?
+  reasonsJson   Json?
+  metadataJson  Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([tenant_Id, employeeId, workDate])
+  @@index([tenant_Id])
+  @@index([tenant_Id, workDate, status])
+}
+
+model HrPipCase {
+  id                 String         @id @default(cuid())
+  tenant_Id          String
+  employeeId         String
+  sourceSubmissionId String?
+  triggerReason      String
+  baselineJson       Json?
+  goalsJson          Json?
+  status             HrPipCaseStatus @default(DRAFT)
+  openedAt           DateTime?
+  closedAt           DateTime?
+  closedReason       String?
+  createdBy          String?
+  updatedBy          String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  sourceSubmission   HrAppendixSubmission? @relation("PipSourceSubmission", fields: [sourceSubmissionId], references: [id], onDelete: SetNull)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId, status])
+  @@index([tenant_Id, sourceSubmissionId])
 }
 
 model HrEvent {
@@ -1448,14 +1652,22 @@ model Approval {
   targetId     String
   requesterId  String
   approverId   String?
+  assignmentType String @default("USER")
+  assignmentSource String?
   stepKey      String?
+  approvalMode String @default("ALL")
+  requiredApprovals Int?
   contextJson  Json?
+  resolutionMetaJson Json?
   dueAt        DateTime?
   escalatedAt  DateTime?
   escalatedTo  String?
+  escalationCount Int @default(0)
   delegatedAt  DateTime?
   delegatedTo  String?
   decisionNote String?
+  decisionActorId String?
+  migratedFromApprovalId String?
   status       GenericStatus @default(PENDING)
   decidedAt    DateTime?
   createdAt    DateTime @default(now())
@@ -1464,6 +1676,9 @@ model Approval {
   @@index([tenant_Id])
   @@index([tenant_Id, instanceId])
   @@index([tenant_Id, approverId])
+  @@index([tenant_Id, status, approverId, dueAt])
+  @@index([tenant_Id, requesterId, status, createdAt])
+  @@index([tenant_Id, migratedFromApprovalId])
 }
 
 model WorkflowActionLog {
@@ -1558,6 +1773,187 @@ model ReportRun {
 
   @@index([tenant_Id])
   @@index([tenant_Id, reportId, createdAt])
+}
+
+model AssistantKnowledgeSource {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  name            String
+  sourceType      String
+  rootPath        String?
+  sourceUrl       String?
+  includePatterns Json?
+  metadataJson    Json?
+  scopeType       String   @default("company")
+  scopeRefIds     Json?
+  allowedRoles    Json?
+  classification  String   @default("internal")
+  scheduleRule    String?
+  isActive        Boolean  @default(true)
+  lastSyncedAt    DateTime?
+  lastSyncStatus  String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  documents       AssistantKnowledgeDocument[]
+
+  @@unique([tenant_Id, name])
+  @@index([tenant_Id])
+  @@index([tenant_Id, isActive])
+}
+
+model AssistantKnowledgeDocument {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  sourceId      String
+  source        AssistantKnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  title         String
+  uri           String
+  checksum      String?
+  contentText   String?
+  metadataJson  Json?
+  scopeType     String   @default("company")
+  scopeRefIds   Json?
+  allowedRoles  Json?
+  classification String  @default("internal")
+  status        String   @default("ACTIVE")
+  lastIndexedAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  chunks        AssistantKnowledgeChunk[]
+
+  @@unique([tenant_Id, sourceId, uri])
+  @@index([tenant_Id])
+  @@index([tenant_Id, sourceId])
+  @@index([tenant_Id, status])
+}
+
+model AssistantKnowledgeChunk {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  documentId    String
+  document      AssistantKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex    Int
+  content       String
+  tokenCount    Int?
+  scopeType     String   @default("company")
+  scopeRefIds   Json?
+  allowedRoles  Json?
+  classification String  @default("internal")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenant_Id, documentId, chunkIndex])
+  @@index([tenant_Id])
+  @@index([tenant_Id, documentId])
+}
+
+model AssistantReportRun {
+  id               String   @id @default(cuid())
+  tenant_Id        String
+  runType          String   @default("MANUAL")
+  reportPacksJson  Json?
+  status           GenericStatus @default(PENDING)
+  requestedBy      String?
+  accessSnapshotJson Json?
+  summaryJson      Json?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  artifacts        AssistantReportArtifact[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, status, createdAt])
+}
+
+model AssistantDispatchChannel {
+  id                String   @id @default(cuid())
+  tenant_Id         String
+  name              String
+  channelType       String
+  endpointUrl       String
+  webhookSecretRef  String?
+  scopeType         String   @default("company")
+  scopeRefIds       Json?
+  allowedReportPacks Json?
+  metadataJson      Json?
+  isActive          Boolean  @default(true)
+  lastTestedAt      DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  artifacts         AssistantReportArtifact[]
+  dispatchAttempts  AssistantDispatchAttempt[]
+
+  @@unique([tenant_Id, name])
+  @@index([tenant_Id])
+  @@index([tenant_Id, isActive])
+}
+
+model AssistantReportArtifact {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  runId           String
+  run             AssistantReportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifactType    String
+  scopeType       String   @default("company")
+  scopeRefIds     Json?
+  status          GenericStatus @default(PENDING)
+  contentJson     Json?
+  channelId       String?
+  channel         AssistantDispatchChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  dispatchAttempts AssistantDispatchAttempt[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, runId, artifactType])
+  @@index([tenant_Id, status, artifactType])
+  @@index([tenant_Id, channelId])
+}
+
+model AssistantDispatchAttempt {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  artifactId      String
+  artifact        AssistantReportArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  channelId       String
+  channel         AssistantDispatchChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  attemptNo       Int      @default(1)
+  status          String   @default("PENDING")
+  requestPayload  Json?
+  responsePayload Json?
+  errorMessage    String?
+  nextRetryAt     DateTime?
+  dispatchedAt    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, artifactId, createdAt])
+  @@index([tenant_Id, channelId, createdAt])
+  @@index([tenant_Id, status, nextRetryAt])
+}
+
+model AssistantAccessDecisionLog {
+  id               String   @id @default(cuid())
+  tenant_Id        String
+  actorUserId      String?
+  actorRole        String?
+  scopeType        String
+  scopeRefIds      Json?
+  allowedModulesJson Json?
+  decisionReason   String?
+  requestId        String?
+  createdAt        DateTime @default(now())
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, actorUserId, createdAt])
 }
 
 model Setting {

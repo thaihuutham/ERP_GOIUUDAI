@@ -16,6 +16,11 @@ Rebuild ERP với codebase mới nhưng giữ feature-set cũ:
 - Người dùng nội bộ: ~50 nhân viên.
 - Khách lẻ không đăng nhập hệ thống.
 
+## Nguyên tắc UX nhập liệu ERP
+- Không yêu cầu người dùng tự gõ các mã/giá trị bắt buộc phải chính xác tuyệt đối.
+- Các trường bắt buộc dạng mã nghiệp vụ phải được chọn từ danh mục chuẩn hoá (dropdown/autocomplete/picker).
+- Mục tiêu là giảm sai sót vận hành và đảm bảo dữ liệu vào luôn hợp lệ theo rule hệ thống.
+
 ## Kiến trúc công nghệ
 - Modular Monolith (không microservices ở giai đoạn này).
 - Backend: NestJS + Prisma + PostgreSQL.

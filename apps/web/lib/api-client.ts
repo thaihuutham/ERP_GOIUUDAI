@@ -2,6 +2,8 @@ import type { HttpMethod } from './module-ui';
 import { readStoredAuthSession } from './auth-session';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1').replace(/\/$/, '');
+const WEB_ROLE_STORAGE_KEY = 'erp_web_role';
+const DEV_ROLES = new Set(['STAFF', 'MANAGER', 'ADMIN']);
 
 export type ApiRequestOptions = {
   method?: HttpMethod;
@@ -51,12 +53,15 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
     }
   }
 
+  const devIdentityHeaders = resolveDevIdentityHeaders();
+
   const res = await fetch(buildUrl(path, options.query), {
     method,
     headers: {
       'Content-Type': 'application/json',
       ...tenantHeaders,
       ...authHeaders,
+      ...devIdentityHeaders,
       ...(options.headers ?? {})
     },
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
@@ -72,6 +77,31 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   }
 
   return payload as T;
+}
+
+function resolveDevIdentityHeaders(): Record<string, string> {
+  const authEnabled = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+  if (authEnabled) {
+    return {};
+  }
+
+  const authSession = readStoredAuthSession();
+  let role = 'MANAGER';
+  if (typeof window !== 'undefined') {
+    const storedRole = String(window.localStorage.getItem(WEB_ROLE_STORAGE_KEY) ?? '').trim().toUpperCase();
+    if (DEV_ROLES.has(storedRole)) {
+      role = storedRole;
+    }
+  }
+
+  const userId = `dev_${role.toLowerCase()}`;
+  const employeeId = String(authSession?.user?.employeeId ?? '').trim() || userId;
+  return {
+    'x-erp-dev-role': role,
+    'x-erp-dev-user-id': userId,
+    'x-erp-dev-email': `${role.toLowerCase()}@local.erp`,
+    'x-erp-dev-employee-id': employeeId
+  };
 }
 
 function safeJsonParse(value: string) {

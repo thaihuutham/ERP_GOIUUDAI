@@ -4,10 +4,10 @@ export type HrSectionKey =
   | 'recruitment'
   | 'employees'
   | 'attendance'
+  | 'regulation'
   | 'performance'
   | 'personal-income-tax'
-  | 'goals'
-  | 'employee-info';
+  | 'goals';
 
 export type HrSectionDefinition = {
   key: HrSectionKey;
@@ -24,15 +24,15 @@ export const HR_SECTION_DEFINITIONS: HrSectionDefinition[] = [
     title: 'Tiền lương',
     href: '/modules/hr/payroll',
     featureKeys: ['payroll'],
-    description: 'Quản lý bảng lương theo kỳ, line items và trạng thái chi trả.',
-    highlights: ['Sinh bảng lương theo tháng', 'Theo dõi line item', 'Khóa kỳ chi trả']
+    description: 'Quản lý bảng lương theo kỳ và trạng thái chi trả.',
+    highlights: ['Tạo bảng lương định kỳ', 'Theo dõi chi tiết khoản lương', 'Khóa kỳ chi trả']
   },
   {
     key: 'social-insurance',
     title: 'Bảo hiểm xã hội',
     href: '/modules/hr/social-insurance',
     featureKeys: ['contracts', 'benefits'],
-    description: 'Theo dõi hợp đồng và phúc lợi liên quan bảo hiểm xã hội nội bộ.',
+    description: 'Theo dõi hợp đồng và quyền lợi bảo hiểm xã hội.',
     highlights: ['Hợp đồng lao động', 'Mức lương đóng bảo hiểm', 'Phúc lợi theo nhân viên']
   },
   {
@@ -40,7 +40,7 @@ export const HR_SECTION_DEFINITIONS: HrSectionDefinition[] = [
     title: 'Tuyển dụng',
     href: '/modules/hr/recruitment',
     featureKeys: ['recruitment'],
-    description: 'Theo dõi pipeline tuyển dụng, ứng viên và trạng thái xử lý hồ sơ.',
+    description: 'Theo dõi pipeline tuyển dụng và trạng thái hồ sơ.',
     highlights: ['Pipeline tuyển dụng', 'Theo dõi ứng viên', 'Cập nhật trạng thái hồ sơ']
   },
   {
@@ -48,7 +48,7 @@ export const HR_SECTION_DEFINITIONS: HrSectionDefinition[] = [
     title: 'Nhân viên',
     href: '/modules/hr/employees',
     featureKeys: ['employees'],
-    description: 'Danh sách nhân viên và thông tin vận hành nhân sự cốt lõi.',
+    description: 'Danh sách nhân viên và thông tin nhân sự cốt lõi.',
     highlights: ['Hồ sơ nhân viên', 'Thông tin phòng ban', 'Tình trạng lao động']
   },
   {
@@ -56,15 +56,23 @@ export const HR_SECTION_DEFINITIONS: HrSectionDefinition[] = [
     title: 'Chấm công',
     href: '/modules/hr/attendance',
     featureKeys: ['attendance'],
-    description: 'Theo dõi chấm công, check-in/check-out và dữ liệu công hàng ngày.',
-    highlights: ['Check-in/out', 'Lịch sử công', 'Đi muộn/tăng ca']
+    description: 'Theo dõi chấm công và dữ liệu công hằng ngày.',
+    highlights: ['Check-in/out', 'Lịch sử công', 'Đi muộn và tăng ca']
+  },
+  {
+    key: 'regulation',
+    title: 'Quy chế 2026',
+    href: '/modules/hr/regulation',
+    featureKeys: ['performance'],
+    description: 'Số hóa phụ lục PL01/02/03/04/05/06/10, điểm ngày và PIP.',
+    highlights: ['Biểu mẫu phụ lục', 'Điểm ngày tự động', 'Tạo draft PIP']
   },
   {
     key: 'performance',
     title: 'Đánh giá',
     href: '/modules/hr/performance',
     featureKeys: ['performance'],
-    description: 'Đánh giá hiệu suất theo kỳ và ghi chú kết quả đánh giá nhân viên.',
+    description: 'Đánh giá hiệu suất theo kỳ và lưu kết quả.',
     highlights: ['Kỳ đánh giá', 'Điểm hiệu suất', 'Theo dõi reviewer']
   },
   {
@@ -72,7 +80,7 @@ export const HR_SECTION_DEFINITIONS: HrSectionDefinition[] = [
     title: 'Thuế TNCN',
     href: '/modules/hr/personal-income-tax',
     featureKeys: ['personal-income-tax'],
-    description: 'Quản lý hồ sơ và bản ghi thuế TNCN theo tháng/năm, hỗ trợ generate theo kỳ.',
+    description: 'Quản lý hồ sơ và bản ghi thuế TNCN theo kỳ.',
     highlights: ['Generate kỳ thuế', 'Sửa thủ công trước chốt', 'Theo dõi thu nhập tính thuế']
   },
   {
@@ -80,16 +88,8 @@ export const HR_SECTION_DEFINITIONS: HrSectionDefinition[] = [
     title: 'Mục tiêu',
     href: '/modules/hr/goals',
     featureKeys: ['goals'],
-    description: 'Thiết lập và theo dõi mục tiêu theo nhân viên/kỳ với cập nhật tiến độ.',
-    highlights: ['CRUD mục tiêu', 'Theo dõi tiến độ %', 'Xác định hoàn thành tự động']
-  },
-  {
-    key: 'employee-info',
-    title: 'Thông tin nhân sự',
-    href: '/modules/hr/employee-info',
-    featureKeys: ['employee-info'],
-    description: 'Tra cứu hồ sơ nhân sự tổng hợp gồm cá nhân, công việc, hợp đồng và phúc lợi.',
-    highlights: ['Danh sách tổng hợp', 'Xem chi tiết hồ sơ', 'Cập nhật thông tin nhân viên']
+    description: 'Thiết lập mục tiêu theo nhân viên và theo dõi tiến độ.',
+    highlights: ['Tạo và cập nhật mục tiêu', 'Theo dõi tiến độ %', 'Xác định hoàn thành tự động']
   }
 ];
 

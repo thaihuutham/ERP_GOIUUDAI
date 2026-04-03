@@ -136,6 +136,26 @@ export class HrController {
     return this.hrService.listAttendance(query, employeeId, status, date);
   }
 
+  @Get('attendance/monthly')
+  getAttendanceMonthly(@Query('year') year?: string, @Query('month') month?: string) {
+    return this.hrService.getAttendanceMonthly(year, month);
+  }
+
+  @Post('attendance/exempt-day')
+  markAttendanceExemptDay(@Body() body: Record<string, unknown>) {
+    return this.hrService.markAttendanceExemptDay(body);
+  }
+
+  @Delete('attendance/exempt-day')
+  unmarkAttendanceExemptDay(@Query('employeeId') employeeId?: string, @Query('workDate') workDate?: string) {
+    return this.hrService.unmarkAttendanceExemptDay(employeeId, workDate);
+  }
+
+  @Post('attendance/office-import')
+  importOfficeAttendance(@Body() body: Record<string, unknown>) {
+    return this.hrService.importOfficeAttendance(body);
+  }
+
   @Post('attendance/check-in')
   checkIn(@Body() body: Record<string, unknown>) {
     return this.hrService.checkIn(body);

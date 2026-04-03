@@ -204,4 +204,70 @@ describe('HR API flow integration', () => {
     expect(payPayrollRes.body.status).toBe('APPROVED');
     expect(payPayrollRes.body.paidAt).toBeTruthy();
   });
+
+  it('serves GET /api/v1/hr/attendance/monthly and maps year/month query correctly', async () => {
+    const managerToken = makeAuthToken('MANAGER');
+    const monthlyPayload = {
+      year: 2026,
+      month: 4,
+      daysInMonth: 30,
+      rows: []
+    };
+    const monthlySpy = vi.spyOn(hrService, 'getAttendanceMonthly').mockResolvedValue(monthlyPayload as any);
+
+    const monthlyRes = await request(app.getHttpServer())
+      .get('/api/v1/hr/attendance/monthly?year=2026&month=4')
+      .set('authorization', `Bearer ${managerToken}`);
+
+    expect(monthlyRes.status).toBe(200);
+    expect(monthlySpy).toHaveBeenCalledWith('2026', '4');
+    expect(monthlyRes.body).toEqual(monthlyPayload);
+  });
+
+  it('serves POST/DELETE /api/v1/hr/attendance/exempt-day and maps payload/query correctly', async () => {
+    const managerToken = makeAuthToken('MANAGER');
+    const markPayload = {
+      id: 'att_exempt_1',
+      employeeId: 'emp_api_1',
+      workDate: '2026-04-10',
+      attendanceMethod: 'EXEMPT',
+      workedMinutes: 0,
+      status: 'exempt'
+    };
+    const markSpy = vi.spyOn(hrService, 'markAttendanceExemptDay').mockResolvedValue(markPayload as any);
+    const unmarkSpy = vi.spyOn(hrService, 'unmarkAttendanceExemptDay').mockResolvedValue({
+      employeeId: 'emp_api_1',
+      workDate: '2026-04-10',
+      removedCount: 1
+    } as any);
+
+    const markRes = await request(app.getHttpServer())
+      .post('/api/v1/hr/attendance/exempt-day')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({
+        employeeId: 'emp_api_1',
+        workDate: '2026-04-10',
+        note: 'Cong tac'
+      });
+
+    expect(markRes.status).toBe(201);
+    expect(markSpy).toHaveBeenCalledWith({
+      employeeId: 'emp_api_1',
+      workDate: '2026-04-10',
+      note: 'Cong tac'
+    });
+    expect(markRes.body).toEqual(markPayload);
+
+    const unmarkRes = await request(app.getHttpServer())
+      .delete('/api/v1/hr/attendance/exempt-day?employeeId=emp_api_1&workDate=2026-04-10')
+      .set('authorization', `Bearer ${managerToken}`);
+
+    expect(unmarkRes.status).toBe(200);
+    expect(unmarkSpy).toHaveBeenCalledWith('emp_api_1', '2026-04-10');
+    expect(unmarkRes.body).toEqual({
+      employeeId: 'emp_api_1',
+      workDate: '2026-04-10',
+      removedCount: 1
+    });
+  });
 });

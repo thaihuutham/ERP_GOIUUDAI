@@ -24,8 +24,9 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
-import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
+import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -98,6 +99,7 @@ export function HrOperationsBoard() {
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [isArchivingEmployee, setIsArchivingEmployee] = useState(false);
@@ -179,6 +181,53 @@ export function HrOperationsBoard() {
     { key: 'joinDate', label: 'Ngày vào', render: (e) => toDateTime(e.joinDate) },
   ];
 
+  const bulkActions: StandardTableBulkAction<Employee>[] = canMutate
+    ? [
+        {
+          key: 'bulk-archive-employees',
+          label: 'Archive',
+          tone: 'danger',
+          confirmMessage: (rows) => `Lưu trữ ${rows.length} nhân viên đã chọn?`,
+          execute: async (selectedRows) => {
+            const ids = selectedRows.map((row) => String(row.id)).filter(Boolean);
+            const result = await runBulkOperation({
+              ids,
+              continueOnError: true,
+              chunkSize: 10,
+              execute: async (employeeId) => {
+                await apiRequest(`/hr/employees/${employeeId}`, {
+                  method: 'DELETE'
+                });
+              }
+            });
+
+            const normalized: BulkExecutionResult = {
+              ...result,
+              actionLabel: 'Lưu trữ nhân viên',
+              message: formatBulkSummary(
+                {
+                  ...result,
+                  actionLabel: 'Lưu trữ nhân viên'
+                },
+                'Lưu trữ nhân viên'
+              )
+            };
+
+            if (normalized.successCount > 0) {
+              await loadEmployees();
+            }
+            setResultMessage(normalized.message ?? null);
+            if (normalized.failedCount > 0) {
+              setErrorMessage('Một số nhân viên lỗi khi lưu trữ.');
+            } else {
+              setErrorMessage(null);
+            }
+            return normalized;
+          }
+        }
+      ]
+    : [];
+
   if (!canView) return <div style={{ padding: '2rem', textAlign: 'center' }}>Hạn chế truy cập module nhân sự.</div>;
 
   return (
@@ -242,6 +291,11 @@ export function HrOperationsBoard() {
         isLoading={isLoading}
         storageKey={HR_COLUMN_SETTINGS_KEY}
         onRowClick={(e) => setSelectedEmployee(e)}
+        enableRowSelection
+        selectedRowIds={selectedRowIds}
+        onSelectedRowIdsChange={setSelectedRowIds}
+        bulkActions={bulkActions}
+        showDefaultBulkUtilities
       />
 
       <SidePanel

@@ -3,6 +3,10 @@
 ## Status
 Accepted
 
+## Superseded Note
+- Quy tắc integrations tại mục Decision dòng `secretRef` đã được cập nhật bởi ADR-026.
+- Runtime precedence mới cho integrations: `UI key/token` > `secretRef` > `ENV fallback`.
+
 ## Context
 - Settings Center Enterprise đã có đủ domain config, validate, audit và snapshot; tuy nhiên một số policy trước đây mới dừng ở mức lưu cấu hình, chưa được business runtime tiêu thụ đầy đủ.
 - Yêu cầu nghiệp vụ chốt cứng:

@@ -63,7 +63,7 @@ export const RUNTIME_TOGGLABLE_ERP_MODULES = ERP_MODULES.filter((moduleKey) => m
 
 export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unknown>> = {
   org_profile: {
-    companyName: 'Digital Retail ERP Co.',
+    companyName: 'GOIUUDAI',
     taxCode: '',
     address: '',
     branchName: '',
@@ -108,6 +108,27 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       maxFailedAttempts: 5,
       lockoutMinutes: 15,
       mfaRequired: false
+    },
+    auditViewPolicy: {
+      enabled: true,
+      groups: {
+        DIRECTOR: { enabled: true },
+        BRANCH_MANAGER: { enabled: true },
+        DEPARTMENT_MANAGER: { enabled: true }
+      },
+      denyIfUngroupedManager: true
+    },
+    assistantAccessPolicy: {
+      enabled: false,
+      roleScopeDefaults: {
+        ADMIN: 'company',
+        MANAGER: 'department',
+        STAFF: 'self'
+      },
+      enforcePermissionEngine: true,
+      denyIfNoScope: true,
+      allowedModules: ['crm', 'sales', 'hr', 'workflows', 'finance', 'reports'],
+      chatChannelScopeEnforced: true
     },
     settingsEditorPolicy: {
       domainRoleMap: {
@@ -192,12 +213,208 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     approverChain: {
       leaveApproverRole: 'MANAGER',
       payrollApproverRole: 'ADMIN'
+    },
+    appendixFieldCatalog: {
+      summary: {
+        id: 'summary',
+        key: 'summary',
+        label: 'Tom tat cong viec',
+        description: 'Noi dung tong hop cong viec da thuc hien.',
+        type: 'text',
+        options: [],
+        validation: { required: true, maxLength: 1000 },
+        analyticsEnabled: false,
+        aggregator: 'none',
+        status: 'ACTIVE',
+        version: 1
+      },
+      result: {
+        id: 'result',
+        key: 'result',
+        label: 'Ket qua',
+        description: 'Ket qua dau ra cua cong viec.',
+        type: 'text',
+        options: [],
+        validation: { required: true, maxLength: 1000 },
+        analyticsEnabled: false,
+        aggregator: 'none',
+        status: 'ACTIVE',
+        version: 1
+      },
+      taskCount: {
+        id: 'taskCount',
+        key: 'taskCount',
+        label: 'So dau viec hoan thanh',
+        description: 'So luong dau viec da xu ly.',
+        type: 'number',
+        options: [],
+        validation: { min: 0, max: 10000 },
+        analyticsEnabled: true,
+        aggregator: 'sum',
+        status: 'ACTIVE',
+        version: 1
+      },
+      complianceNote: {
+        id: 'complianceNote',
+        key: 'complianceNote',
+        label: 'Ghi chu tuan thu',
+        description: 'Ghi nhan tuan thu quy trinh/han muc.',
+        type: 'text',
+        options: [],
+        validation: { maxLength: 1000 },
+        analyticsEnabled: false,
+        aggregator: 'none',
+        status: 'ACTIVE',
+        version: 1
+      },
+      qualityNote: {
+        id: 'qualityNote',
+        key: 'qualityNote',
+        label: 'Ghi chu chat luong',
+        description: 'Danh gia chat luong ket qua cong viec.',
+        type: 'text',
+        options: [],
+        validation: { maxLength: 1000 },
+        analyticsEnabled: false,
+        aggregator: 'none',
+        status: 'ACTIVE',
+        version: 1
+      },
+      note: {
+        id: 'note',
+        key: 'note',
+        label: 'Ghi chu bo sung',
+        description: 'Thong tin mo rong khac.',
+        type: 'text',
+        options: [],
+        validation: { maxLength: 2000 },
+        analyticsEnabled: false,
+        aggregator: 'none',
+        status: 'ACTIVE',
+        version: 1
+      }
+    },
+    appendixTemplates: {
+      PL01: {
+        name: 'Phu luc nhat ky cong viec ngay',
+        description: 'Ghi nhan hoat dong trong ngay theo quy che 2026.',
+        fields: [
+          { fieldKey: 'summary', required: true, helpText: 'Tom tat cong viec ngay.' },
+          { fieldKey: 'result', required: true, helpText: 'Ket qua chinh cua cong viec.' },
+          { fieldKey: 'taskCount', required: false, helpText: 'Nhap so dau viec hoan thanh.' },
+          { fieldKey: 'complianceNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      },
+      PL02: {
+        name: 'Phu luc ket qua cong viec ngay',
+        description: 'Tong hop ket qua va chat luong thuc thi trong ngay.',
+        fields: [
+          { fieldKey: 'summary', required: true },
+          { fieldKey: 'result', required: true },
+          { fieldKey: 'taskCount', required: false },
+          { fieldKey: 'qualityNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      },
+      PL03: {
+        name: 'Phu luc bao cao theo yeu cau',
+        description: 'Bao cao bo sung theo yeu cau quan ly truc tiep.',
+        fields: [
+          { fieldKey: 'summary', required: true },
+          { fieldKey: 'result', required: true },
+          { fieldKey: 'qualityNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      },
+      PL04: {
+        name: 'Phu luc tuan thu quy trinh',
+        description: 'Theo doi viec tuan thu va cac sai lech can khac phuc.',
+        fields: [
+          { fieldKey: 'summary', required: true },
+          { fieldKey: 'result', required: true },
+          { fieldKey: 'complianceNote', required: false },
+          { fieldKey: 'qualityNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      },
+      PL05: {
+        name: 'Phu luc phoi hop lien phong ban',
+        description: 'Ghi nhan tien do phoi hop voi don vi lien quan.',
+        fields: [
+          { fieldKey: 'summary', required: true },
+          { fieldKey: 'result', required: true },
+          { fieldKey: 'taskCount', required: false },
+          { fieldKey: 'complianceNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      },
+      PL06: {
+        name: 'Phu luc cai tien chat luong',
+        description: 'Theo doi de xuat cai tien va ket qua trien khai.',
+        fields: [
+          { fieldKey: 'summary', required: true },
+          { fieldKey: 'result', required: true },
+          { fieldKey: 'taskCount', required: false },
+          { fieldKey: 'qualityNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      },
+      PL10: {
+        name: 'Phu luc ke hoach cai thien hieu suat (PIP)',
+        description: 'Dung cho truong hop can theo doi cai thien hieu suat.',
+        fields: [
+          { fieldKey: 'summary', required: true },
+          { fieldKey: 'result', required: true },
+          { fieldKey: 'complianceNote', required: false },
+          { fieldKey: 'qualityNote', required: false },
+          { fieldKey: 'note', required: false }
+        ]
+      }
+    },
+    appendixCatalog: {
+      PL01: {
+        name: 'Phụ lục nhật ký công việc ngày',
+        description: 'Ghi nhận hoạt động trong ngày theo quy chế 2026.',
+        fields: ['summary', 'result', 'taskCount', 'complianceNote', 'note']
+      },
+      PL02: {
+        name: 'Phụ lục kết quả công việc ngày',
+        description: 'Tổng hợp kết quả và chất lượng thực thi trong ngày.',
+        fields: ['summary', 'result', 'taskCount', 'qualityNote', 'note']
+      },
+      PL03: {
+        name: 'Phụ lục báo cáo theo yêu cầu',
+        description: 'Báo cáo bổ sung theo yêu cầu quản lý trực tiếp.',
+        fields: ['summary', 'result', 'qualityNote', 'note']
+      },
+      PL04: {
+        name: 'Phụ lục tuân thủ quy trình',
+        description: 'Theo dõi việc tuân thủ và các sai lệch cần khắc phục.',
+        fields: ['summary', 'result', 'complianceNote', 'qualityNote', 'note']
+      },
+      PL05: {
+        name: 'Phụ lục phối hợp liên phòng ban',
+        description: 'Ghi nhận tiến độ phối hợp với đơn vị liên quan.',
+        fields: ['summary', 'result', 'taskCount', 'complianceNote', 'note']
+      },
+      PL06: {
+        name: 'Phụ lục cải tiến chất lượng',
+        description: 'Theo dõi đề xuất cải tiến và kết quả triển khai.',
+        fields: ['summary', 'result', 'taskCount', 'qualityNote', 'note']
+      },
+      PL10: {
+        name: 'Phụ lục kế hoạch cải thiện hiệu suất (PIP)',
+        description: 'Dùng cho trường hợp cần theo dõi cải thiện hiệu suất.',
+        fields: ['summary', 'result', 'complianceNote', 'qualityNote', 'note']
+      }
     }
   },
   integrations: {
     bhtot: {
       enabled: false,
       baseUrl: '',
+      apiKey: '',
       apiKeyRef: '',
       timeoutMs: 12000,
       ordersStateKey: 'bhtot_orders',
@@ -213,7 +430,9 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       enabled: false,
       outboundUrl: '',
       outboundTimeoutMs: 20000,
+      accessToken: '',
       accessTokenRef: 'ZALO_OA_ACCESS_TOKEN',
+      webhookSecret: '',
       webhookSecretRef: 'ZALO_OA_WEBHOOK_SECRET',
       apiBaseUrl: 'https://openapi.zalo.me/v3.0/oa',
       lastHealthStatus: 'UNKNOWN',
@@ -222,6 +441,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     ai: {
       enabled: false,
       baseUrl: '',
+      apiKey: '',
       apiKeyRef: 'AI_OPENAI_COMPAT_API_KEY',
       model: 'gpt-4o-mini',
       timeoutMs: 45000,

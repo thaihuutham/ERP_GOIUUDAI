@@ -15,6 +15,7 @@ import {
 import { apiRequest } from '../lib/api-client';
 import { getVisibleModuleCards } from '../lib/modules';
 import { formatRuntimeCurrency } from '../lib/runtime-format';
+import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { useUserRole } from './user-role-context';
 
 type Overview = {
@@ -25,7 +26,7 @@ type Overview = {
 };
 
 const REPORTS_DISABLED_NOTICE =
-  "Phân hệ 'reports' đang tắt. Vui lòng bật lại trong Settings Center Enterprise > Tổ chức > Phân hệ đang bật.";
+  "Phân hệ 'reports' đang tắt. Vui lòng bật lại tại Cấu hình hệ thống > Hồ sơ tổ chức > Phân hệ đang bật.";
 
 function isReportsDisabledErrorMessage(message: string) {
   const normalized = message.toLowerCase();
@@ -120,20 +121,21 @@ export function HomeDashboard() {
       <section className="hero-panel">
         <div>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', color: 'var(--primary)', fontWeight: 700, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.45rem' }}>
-            <Activity size={14} /> System healthy
+            <Activity size={14} /> Vận hành ổn định
           </div>
           <h1 style={{ fontSize: '1.65rem', marginBottom: '0.3rem' }}>
-            Chào mừng trở lại, <span style={{ color: 'var(--primary)' }}>{role}</span>
+            {SYSTEM_PROFILE.systemName}
           </h1>
           <p>
-            Workspace điều hành ERP bán lẻ theo mô hình nội bộ 50 nhân sự. Theo dõi doanh thu, vận hành chuỗi cung ứng và CRM trên một giao diện thống nhất.
+            {`${SYSTEM_PROFILE.companyName} • ${SYSTEM_PROFILE.businessDomain} • ${SYSTEM_PROFILE.scale}. ${SYSTEM_PROFILE.operatingModel}.`}
           </p>
         </div>
         <div className="hero-badge">
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
             <ShieldCheck size={14} />
-            <span>Tenant Isolation Active</span>
+            <span>{SYSTEM_PROFILE.governanceVision}</span>
           </div>
+          <div style={{ marginTop: '0.35rem', fontSize: '0.78rem', opacity: 0.9 }}>Vai trò hiện tại: {role}</div>
         </div>
       </section>
 
@@ -151,7 +153,7 @@ export function HomeDashboard() {
 
       <section>
         <h3 style={{ fontSize: '1.02rem', marginBottom: '0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
-          <LayoutDashboard size={20} /> Truy cập phân hệ nghiệp vụ
+          <LayoutDashboard size={20} /> Phân hệ vận hành
         </h3>
         <div className="module-card-grid">
           {visibleModules.map((module) => (
@@ -165,7 +167,7 @@ export function HomeDashboard() {
                 <ArrowRight size={14} color="var(--muted)" />
               </div>
               <p>{module.description}</p>
-              <span className="module-card-link">Bắt đầu làm việc</span>
+              <span className="module-card-link">Mở phân hệ</span>
             </Link>
           ))}
         </div>

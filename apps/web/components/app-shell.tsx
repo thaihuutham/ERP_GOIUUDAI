@@ -27,11 +27,16 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import {
+  getAllowedAssistantRoutes,
+  resolveAssistantRouteFromPath
+} from '../lib/assistant-routes';
 import { HR_SECTION_DEFINITIONS, HR_SECTION_MAP, type HrSectionKey } from '../lib/hr-sections';
 import { apiRequest } from '../lib/api-client';
 import { getVisibleModuleCards, moduleCards } from '../lib/modules';
 import { canAccessModule, USER_ROLES } from '../lib/rbac';
 import { setRuntimeLocale } from '../lib/runtime-format';
+import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { useUserRole } from './user-role-context';
 
 function isActive(pathname: string, href: string) {
@@ -52,6 +57,7 @@ const ICON_MAP: Record<string, any> = {
   projects: FolderKanban,
   workflows: GitBranch,
   reports: BarChart3,
+  assistant: Bot,
   audit: History,
   settings: Settings,
   notifications: Bell,
@@ -77,16 +83,16 @@ function getCurrentModuleTitle(pathname: string) {
   }
 
   if (pathname.startsWith('/modules/crm/conversations')) {
-    return 'ZALO Tự động';
+    return 'Hội thoại khách hàng';
   }
 
   const match = pathname.match(/^\/modules\/([^/]+)/);
   if (!match) {
-    return 'ERP Bán lẻ';
+    return SYSTEM_PROFILE.systemName;
   }
 
   const key = match[1];
-  return moduleCards.find((item) => item.key === key)?.title ?? 'ERP Bán lẻ';
+  return moduleCards.find((item) => item.key === key)?.title ?? SYSTEM_PROFILE.systemName;
 }
 
 function resolveModuleFromPath(pathname: string) {
@@ -121,6 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [menuCollapsed, setMenuCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [hrExpanded, setHrExpanded] = useState(false);
+  const [assistantExpanded, setAssistantExpanded] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
   const {
     role,
@@ -169,6 +176,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     [role, enabledModuleSet]
   );
   const isHrPath = pathname.startsWith('/modules/hr');
+  const isAssistantPath = pathname.startsWith('/modules/assistant');
+  const assistantRouteKey = useMemo(() => resolveAssistantRouteFromPath(pathname), [pathname]);
+  const assistantRoutes = useMemo(() => getAllowedAssistantRoutes(role), [role]);
 
   const { modulesBeforeZalo, modulesAfterZalo } = useMemo(() => {
     const projectsIndex = visibleModules.findIndex((item) => item.key === 'projects');
@@ -192,6 +202,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (moduleKey === 'hr') {
       return isHrPath;
     }
+    if (moduleKey === 'assistant') {
+      return isAssistantPath;
+    }
     return isActive(pathname, `/modules/${moduleKey}`);
   };
 
@@ -199,6 +212,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     setHrExpanded((prev) => !prev);
     setMobileOpen(false);
     router.push('/modules/hr');
+  };
+
+  const handleAssistantParentClick = () => {
+    setAssistantExpanded((prev) => !prev);
+    setMobileOpen(false);
+    router.push('/modules/assistant/runs');
   };
 
   const renderModuleLink = (item: (typeof visibleModules)[number]) => {
@@ -243,6 +262,51 @@ export function AppShell({ children }: { children: ReactNode }) {
       );
     }
 
+    if (item.key === 'assistant') {
+      return (
+        <div key={item.key} className={`side-tree ${assistantExpanded ? 'side-tree-open' : ''}`}>
+          <button
+            type="button"
+            className={`side-link side-link-parent ${isAssistantPath ? 'active' : ''}`}
+            onClick={handleAssistantParentClick}
+          >
+            <span className="side-link-main">
+              <Icon size={18} />
+              <span className="link-text">{item.title}</span>
+            </span>
+            {!menuCollapsed && (
+              <ChevronDown
+                size={14}
+                className={`side-link-caret ${assistantExpanded ? 'side-link-caret-open' : ''}`}
+              />
+            )}
+          </button>
+
+          {!menuCollapsed && assistantExpanded && (
+            <div className="side-submenu">
+              {assistantRoutes.map((subRoute) => {
+                const active =
+                  assistantRouteKey === subRoute.key ||
+                  pathname === subRoute.href ||
+                  pathname.startsWith(`${subRoute.href}/`);
+                return (
+                  <Link
+                    key={subRoute.key}
+                    href={subRoute.href}
+                    className={`side-submenu-link ${active ? 'active' : ''}`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <span className="side-submenu-dot" aria-hidden="true" />
+                    <span>{subRoute.title}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     const href = `/modules/${item.key}`;
     return (
       <Link
@@ -262,6 +326,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       setHrExpanded(true);
     }
   }, [isHrPath]);
+
+  useEffect(() => {
+    if (isAssistantPath) {
+      setAssistantExpanded(true);
+    }
+  }, [isAssistantPath]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -439,8 +509,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     return (
       <div className="auth-gate">
         <form className="auth-card" onSubmit={handleLoginSubmit}>
-          <h1>Đăng nhập hệ thống ERP</h1>
-          <p>Sử dụng tài khoản nhân viên do quản trị viên cấp trong Settings Center Enterprise.</p>
+          <h1>{SYSTEM_PROFILE.systemName}</h1>
+          <p>Đăng nhập bằng tài khoản nội bộ GOIUUDAI để truy cập hệ thống.</p>
           <label htmlFor="auth-email">Email</label>
           <input
             id="auth-email"
@@ -516,9 +586,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="side-brand">
           <Link href="/" className="brand-link">
             <span className="brand-dot" aria-hidden="true">
-              {String(runtimePayload?.organization?.companyName ?? 'ERP').slice(0, 1).toUpperCase()}
+              {String(runtimePayload?.organization?.companyName ?? SYSTEM_PROFILE.companyName).slice(0, 1).toUpperCase()}
             </span>
-            <span className="brand-title">{runtimePayload?.organization?.companyName ?? 'ERP Retail'}</span>
+            <span className="brand-title">{runtimePayload?.organization?.companyName ?? SYSTEM_PROFILE.companyName}</span>
           </Link>
           <button
             type="button"
@@ -531,9 +601,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         </div>
 
-        {!menuCollapsed && <p className="brand-subtitle">{runtimePayload?.organization?.taxCode ? `Tax: ${runtimePayload.organization.taxCode}` : 'Premium Green Workspace'}</p>}
+        {!menuCollapsed && (
+          <p className="brand-subtitle">
+            {runtimePayload?.organization?.taxCode ? `MST: ${runtimePayload.organization.taxCode}` : SYSTEM_PROFILE.businessDomain}
+          </p>
+        )}
 
-        {!menuCollapsed && <p className="side-section-title">Workspace</p>}
+        {!menuCollapsed && <p className="side-section-title">Điều hướng</p>}
 
         <nav className="side-nav">
           <div className="side-nav-group">
@@ -551,7 +625,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {showZaloAutomation && (
             <>
-              {!menuCollapsed && <p className="side-section-title side-section-title-accent">ZALO Tự động</p>}
+              {!menuCollapsed && <p className="side-section-title side-section-title-accent">Tự động hội thoại</p>}
               <div className="side-nav-group">
                 <Link
                   href="/modules/crm/conversations"
@@ -590,7 +664,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
             <div>
               <h1 className="toolbar-title">{currentTitle}</h1>
-              <p className="toolbar-subtitle">Tenant Management • Shared Schema</p>
+              <p className="toolbar-subtitle">{`${SYSTEM_PROFILE.operatingModel} • ${SYSTEM_PROFILE.governanceVision}`}</p>
             </div>
           </div>
           <div className="toolbar-right">

@@ -4,6 +4,7 @@ import { AuditOperationType, Prisma } from '@prisma/client';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditArchiveService } from './audit-archive.service';
+import { AuditAccessScopeResult, AuditAccessScopeService } from './audit-access-scope.service';
 
 type AuditLogsQuery = {
   entityType?: string;
@@ -22,6 +23,7 @@ type AuditLogsQuery = {
 };
 
 type AuditTier = 'hot' | 'cold' | 'mixed';
+type AuditAccessScope = 'company' | 'branch' | 'department';
 
 type ColdScanStats = {
   scannedFiles: number;
@@ -80,6 +82,7 @@ export class AuditService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditArchiveService) private readonly auditArchive: AuditArchiveService,
+    @Inject(AuditAccessScopeService) private readonly auditAccessScope: AuditAccessScopeService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
     @Inject(ConfigService) private readonly config: ConfigService
   ) {
@@ -102,13 +105,17 @@ export class AuditService {
     const includeArchived = this.parseIncludeArchived(query.includeArchived);
     const normalized = this.normalizeQuery(query);
     const where = this.buildWhere(normalized);
+    const access = await this.auditAccessScope.resolveCurrentUserScope();
+    const scopedWhere = this.applyActorScope(where, access);
+    const actorScopeSet = access.allowedActorIds ? new Set(access.allowedActorIds) : null;
 
     if (!includeArchived) {
       return this.listHotOnly({
-        where,
+        where: scopedWhere,
         limit,
         cursor: this.cleanString(query.cursor),
-        tier: 'hot'
+        tier: 'hot',
+        accessScope: access.accessScope
       });
     }
 
@@ -125,10 +132,11 @@ export class AuditService {
 
     if (!shouldTouchCold) {
       return this.listHotOnly({
-        where,
+        where: scopedWhere,
         limit,
         cursor: this.cleanString(query.cursor),
-        tier: queryTier
+        tier: queryTier,
+        accessScope: access.accessScope
       });
     }
 
@@ -143,7 +151,7 @@ export class AuditService {
     const hotRows = shouldTouchHot
       ? await this.prisma.client.auditLog.findMany({
           where: {
-            AND: [where, { createdAt: { gte: hotThreshold } }]
+            AND: [scopedWhere, { createdAt: { gte: hotThreshold } }]
           },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: fetchCount
@@ -159,7 +167,7 @@ export class AuditService {
       to: coldTo,
       limit: fetchCount,
       offset: 0,
-      matcher: (row) => this.matchesColdRow(row, normalized, hotThreshold)
+      matcher: (row) => this.matchesColdRow(row, normalized, hotThreshold, actorScopeSet)
     });
 
     const merged = this.mergeRows([
@@ -178,6 +186,7 @@ export class AuditService {
         hasMore,
         nextCursor: hasMore ? this.encodeOffsetCursor(offset + limit) : null,
         tier: queryTier,
+        accessScope: access.accessScope,
         coldScanStats: {
           scannedFiles: coldResult.scannedFiles,
           scannedRows: coldResult.scannedRows,
@@ -202,8 +211,18 @@ export class AuditService {
   }
 
   async getActions() {
+    const access = await this.auditAccessScope.resolveCurrentUserScope();
+    const where = access.allowedActorIds
+      ? {
+          actorId: {
+            in: access.allowedActorIds
+          }
+        }
+      : undefined;
+
     const grouped = await this.prisma.client.auditLog.groupBy({
       by: ['action'],
+      where,
       _count: {
         _all: true
       }
@@ -250,6 +269,7 @@ export class AuditService {
     limit: number;
     cursor: string;
     tier: AuditTier;
+    accessScope: AuditAccessScope;
   }) {
     const offsetCursor = this.parseOffsetCursor(args.cursor);
 
@@ -269,7 +289,8 @@ export class AuditService {
           limit: args.limit,
           hasMore,
           nextCursor: hasMore ? this.encodeOffsetCursor(offsetCursor + args.limit) : null,
-          tier: args.tier
+          tier: args.tier,
+          accessScope: args.accessScope
         }
       };
     }
@@ -295,7 +316,8 @@ export class AuditService {
         limit: args.limit,
         hasMore,
         nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
-        tier: args.tier
+        tier: args.tier,
+        accessScope: args.accessScope
       }
     };
   }
@@ -526,7 +548,12 @@ export class AuditService {
     });
   }
 
-  private matchesColdRow(row: Record<string, unknown>, query: NormalizedQuery, hotThreshold: Date) {
+  private matchesColdRow(
+    row: Record<string, unknown>,
+    query: NormalizedQuery,
+    hotThreshold: Date,
+    actorScopeSet: Set<string> | null
+  ) {
     const createdAt = this.parseDate(String(row.createdAt ?? ''));
     if (!createdAt) {
       return false;
@@ -549,6 +576,10 @@ export class AuditService {
     const actorId = this.cleanString(row.actorId);
     const requestId = this.cleanString(row.requestId);
     const operationType = this.parseOperationType(this.cleanString(row.operationType));
+
+    if (actorScopeSet && !actorScopeSet.has(actorId)) {
+      return false;
+    }
 
     if (query.entityType && query.entityType.toLowerCase() !== entityType.toLowerCase()) {
       return false;
@@ -669,5 +700,22 @@ export class AuditService {
 
   private cleanString(value: unknown) {
     return String(value ?? '').trim();
+  }
+
+  private applyActorScope(where: Prisma.AuditLogWhereInput, access: AuditAccessScopeResult): Prisma.AuditLogWhereInput {
+    if (!access.allowedActorIds) {
+      return where;
+    }
+
+    return {
+      AND: [
+        where,
+        {
+          actorId: {
+            in: access.allowedActorIds
+          }
+        }
+      ]
+    };
   }
 }

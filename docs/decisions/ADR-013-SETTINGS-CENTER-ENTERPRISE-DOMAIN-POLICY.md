@@ -3,6 +3,10 @@
 ## Status
 Accepted
 
+## Superseded Note
+- Phần chính sách integrations theo mô hình `secretRef-only` đã được thay thế bởi ADR-026.
+- Từ ADR-026: cho phép nhập key trực tiếp trên UI (giữ `*Ref` làm fallback/backward-compat).
+
 ## Context
 - Cấu hình hệ thống trước đây chủ yếu đi qua generic key-value (`system_config`, `order_settings`, `finance_period_locks`) nên khó kiểm soát thay đổi lớn theo domain.
 - ERP cần một Settings Center enterprise cho vận hành nội bộ (50 nhân sự), có thể mở rộng multi-tenant sau này nhưng vẫn giữ tương thích API hiện hữu trong giai đoạn chuyển tiếp.

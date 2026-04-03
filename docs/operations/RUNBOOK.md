@@ -58,11 +58,13 @@ npm run test --workspace @erp/api
 
 ## 7. Secrets/Variables cho GitHub Actions deploy-vm
 ### GitHub Secrets
+- `SETTINGS_ENCRYPTION_MASTER_KEY` (AES-256-GCM, 32-byte key dạng base64 hoặc hex; dùng mã hóa key lưu DB)
 - `JWT_SECRET`
 - `DATABASE_URL` (nếu không dùng default nội bộ compose)
-- `AI_OPENAI_COMPAT_API_KEY`
-- `ZALO_OA_WEBHOOK_SECRET`
-- `ZALO_OA_ACCESS_TOKEN` (optional nếu bật OA outbound qua official API)
+- `AI_OPENAI_COMPAT_API_KEY` (optional fallback nếu chưa nhập key tại Settings Center)
+- `ZALO_OA_WEBHOOK_SECRET` (optional fallback nếu chưa nhập key tại Settings Center)
+- `ZALO_OA_ACCESS_TOKEN` (optional fallback nếu bật OA outbound qua official API)
+- `BHTOT_API_KEY` (optional fallback nếu chưa nhập key tại Settings Center)
 
 ### GitHub Variables
 - `AUTH_ENABLED` (khuyến nghị `true` cho production)
@@ -117,3 +119,31 @@ AUDIT_STRICT=true npm run quality:security
   - `path-to-regexp` -> `8.4.0`
   - `@prisma/config@6.19.2 > effect` -> `3.20.0`
 - Tham chiếu quyết định: `docs/decisions/ADR-009-DEPENDENCY-SECURITY-OVERRIDES.md`.
+
+## 12. HR Regulation Structured Field Builder settings
+- Domain policy:
+  - `hr_policies.appendixFieldCatalog` (Global Field Library)
+  - `hr_policies.appendixTemplates` (Per-Appendix Template)
+  - `hr_policies.appendixCatalog` (legacy-compat, tu dong sinh tu template khi normalize)
+- `appendixFieldCatalog.<fieldKey>` khuyen nghi co:
+  - `id`, `key`, `label`, `description`
+  - `type` (`text|number|date|select|boolean`)
+  - `options`, `validation`
+  - `analyticsEnabled`, `aggregator`
+  - `status`, `version`
+- `appendixTemplates.PLxx` khuyen nghi co:
+  - `name`, `description`
+  - `fields[]` voi `fieldKey` + local overrides (`required`, `placeholder`, `defaultValue`, `helpText`, `visibility`, `kpiAlias`).
+- Quy tac namespace field local appendix:
+  - neu `fieldKey` khong ton tai trong `appendixFieldCatalog` thi bat buoc theo mau `PLxx_*`.
+- Metadata runtime cho UI:
+  - `GET /api/v1/hr/regulation/metadata` tra:
+    - `viewerScope`, `canOverrideEmployeeId`, `requesterEmployeeId`
+    - `fieldCatalog` (global fields)
+    - `appendices` (resolved template fields + overrides)
+- Rule analytics:
+  - Chi field co `analyticsEnabled=true` va `aggregator != none` moi vao tong hop.
+  - `viewerScope=self`: chart-only.
+  - `viewerScope!=self`: chart + table.
+- Safe fallback:
+  - Khi policy chua day du, backend fallback ve appendix defaults de khong chan van hanh form.

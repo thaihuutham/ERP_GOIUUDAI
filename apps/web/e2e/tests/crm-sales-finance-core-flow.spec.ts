@@ -144,6 +144,29 @@ async function mockCoreErpApis(page: Page, state: MockState) {
       return json(route, { deduplicated: false, message: 'Đã tạo khách hàng mới.', customer }, 201);
     }
 
+    if (method === 'PATCH' && /\/api\/v1\/crm\/customers\/[^/]+$/.test(path)) {
+      const customerId = path.split('/')[5];
+      const customer = state.customers.find((item) => item.id === customerId);
+      if (!customer) {
+        return json(route, { message: 'Không tìm thấy khách hàng.' }, 404);
+      }
+      const body = request.postDataJSON() as Record<string, unknown>;
+      customer.status = String(body.status ?? customer.status);
+      customer.updatedAt = new Date().toISOString();
+      return json(route, customer);
+    }
+
+    if (method === 'DELETE' && /\/api\/v1\/crm\/customers\/[^/]+$/.test(path)) {
+      const customerId = path.split('/')[5];
+      const customer = state.customers.find((item) => item.id === customerId);
+      if (!customer) {
+        return json(route, { message: 'Không tìm thấy khách hàng.' }, 404);
+      }
+      customer.status = 'ARCHIVED';
+      customer.updatedAt = new Date().toISOString();
+      return json(route, { ok: true });
+    }
+
     if (method === 'GET' && path === '/api/v1/sales/orders') {
       return json(route, { items: state.orders });
     }
@@ -211,6 +234,16 @@ async function mockCoreErpApis(page: Page, state: MockState) {
           note: null
         }
       }, 201);
+    }
+
+    if (method === 'DELETE' && /\/api\/v1\/sales\/orders\/[^/]+$/.test(path)) {
+      const orderId = path.split('/')[5];
+      const order = state.orders.find((item) => item.id === orderId);
+      if (!order) {
+        return json(route, { message: 'Không tìm thấy đơn hàng.' }, 404);
+      }
+      order.status = 'ARCHIVED';
+      return json(route, { ok: true });
     }
 
     if (method === 'POST' && path === '/api/v1/finance/invoices/from-order') {
@@ -319,6 +352,16 @@ async function mockCoreErpApis(page: Page, state: MockState) {
         ...invoice,
         transition: { action: 'APPROVE', from: 'PENDING', to: 'APPROVED', note: null }
       }, 201);
+    }
+
+    if (method === 'DELETE' && /\/api\/v1\/finance\/invoices\/[^/]+$/.test(path)) {
+      const invoiceId = path.split('/')[5];
+      const invoice = state.invoices.find((item) => item.id === invoiceId);
+      if (!invoice) {
+        return json(route, { message: 'Không tìm thấy hóa đơn.' }, 404);
+      }
+      invoice.status = 'ARCHIVED';
+      return json(route, { ok: true });
     }
 
     if (method === 'GET' && /\/api\/v1\/finance\/invoices\/[^/]+\/allocations$/.test(path)) {
@@ -441,4 +484,152 @@ test('runs CRM -> Sales -> Finance core flow via Operations Boards', async ({ pa
   const paidInvoice = state.invoices.find((invoice) => invoice.id === orderInvoice!.id);
   expect(paidInvoice?.status).toBe('ARCHIVED');
   expect(state.allocations[orderInvoice!.id]?.length ?? 0).toBe(1);
+});
+
+test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)', async ({ page }) => {
+  const state: MockState = {
+    customers: [
+      {
+        id: 'cus_bulk_1',
+        fullName: 'Khách bulk 1',
+        phone: '0900000001',
+        email: 'bulk1@example.com',
+        customerStage: 'MOI',
+        source: 'ONLINE',
+        status: 'ACTIVE',
+        tags: [],
+        updatedAt: '2026-04-01T01:00:00.000Z'
+      },
+      {
+        id: 'cus_bulk_2',
+        fullName: 'Khách bulk 2',
+        phone: '0900000002',
+        email: 'bulk2@example.com',
+        customerStage: 'MOI',
+        source: 'ONLINE',
+        status: 'ACTIVE',
+        tags: [],
+        updatedAt: '2026-04-01T01:00:00.000Z'
+      }
+    ],
+    orders: [
+      {
+        id: 'order_bulk_1',
+        orderNo: 'SO-BULK-001',
+        customerName: 'Khách bulk 1',
+        customerId: 'cus_bulk_1',
+        totalAmount: 300000,
+        status: 'PENDING',
+        createdBy: 'manager_1',
+        createdAt: '2026-04-01T02:00:00.000Z',
+        items: [
+          { id: 'item_bulk_1', productName: 'SP 1', quantity: 1, unitPrice: 300000 }
+        ],
+        invoices: []
+      },
+      {
+        id: 'order_bulk_2',
+        orderNo: 'SO-BULK-002',
+        customerName: 'Khách bulk 2',
+        customerId: 'cus_bulk_2',
+        totalAmount: 450000,
+        status: 'PENDING',
+        createdBy: 'manager_1',
+        createdAt: '2026-04-01T02:05:00.000Z',
+        items: [
+          { id: 'item_bulk_2', productName: 'SP 2', quantity: 1, unitPrice: 450000 }
+        ],
+        invoices: []
+      }
+    ],
+    invoices: [
+      {
+        id: 'inv_bulk_1',
+        invoiceNo: 'INV-BULK-001',
+        invoiceType: 'SALES',
+        partnerName: 'Khách bulk 1',
+        totalAmount: 300000,
+        paidAmount: 0,
+        status: 'DRAFT',
+        dueAt: null,
+        createdAt: '2026-04-01T03:00:00.000Z'
+      },
+      {
+        id: 'inv_bulk_2',
+        invoiceNo: 'INV-BULK-002',
+        invoiceType: 'SALES',
+        partnerName: 'Khách bulk 2',
+        totalAmount: 450000,
+        paidAmount: 0,
+        status: 'DRAFT',
+        dueAt: null,
+        createdAt: '2026-04-01T03:10:00.000Z'
+      }
+    ],
+    approvals: [],
+    allocations: {},
+    seq: {
+      customer: 3,
+      order: 3,
+      invoice: 3,
+      item: 3,
+      allocation: 1
+    }
+  };
+
+  await mockCoreErpApis(page, state);
+
+  const checkAllVisibleRows = async () => {
+    const rowCheckboxes = page.locator('table.standard-table-table tbody td.standard-table-select-cell input[type="checkbox"]');
+    const total = await rowCheckboxes.count();
+    for (let index = 0; index < total; index += 1) {
+      const checkbox = rowCheckboxes.nth(index);
+      if (!(await checkbox.isChecked())) {
+        await checkbox.check();
+      }
+    }
+  };
+
+  await page.goto('/modules/crm');
+  const crmOverlay = page.locator('.side-panel-overlay');
+  if (await crmOverlay.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape');
+    await crmOverlay.waitFor({ state: 'hidden' }).catch(() => {});
+  }
+  await expect(page.getByRole('button', { name: 'Khách bulk 1' })).toBeVisible();
+  await checkAllVisibleRows();
+  await page.getByRole('button', { name: 'Set INACTIVE' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Set trạng thái INACTIVE: thành công 2/2.');
+  expect(state.customers.every((item) => item.status === 'INACTIVE')).toBe(true);
+
+  await page.goto('/modules/sales');
+  await expect(page.getByRole('button', { name: 'SO-BULK-001' })).toBeVisible();
+  await checkAllVisibleRows();
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Duyệt đơn hàng: thành công 2/2.');
+  expect(state.orders.every((item) => item.status === 'APPROVED')).toBe(true);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await checkAllVisibleRows();
+  await page.getByRole('button', { name: 'Archive' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ đơn hàng: thành công 2/2.');
+  expect(state.orders.every((item) => item.status === 'ARCHIVED')).toBe(true);
+
+  await page.goto('/modules/finance');
+  await expect(page.getByRole('button', { name: 'INV-BULK-001' })).toBeVisible();
+  await checkAllVisibleRows();
+  await page.getByRole('button', { name: 'Issue' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Phát hành hóa đơn: thành công 2/2.');
+  expect(state.invoices.every((item) => item.status === 'PENDING')).toBe(true);
+
+  await checkAllVisibleRows();
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Phê duyệt hóa đơn: thành công 2/2.');
+  expect(state.invoices.every((item) => item.status === 'APPROVED')).toBe(true);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await checkAllVisibleRows();
+  await page.getByRole('button', { name: 'Archive' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ hóa đơn: thành công 2/2.');
+  expect(state.invoices.every((item) => item.status === 'ARCHIVED')).toBe(true);
 });

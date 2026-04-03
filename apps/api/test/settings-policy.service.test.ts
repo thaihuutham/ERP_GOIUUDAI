@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SettingsPolicyService } from '../src/modules/settings/settings-policy.service';
 
+const SETTINGS_MASTER_KEY = 'MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=';
+
 type SettingRow = {
   id: string;
   tenant_Id: string;
@@ -141,7 +143,8 @@ describe('SettingsPolicyService', () => {
     expect(service.resolveSecretByRef('UNSAFE_KEY')).toBe('');
   });
 
-  it('sanitizes plaintext secret fields so they are never persisted', async () => {
+  it('accepts plaintext secret fields and persists them for runtime usage', async () => {
+    process.env.SETTINGS_ENCRYPTION_MASTER_KEY = SETTINGS_MASTER_KEY;
     const prisma = makePrismaMock();
     const cls = makeClsMock();
     const search = makeSearchMock();
@@ -161,13 +164,21 @@ describe('SettingsPolicyService', () => {
 
     expect(result.validation.ok).toBe(true);
     expect(result.data.bhtot).toMatchObject({
-      apiKey: '',
-      apiKeyRef: 'BHTOT_API_KEY'
+      apiKey: 'raw-secret-value',
+      apiKeyRef: 'BHTOT_API_KEY',
+      hasSecret: true
     });
 
     const persisted = prisma.__rows.find((row) => row.settingKey === 'settings.integrations.v1');
     expect(persisted).toBeDefined();
     expect(JSON.stringify(persisted?.settingValue)).not.toContain('raw-secret-value');
+    expect(JSON.stringify(persisted?.settingValue)).toContain('enc:v1:gcm:');
+
+    const reloaded = await service.getDomain('integrations');
+    expect((reloaded.data as Record<string, unknown>).bhtot).toMatchObject({
+      apiKey: 'raw-secret-value',
+      hasSecret: true
+    });
   });
 
   it('supports dry-run without persisting settings rows', async () => {
@@ -202,12 +213,80 @@ describe('SettingsPolicyService', () => {
       reason: 'normalize enabled modules'
     });
 
-    expect(result.data.enabledModules).toEqual(['crm', 'reports', 'notifications']);
+    expect(result.data.enabledModules).toEqual(['crm', 'reports', 'notifications', 'audit', 'assistant']);
 
     const persisted = prisma.__rows.find((row) => row.settingKey === 'settings.org_profile.v1');
     const persistedValue = persisted?.settingValue as Record<string, unknown> | undefined;
     expect(Array.isArray(persistedValue?.enabledModules)).toBe(true);
-    expect(persistedValue?.enabledModules).toEqual(['crm', 'reports', 'notifications']);
+    expect(persistedValue?.enabledModules).toEqual(['crm', 'reports', 'notifications', 'audit', 'assistant']);
+  });
+
+  it('normalizes access_security.auditViewPolicy with safe defaults', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('access_security', {
+      auditViewPolicy: {
+        groups: {
+          BRANCH_MANAGER: {
+            enabled: false
+          }
+        }
+      }
+    }, {
+      reason: 'normalize audit view policy'
+    });
+
+    const accessSecurity = result.data as Record<string, unknown>;
+    const policy = accessSecurity.auditViewPolicy as Record<string, unknown>;
+    const groups = (policy.groups ?? {}) as Record<string, unknown>;
+    const branch = (groups.BRANCH_MANAGER ?? {}) as Record<string, unknown>;
+    const director = (groups.DIRECTOR ?? {}) as Record<string, unknown>;
+    const department = (groups.DEPARTMENT_MANAGER ?? {}) as Record<string, unknown>;
+
+    expect(policy.enabled).toBe(true);
+    expect(policy.denyIfUngroupedManager).toBe(true);
+    expect(director.enabled).toBe(true);
+    expect(branch.enabled).toBe(false);
+    expect(department.enabled).toBe(true);
+  });
+
+  it('normalizes access_security.assistantAccessPolicy with role scope defaults', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('access_security', {
+      assistantAccessPolicy: {
+        enabled: true,
+        roleScopeDefaults: {
+          ADMIN: 'BRANCH',
+          MANAGER: 'TEAM',
+          STAFF: 'SELF'
+        },
+        enforcePermissionEngine: true,
+        denyIfNoScope: true,
+        allowedModules: ['sales', 'finance', 'invalid_module'],
+        chatChannelScopeEnforced: true
+      }
+    }, {
+      reason: 'normalize assistant access policy'
+    });
+
+    const accessSecurity = result.data as Record<string, unknown>;
+    const assistantPolicy = (accessSecurity.assistantAccessPolicy ?? {}) as Record<string, unknown>;
+    const roleScopeDefaults = (assistantPolicy.roleScopeDefaults ?? {}) as Record<string, unknown>;
+
+    expect(assistantPolicy.enabled).toBe(true);
+    expect(roleScopeDefaults.ADMIN).toBe('branch');
+    expect(roleScopeDefaults.MANAGER).toBe('department');
+    expect(roleScopeDefaults.STAFF).toBe('self');
+    expect(assistantPolicy.allowedModules).toEqual(['sales', 'finance']);
   });
 
   it('creates audit entries and can restore snapshot by domain', async () => {

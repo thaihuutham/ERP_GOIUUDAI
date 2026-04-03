@@ -36,11 +36,27 @@ export class JwtAuthGuard implements CanActivate {
 
     const defaultAuthEnabled = runtime.singleTenantMode ? 'false' : 'true';
     const authEnabled = this.config.get<string>('AUTH_ENABLED', defaultAuthEnabled).toLowerCase() === 'true';
+    const request = context.switchToHttp().getRequest<{ headers: Record<string, string | string[] | undefined>; user?: AuthUser; url?: string; originalUrl?: string }>();
     if (!authEnabled) {
+      const authUser = this.resolveDevAuthUser(request.headers, runtime.singleTenantMode ? runtime.tenantId : undefined);
+      request.user = authUser;
+      this.cls.set(AUTH_USER_CONTEXT_KEY, authUser);
+      if (authUser.tenantId) {
+        this.cls.set(TENANT_CONTEXT_KEY, authUser.tenantId);
+      }
+
+      const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
+        context.getHandler(),
+        context.getClass()
+      ]);
+      if (requiredRoles && requiredRoles.length > 0) {
+        if (!authUser.role || !requiredRoles.includes(authUser.role)) {
+          throw new ForbiddenException('Bạn không có quyền truy cập tài nguyên này.');
+        }
+      }
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<{ headers: Record<string, string | string[] | undefined>; user?: AuthUser }>();
     const authorization = request.headers.authorization;
     if (!authorization || typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) {
       throw new UnauthorizedException('Thiếu hoặc sai định dạng Authorization Bearer token.');
@@ -129,6 +145,43 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  private resolveDevAuthUser(
+    headers: Record<string, string | string[] | undefined>,
+    fallbackTenantId?: string
+  ): AuthUser {
+    const roleRaw = this.readHeader(headers, 'x-erp-dev-role').toUpperCase();
+    const role = (Object.values(UserRole) as string[]).includes(roleRaw) ? (roleRaw as UserRole) : UserRole.MANAGER;
+    const userId = this.readHeader(headers, 'x-erp-dev-user-id') || `dev_${role.toLowerCase()}`;
+    const email = this.readHeader(headers, 'x-erp-dev-email') || `${role.toLowerCase()}@local.erp`;
+    const tenantId = this.readHeader(headers, 'x-tenant-id') || fallbackTenantId;
+    const employeeId = this.readHeader(headers, 'x-erp-dev-employee-id') || undefined;
+    const positionId = this.readHeader(headers, 'x-erp-dev-position-id') || undefined;
+
+    return {
+      sub: userId,
+      userId,
+      email,
+      role,
+      tenantId,
+      employeeId,
+      positionId,
+      mustChangePassword: false,
+      isActive: true
+    };
+  }
+
+  private readHeader(headers: Record<string, string | string[] | undefined>, key: string) {
+    const value = headers[key];
+    if (Array.isArray(value)) {
+      return this.cleanString(value[0]);
+    }
+    return this.cleanString(value);
+  }
+
+  private cleanString(value: unknown) {
+    return String(value ?? '').trim();
   }
 
   private async getSessionTimeoutMinutes() {

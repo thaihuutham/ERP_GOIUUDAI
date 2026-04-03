@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import { GenericStatus } from '@prisma/client';
 import {
+  IsArray,
   IsDateString,
   IsEnum,
   IsInt,
@@ -31,6 +32,16 @@ export class WorkflowsListQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(80)
   targetType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  approverId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  requesterId?: string;
 }
 
 export class CreateWorkflowDefinitionDto {
@@ -252,6 +263,16 @@ export class WorkflowDecisionDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+export class WorkflowDefinitionSimulateDto {
+  @IsOptional()
+  @IsObject()
+  contextJson?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsArray()
+  actions?: string[];
 }
 
 export class ReassignWorkflowDto extends WorkflowDecisionDto {

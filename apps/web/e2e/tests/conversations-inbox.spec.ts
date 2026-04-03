@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 
 type MockState = {
   runEvaluatedCount: number;
+  runNowCalls: number;
 };
 
 function json(route: Route, payload: unknown, status = 200) {
@@ -112,6 +113,13 @@ async function mockConversationsApis(page: Page, state: MockState) {
           intervalMinutes: 120,
           lastRunStatus: 'SUCCESS',
           nextRunAt: '2026-03-29T06:00:00.000Z'
+        },
+        {
+          id: 'job_2',
+          name: 'QC OA realtime',
+          intervalMinutes: 60,
+          lastRunStatus: 'SUCCESS',
+          nextRunAt: '2026-03-29T06:30:00.000Z'
         }
       ]);
     }
@@ -163,13 +171,16 @@ async function mockConversationsApis(page: Page, state: MockState) {
       });
     }
 
-    if (method === 'POST' && path === '/api/v1/conversation-quality/jobs/job_1/run-now') {
-      state.runEvaluatedCount = 9;
+    if (method === 'POST' && /\/api\/v1\/conversation-quality\/jobs\/[^/]+\/run-now$/.test(path)) {
+      const jobId = path.split('/')[5] ?? '';
+      state.runNowCalls += 1;
+      state.runEvaluatedCount += 3;
       return json(route, {
         runId: 'run_1',
         summary: {
           triggerType: 'MANUAL',
-          evaluatedCount: 9
+          jobId,
+          evaluatedCount: state.runEvaluatedCount
         }
       }, 201);
     }
@@ -180,13 +191,13 @@ async function mockConversationsApis(page: Page, state: MockState) {
 
 test.describe('CRM Conversations Inbox', () => {
   test('hiển thị thread list và message panel đúng dữ liệu', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3 };
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
     await mockConversationsApis(page, state);
 
     await page.goto('/modules/crm/conversations');
 
     await expect(page.getByTestId('crm-conversations-workbench')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'CRM Conversations Inbox' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Hội thoại khách hàng CRM' })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'Khách test OA' }).first()).toBeVisible();
     await expect(page.getByText('Khách hỏi giá combo')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Kết quả AI mới nhất' })).toBeVisible();
@@ -194,7 +205,7 @@ test.describe('CRM Conversations Inbox', () => {
   });
 
   test('gửi tin nhắn từ panel phản hồi hiển thị banner thành công', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3 };
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
     await mockConversationsApis(page, state);
 
     await page.goto('/modules/crm/conversations');
@@ -206,18 +217,37 @@ test.describe('CRM Conversations Inbox', () => {
   });
 
   test('run-now cập nhật danh sách runs và run detail', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3 };
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
     await mockConversationsApis(page, state);
 
     await page.goto('/modules/crm/conversations');
 
-    await expect(page.getByRole('heading', { name: 'AI QC Jobs & Runs' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Lịch đánh giá AI và phiên chạy' })).toBeVisible();
     await expect(page.getByTestId('run-evaluated-run_1')).toHaveText('3');
 
     await page.getByTestId('run-now-job_1').click();
 
-    await expect(page.getByText('Đã trigger chạy job AI.')).toBeVisible();
-    await expect(page.getByTestId('run-evaluated-run_1')).toHaveText('9');
-    await expect(page.getByRole('heading', { name: 'Run detail' })).toBeVisible();
+    await expect(page.getByText('Đã kích hoạt chạy lịch đánh giá AI.')).toBeVisible();
+    await expect(page.getByTestId('run-evaluated-run_1')).toHaveText('6');
+    await expect(page.getByRole('heading', { name: 'Chi tiết phiên chạy' })).toBeVisible();
+  });
+
+  test('bulk run-now jobs hiển thị summary thành công', async ({ page }) => {
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
+    await mockConversationsApis(page, state);
+
+    await page.goto('/modules/crm/conversations');
+
+    await expect(page.getByRole('cell', { name: 'QC Zalo định kỳ' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'QC OA realtime' })).toBeVisible();
+
+    await page.getByRole('row', { name: /QC Zalo định kỳ/ }).locator('input[type="checkbox"]').check();
+    await page.getByRole('row', { name: /QC OA realtime/ }).locator('input[type="checkbox"]').check();
+    await expect(page.getByText('Đã chọn 2 lịch')).toBeVisible();
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'Chạy ngay mục đã chọn' }).click();
+
+    await expect.poll(() => state.runNowCalls).toBe(2);
   });
 });

@@ -16,8 +16,9 @@ import { FormEvent, useEffect, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
-import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
+import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
 type InvoiceStatus = 'ALL' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -136,6 +137,7 @@ export function FinanceOperationsBoard() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<InvoiceStatus>('ALL');
   const [selectedInvoice, setSelectedInvoice] = useState<FinanceInvoice | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [aging, setAging] = useState<InvoiceAging | null>(null);
   const [allocations, setAllocations] = useState<PaymentAllocation[]>([]);
   const [isLoadingAllocations, setIsLoadingAllocations] = useState(false);
@@ -261,6 +263,111 @@ export function FinanceOperationsBoard() {
       render: (invoice) => toDateTime(invoice.dueAt)
     }
   ];
+
+  const runFinanceBulkAction = async (
+    actionLabel: string,
+    selectedRows: FinanceInvoice[],
+    execute: (invoice: FinanceInvoice) => Promise<void>
+  ): Promise<BulkExecutionResult> => {
+    if (selectedRows.length === 0) {
+      return {
+        total: 0,
+        successCount: 0,
+        failedCount: 0,
+        failedIds: [],
+        failures: [],
+        actionLabel,
+        message: `${actionLabel}: không có hóa đơn được chọn.`
+      };
+    }
+
+    const rowsById = new Map<string, FinanceInvoice>();
+    selectedRows.forEach((row) => rowsById.set(String(row.id), row));
+    const ids = selectedRows.map((row) => String(row.id));
+
+    const result = await runBulkOperation({
+      ids,
+      continueOnError: true,
+      chunkSize: 10,
+      execute: async (invoiceId) => {
+        const row = rowsById.get(String(invoiceId));
+        if (!row) {
+          throw new Error(`Không tìm thấy hóa đơn ${invoiceId}.`);
+        }
+        await execute(row);
+      }
+    });
+
+    const normalized: BulkExecutionResult = {
+      ...result,
+      actionLabel,
+      message: formatBulkSummary(
+        {
+          ...result,
+          actionLabel
+        },
+        actionLabel
+      )
+    };
+
+    if (normalized.successCount > 0) {
+      await Promise.all([loadInvoices(), loadAging()]);
+    }
+    setResultMessage(normalized.message ?? null);
+    if (normalized.failedCount > 0) {
+      setErrorMessage(`Một số hóa đơn lỗi khi chạy "${actionLabel}".`);
+    } else {
+      setErrorMessage(null);
+    }
+    return normalized;
+  };
+
+  const bulkActions: StandardTableBulkAction<FinanceInvoice>[] = canMutate
+    ? [
+        {
+          key: 'bulk-issue-invoices',
+          label: 'Issue',
+          tone: 'primary',
+          execute: async (selectedRows) =>
+            runFinanceBulkAction('Phát hành hóa đơn', selectedRows, async (invoice) => {
+              if (String(invoice.status || '').toUpperCase() !== 'DRAFT') {
+                throw new Error(`Hóa đơn ${invoice.invoiceNo || invoice.id.slice(-8)} không ở trạng thái DRAFT.`);
+              }
+              await apiRequest(`/finance/invoices/${invoice.id}/issue`, {
+                method: 'POST',
+                body: { note: 'Bulk issue từ Operations Board' }
+              });
+            })
+        },
+        {
+          key: 'bulk-approve-invoices',
+          label: 'Approve',
+          tone: 'ghost',
+          execute: async (selectedRows) =>
+            runFinanceBulkAction('Phê duyệt hóa đơn', selectedRows, async (invoice) => {
+              if (String(invoice.status || '').toUpperCase() !== 'PENDING') {
+                throw new Error(`Hóa đơn ${invoice.invoiceNo || invoice.id.slice(-8)} không ở trạng thái PENDING.`);
+              }
+              await apiRequest(`/finance/invoices/${invoice.id}/approve`, {
+                method: 'POST',
+                body: { note: 'Bulk approve từ Operations Board' }
+              });
+            })
+        },
+        {
+          key: 'bulk-archive-invoices',
+          label: 'Archive',
+          tone: 'danger',
+          confirmMessage: (rows) => `Lưu trữ ${rows.length} hóa đơn đã chọn?`,
+          execute: async (selectedRows) =>
+            runFinanceBulkAction('Lưu trữ hóa đơn', selectedRows, async (invoice) => {
+              await apiRequest(`/finance/invoices/${invoice.id}`, {
+                method: 'DELETE'
+              });
+            })
+        }
+      ]
+    : [];
 
   if (!canView) {
     return <div style={{ padding: '2rem', textAlign: 'center' }}>Hạn chế quyền truy cập.</div>;
@@ -473,6 +580,11 @@ export function FinanceOperationsBoard() {
         isLoading={isLoading}
         storageKey={FINANCE_COLUMN_SETTINGS_KEY}
         onRowClick={(invoice) => setSelectedInvoice(invoice)}
+        enableRowSelection
+        selectedRowIds={selectedRowIds}
+        onSelectedRowIdsChange={setSelectedRowIds}
+        bulkActions={bulkActions}
+        showDefaultBulkUtilities
       />
 
       <SidePanel

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { decryptSettingsSecret, SettingsSecretCryptoError } from './settings-secret-crypto.util';
 import {
   DEFAULT_SETTINGS_DOMAINS,
   RUNTIME_TOGGLABLE_ERP_MODULES,
@@ -12,6 +13,10 @@ import {
 
 const RUNTIME_TOGGLABLE_MODULES = new Set<string>(RUNTIME_TOGGLABLE_ERP_MODULES);
 const AUDIT_MODULE_KEY = 'audit';
+const ASSISTANT_MODULE_KEY = 'assistant';
+const HR_APPENDIX_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] as const;
+const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as const;
+const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
 
 type CacheEntry = {
   value: Record<string, unknown>;
@@ -52,6 +57,44 @@ type IntegrationRuntime = {
     accessToken: string;
     webhookSecret: string;
   };
+};
+
+type HrAppendixCatalogItemRuntime = {
+  code: string;
+  name: string;
+  description: string;
+  fields: HrAppendixTemplateFieldRuntime[];
+};
+
+type HrAppendixFieldCatalogItemRuntime = {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  type: (typeof HR_APPENDIX_FIELD_TYPES)[number];
+  options: string[];
+  validation: Record<string, unknown>;
+  analyticsEnabled: boolean;
+  aggregator: (typeof HR_APPENDIX_AGGREGATORS)[number];
+  status: (typeof HR_APPENDIX_FIELD_STATUS)[number];
+  version: number;
+};
+
+type HrAppendixTemplateFieldRuntime = HrAppendixFieldCatalogItemRuntime & {
+  required: boolean;
+  placeholder: string;
+  defaultValue: unknown;
+  helpText: string;
+  visibility: 'visible' | 'hidden';
+  kpiAlias: string;
+  source: 'global' | 'appendix-local';
+};
+
+type HrAppendixTemplateRuntime = {
+  code: string;
+  name: string;
+  description: string;
+  fields: Array<Record<string, unknown>>;
 };
 
 @Injectable()
@@ -128,7 +171,7 @@ export class RuntimeSettingsService {
 
     return {
       organization: {
-        companyName: this.readString(org.companyName, 'Digital Retail ERP Co.'),
+        companyName: this.readString(org.companyName, 'GOIUUDAI'),
         taxCode: this.readString(org.taxCode),
         address: this.readString(org.address),
         branchName: this.readString(org.branchName),
@@ -161,7 +204,22 @@ export class RuntimeSettingsService {
     const passwordPolicy = this.toRecord(domain.passwordPolicy);
     const loginPolicy = this.toRecord(domain.loginPolicy);
     const permissionPolicy = this.toRecord(domain.permissionPolicy);
+    const auditViewPolicy = this.toRecord(domain.auditViewPolicy);
+    const auditGroups = this.toRecord(auditViewPolicy.groups);
+    const directorGroup = this.toRecord(auditGroups.DIRECTOR);
+    const branchManagerGroup = this.toRecord(auditGroups.BRANCH_MANAGER);
+    const departmentManagerGroup = this.toRecord(auditGroups.DEPARTMENT_MANAGER);
+    const assistantAccessPolicy = this.toRecord(domain.assistantAccessPolicy);
+    const roleScopeDefaults = this.toRecord(assistantAccessPolicy.roleScopeDefaults);
     const settingsEditorPolicy = this.toRecord(domain.settingsEditorPolicy);
+
+    const normalizeAssistantScope = (value: unknown, fallback: 'company' | 'branch' | 'department' | 'self') => {
+      const normalized = this.readString(value, fallback).toLowerCase();
+      if (normalized === 'company' || normalized === 'branch' || normalized === 'department' || normalized === 'self') {
+        return normalized;
+      }
+      return fallback;
+    };
 
     return {
       sessionTimeoutMinutes: this.toInt(domain.sessionTimeoutMinutes, 480, 5, 1440),
@@ -182,6 +240,33 @@ export class RuntimeSettingsService {
         conflictPolicy: this.readString(permissionPolicy.conflictPolicy, 'DENY_OVERRIDES').toUpperCase(),
         superAdminIds: this.toStringArray(permissionPolicy.superAdminIds),
         superAdminEmails: this.toStringArray(permissionPolicy.superAdminEmails).map((item) => item.toLowerCase())
+      },
+      auditViewPolicy: {
+        enabled: this.toBool(auditViewPolicy.enabled, true),
+        groups: {
+          DIRECTOR: {
+            enabled: this.toBool(directorGroup.enabled, true)
+          },
+          BRANCH_MANAGER: {
+            enabled: this.toBool(branchManagerGroup.enabled, true)
+          },
+          DEPARTMENT_MANAGER: {
+            enabled: this.toBool(departmentManagerGroup.enabled, true)
+          }
+        },
+        denyIfUngroupedManager: this.toBool(auditViewPolicy.denyIfUngroupedManager, true)
+      },
+      assistantAccessPolicy: {
+        enabled: this.toBool(assistantAccessPolicy.enabled, false),
+        roleScopeDefaults: {
+          ADMIN: normalizeAssistantScope(roleScopeDefaults.ADMIN, 'company'),
+          MANAGER: normalizeAssistantScope(roleScopeDefaults.MANAGER, 'department'),
+          STAFF: normalizeAssistantScope(roleScopeDefaults.STAFF, 'self')
+        },
+        enforcePermissionEngine: this.toBool(assistantAccessPolicy.enforcePermissionEngine, true),
+        denyIfNoScope: this.toBool(assistantAccessPolicy.denyIfNoScope, true),
+        allowedModules: this.toStringArray(assistantAccessPolicy.allowedModules).map((item) => item.toLowerCase()),
+        chatChannelScopeEnforced: this.toBool(assistantAccessPolicy.chatChannelScopeEnforced, true)
       },
       settingsEditorPolicy
     };
@@ -287,6 +372,12 @@ export class RuntimeSettingsService {
     const leave = this.toRecord(domain.leave);
     const payroll = this.toRecord(domain.payroll);
     const approverChain = this.toRecord(domain.approverChain);
+    const appendixFieldCatalog = this.normalizeHrAppendixFieldCatalog(domain.appendixFieldCatalog);
+    const appendixTemplates = this.normalizeHrAppendixTemplates(
+      domain.appendixTemplates ?? domain.appendixCatalog,
+      appendixFieldCatalog
+    );
+    const appendixCatalog = this.resolveHrAppendixCatalog(appendixTemplates, appendixFieldCatalog);
     return {
       shiftDefault: this.readString(domain.shiftDefault, 'HC'),
       leave: {
@@ -300,7 +391,10 @@ export class RuntimeSettingsService {
       approverChain: {
         leaveApproverRole: this.readString(approverChain.leaveApproverRole, 'MANAGER').toUpperCase(),
         payrollApproverRole: this.readString(approverChain.payrollApproverRole, 'ADMIN').toUpperCase()
-      }
+      },
+      appendixFieldCatalog,
+      appendixTemplates,
+      appendixCatalog
     };
   }
 
@@ -310,11 +404,17 @@ export class RuntimeSettingsService {
     const ai = this.toRecord(domain.ai);
     const zalo = this.toRecord(domain.zalo);
 
+    const bhtotApiKey = this.readIntegrationSecret(bhtot.apiKey, 'integrations.bhtot.apiKey');
+    const aiApiKey = this.readIntegrationSecret(ai.apiKey, 'integrations.ai.apiKey');
+    const zaloAccessToken = this.readIntegrationSecret(zalo.accessToken, 'integrations.zalo.accessToken');
+    const zaloWebhookSecret = this.readIntegrationSecret(zalo.webhookSecret, 'integrations.zalo.webhookSecret');
+
     const bhtotRef = this.readString(bhtot.apiKeyRef);
     const aiRef = this.readString(ai.apiKeyRef);
     const zaloRef = this.readString(zalo.accessTokenRef);
     const zaloWebhookRef = this.readString(zalo.webhookSecretRef);
 
+    const fallbackBhtotApiKey = this.readString(this.config.get<string>('BHTOT_API_KEY'));
     const fallbackAiApiKey = this.readString(this.config.get<string>('AI_OPENAI_COMPAT_API_KEY'));
     const fallbackZaloToken = this.readString(this.config.get<string>('ZALO_OA_ACCESS_TOKEN'));
     const fallbackZaloWebhookSecret = this.readString(this.config.get<string>('ZALO_OA_WEBHOOK_SECRET'));
@@ -325,7 +425,7 @@ export class RuntimeSettingsService {
         baseUrl: this.readString(bhtot.baseUrl, this.readString(this.config.get<string>('BHTOT_BASE_URL'))),
         timeoutMs: this.toInt(bhtot.timeoutMs, 12_000, 1_000, 120_000),
         apiKeyRef: bhtotRef,
-        apiKey: this.resolveSecretByRef(bhtotRef)
+        apiKey: bhtotApiKey || this.resolveSecretByRef(bhtotRef) || fallbackBhtotApiKey
       },
       ai: {
         enabled: this.toBool(ai.enabled, false),
@@ -333,7 +433,7 @@ export class RuntimeSettingsService {
         model: this.readString(ai.model, this.readString(this.config.get<string>('AI_OPENAI_COMPAT_MODEL'), 'gpt-4o-mini')),
         timeoutMs: this.toInt(ai.timeoutMs, 45_000, 1_000, 300_000),
         apiKeyRef: aiRef,
-        apiKey: this.resolveSecretByRef(aiRef) || fallbackAiApiKey
+        apiKey: aiApiKey || this.resolveSecretByRef(aiRef) || fallbackAiApiKey
       },
       zalo: {
         enabled: this.toBool(zalo.enabled, false),
@@ -347,10 +447,8 @@ export class RuntimeSettingsService {
         ),
         accessTokenRef: zaloRef,
         webhookSecretRef: zaloWebhookRef,
-        accessToken: this.resolveSecretByRef(zaloRef) || fallbackZaloToken,
-        webhookSecret: this.resolveSecretByRef(zaloWebhookRef)
-          || this.readString(zalo.webhookSecret)
-          || fallbackZaloWebhookSecret
+        accessToken: zaloAccessToken || this.resolveSecretByRef(zaloRef) || fallbackZaloToken,
+        webhookSecret: zaloWebhookSecret || this.resolveSecretByRef(zaloWebhookRef) || fallbackZaloWebhookSecret
       }
     };
   }
@@ -533,6 +631,23 @@ export class RuntimeSettingsService {
     return normalized || fallback;
   }
 
+  private readIntegrationSecret(value: unknown, fieldPath: string) {
+    const raw = this.readString(value);
+    if (!raw) {
+      return '';
+    }
+
+    try {
+      return this.readString(decryptSettingsSecret(raw));
+    } catch (error) {
+      const reason = error instanceof SettingsSecretCryptoError
+        ? error.message
+        : 'unknown decryption failure';
+      this.logger.warn(`Cannot decrypt ${fieldPath}: ${reason}`);
+      return '';
+    }
+  }
+
   private toStringArray(value: unknown) {
     if (!Array.isArray(value)) {
       return [];
@@ -551,9 +666,12 @@ export class RuntimeSettingsService {
         normalized.push(lowered);
       }
     }
-    // Backward compatibility: org_profile.enabledModules created before audit module rollout.
+    // Backward compatibility: org_profile.enabledModules created before audit/assistant module rollout.
     if (RUNTIME_TOGGLABLE_MODULES.has(AUDIT_MODULE_KEY) && !normalized.includes(AUDIT_MODULE_KEY)) {
       normalized.push(AUDIT_MODULE_KEY);
+    }
+    if (RUNTIME_TOGGLABLE_MODULES.has(ASSISTANT_MODULE_KEY) && !normalized.includes(ASSISTANT_MODULE_KEY)) {
+      normalized.push(ASSISTANT_MODULE_KEY);
     }
     return normalized;
   }
@@ -588,5 +706,216 @@ export class RuntimeSettingsService {
       return fallback;
     }
     return parsed;
+  }
+
+  private normalizeHrAppendixFieldType(value: unknown, fallback: (typeof HR_APPENDIX_FIELD_TYPES)[number] = 'text') {
+    const normalized = this.readString(value).toLowerCase();
+    return (HR_APPENDIX_FIELD_TYPES as readonly string[]).includes(normalized)
+      ? (normalized as (typeof HR_APPENDIX_FIELD_TYPES)[number])
+      : fallback;
+  }
+
+  private normalizeHrAppendixAggregator(value: unknown, fallback: (typeof HR_APPENDIX_AGGREGATORS)[number] = 'none') {
+    const normalized = this.readString(value).toLowerCase();
+    return (HR_APPENDIX_AGGREGATORS as readonly string[]).includes(normalized)
+      ? (normalized as (typeof HR_APPENDIX_AGGREGATORS)[number])
+      : fallback;
+  }
+
+  private normalizeHrAppendixStatus(value: unknown, fallback: (typeof HR_APPENDIX_FIELD_STATUS)[number] = 'ACTIVE') {
+    const normalized = this.readString(value).toUpperCase();
+    return (HR_APPENDIX_FIELD_STATUS as readonly string[]).includes(normalized)
+      ? (normalized as (typeof HR_APPENDIX_FIELD_STATUS)[number])
+      : fallback;
+  }
+
+  private normalizeAppendixFieldKey(value: unknown, fallback = '') {
+    const normalized = this.readString(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+    if (normalized) {
+      return normalized;
+    }
+    return this.readString(fallback)
+      .replace(/[^a-zA-Z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  private normalizeHrAppendixFieldCatalog(raw: unknown): HrAppendixFieldCatalogItemRuntime[] {
+    const defaultsDomain = this.toRecord(DEFAULT_SETTINGS_DOMAINS.hr_policies);
+    const defaultCatalogRaw = this.toRecord(defaultsDomain.appendixFieldCatalog);
+    const inputCatalog = this.toRecord(raw);
+    const keys = Array.from(new Set([...Object.keys(defaultCatalogRaw), ...Object.keys(inputCatalog)]))
+      .map((item) => this.normalizeAppendixFieldKey(item))
+      .filter(Boolean);
+
+    const catalog: HrAppendixFieldCatalogItemRuntime[] = [];
+    for (const key of keys) {
+      const defaultItem = this.toRecord(defaultCatalogRaw[key]);
+      const inputItem = this.toRecord(inputCatalog[key]);
+      const mergedItem = this.toRecord(this.mergeRecords(defaultItem, inputItem));
+      const analyticsEnabled = this.toBool(mergedItem.analyticsEnabled, this.toBool(defaultItem.analyticsEnabled, false));
+      catalog.push({
+        id: this.readString(mergedItem.id, key),
+        key: this.normalizeAppendixFieldKey(mergedItem.key, key),
+        label: this.readString(mergedItem.label, key),
+        description: this.readString(mergedItem.description),
+        type: this.normalizeHrAppendixFieldType(mergedItem.type, this.normalizeHrAppendixFieldType(defaultItem.type, 'text')),
+        options: this.toStringArray(mergedItem.options),
+        validation: this.toRecord(mergedItem.validation),
+        analyticsEnabled,
+        aggregator: analyticsEnabled
+          ? this.normalizeHrAppendixAggregator(mergedItem.aggregator, this.normalizeHrAppendixAggregator(defaultItem.aggregator, 'count'))
+          : 'none',
+        status: this.normalizeHrAppendixStatus(mergedItem.status, this.normalizeHrAppendixStatus(defaultItem.status, 'ACTIVE')),
+        version: this.toInt(mergedItem.version, this.toInt(defaultItem.version, 1, 1, 1000), 1, 1000)
+      });
+    }
+
+    return catalog.sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  private resolveAppendixFieldKeyFromCatalog(raw: unknown, fieldCatalogMap: Map<string, HrAppendixFieldCatalogItemRuntime>) {
+    const candidate = this.readString(raw);
+    if (!candidate) {
+      return '';
+    }
+    const direct = fieldCatalogMap.get(candidate) ?? fieldCatalogMap.get(candidate.toLowerCase());
+    if (direct) {
+      return direct.key;
+    }
+
+    const slug = this.normalizeAppendixFieldKey(candidate);
+    for (const field of fieldCatalogMap.values()) {
+      const byId = this.normalizeAppendixFieldKey(field.id);
+      const byLabel = this.normalizeAppendixFieldKey(field.label);
+      if (field.key === candidate || field.key === slug || byId === slug || byLabel === slug) {
+        return field.key;
+      }
+    }
+    return '';
+  }
+
+  private normalizeHrAppendixTemplates(raw: unknown, fieldCatalog: HrAppendixFieldCatalogItemRuntime[]): HrAppendixTemplateRuntime[] {
+    const defaultsDomain = this.toRecord(DEFAULT_SETTINGS_DOMAINS.hr_policies);
+    const defaultTemplatesRaw = this.toRecord(defaultsDomain.appendixTemplates);
+    const legacyTemplatesRaw = this.toRecord(defaultsDomain.appendixCatalog);
+    const inputTemplates = this.toRecord(raw);
+    const templateSource = Object.keys(inputTemplates).length > 0 ? inputTemplates : legacyTemplatesRaw;
+    const codes = Array.from(new Set([...Object.keys(defaultTemplatesRaw), ...Object.keys(templateSource)]))
+      .map((item) => item.trim().toUpperCase())
+      .filter((item) => /^PL\d{2}$/.test(item));
+
+    const fieldCatalogMap = new Map<string, HrAppendixFieldCatalogItemRuntime>(
+      fieldCatalog.map((field) => [field.key, field])
+    );
+
+    const templates: HrAppendixTemplateRuntime[] = [];
+    for (const code of codes) {
+      const defaultItem = this.toRecord(defaultTemplatesRaw[code]);
+      const fallbackItem = this.toRecord(legacyTemplatesRaw[code]);
+      const inputItem = this.toRecord(templateSource[code]);
+      const mergedItem = this.toRecord(this.mergeRecords(this.mergeRecords(fallbackItem, defaultItem), inputItem));
+      const rawFields = Array.isArray(mergedItem.fields) ? mergedItem.fields : [];
+      const fields: Array<Record<string, unknown>> = [];
+      const seen = new Set<string>();
+
+      for (const row of rawFields) {
+        const rowRecord = this.toRecord(row);
+        let fieldKey = '';
+        if (typeof row === 'string') {
+          fieldKey = this.resolveAppendixFieldKeyFromCatalog(row, fieldCatalogMap) || this.normalizeAppendixFieldKey(row);
+        } else {
+          fieldKey = this.resolveAppendixFieldKeyFromCatalog(
+            rowRecord.fieldKey ?? rowRecord.key ?? rowRecord.fieldId,
+            fieldCatalogMap
+          );
+          if (!fieldKey) {
+            fieldKey = this.normalizeAppendixFieldKey(rowRecord.fieldKey ?? rowRecord.key ?? rowRecord.fieldId);
+          }
+        }
+
+        if (!fieldKey || seen.has(fieldKey)) {
+          continue;
+        }
+        seen.add(fieldKey);
+        fields.push({
+          fieldKey,
+          required: this.toBool(rowRecord.required, false),
+          placeholder: this.readString(rowRecord.placeholder),
+          defaultValue: rowRecord.defaultValue ?? null,
+          helpText: this.readString(rowRecord.helpText),
+          visibility: this.readString(rowRecord.visibility).toLowerCase() === 'hidden' ? 'hidden' : 'visible',
+          kpiAlias: this.readString(rowRecord.kpiAlias)
+        });
+      }
+
+      templates.push({
+        code,
+        name: this.readString(mergedItem.name, code),
+        description: this.readString(mergedItem.description),
+        fields
+      });
+    }
+
+    return templates.sort((left, right) => left.code.localeCompare(right.code));
+  }
+
+  private resolveHrAppendixCatalog(
+    templates: HrAppendixTemplateRuntime[],
+    fieldCatalog: HrAppendixFieldCatalogItemRuntime[]
+  ): HrAppendixCatalogItemRuntime[] {
+    const catalogMap = new Map(fieldCatalog.map((field) => [field.key, field]));
+
+    return templates.map((template) => {
+      const fields: HrAppendixTemplateFieldRuntime[] = template.fields.map((rawField) => {
+        const fieldRef = this.toRecord(rawField);
+        const fieldKey = this.readString(fieldRef.fieldKey);
+        const globalField = catalogMap.get(fieldKey);
+        if (!globalField) {
+          return {
+            id: fieldKey,
+            key: fieldKey,
+            label: fieldKey,
+            description: '',
+            type: 'text',
+            options: [],
+            validation: {},
+            analyticsEnabled: false,
+            aggregator: 'none',
+            status: 'ACTIVE',
+            version: 1,
+            required: this.toBool(fieldRef.required, false),
+            placeholder: this.readString(fieldRef.placeholder),
+            defaultValue: fieldRef.defaultValue ?? null,
+            helpText: this.readString(fieldRef.helpText),
+            visibility: this.readString(fieldRef.visibility).toLowerCase() === 'hidden' ? 'hidden' : 'visible',
+            kpiAlias: this.readString(fieldRef.kpiAlias),
+            source: fieldKey.toLowerCase().startsWith(`${template.code.toLowerCase()}_`) ? 'appendix-local' : 'global'
+          };
+        }
+        return {
+          ...globalField,
+          required: this.toBool(fieldRef.required, false),
+          placeholder: this.readString(fieldRef.placeholder),
+          defaultValue: fieldRef.defaultValue ?? null,
+          helpText: this.readString(fieldRef.helpText),
+          visibility: this.readString(fieldRef.visibility).toLowerCase() === 'hidden' ? 'hidden' : 'visible',
+          kpiAlias: this.readString(fieldRef.kpiAlias),
+          source: 'global'
+        };
+      });
+
+      return {
+        code: template.code,
+        name: template.name,
+        description: template.description,
+        fields
+      };
+    });
   }
 }

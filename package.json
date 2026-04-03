@@ -8,7 +8,9 @@
   ],
   "scripts": {
     "dev": "npm run dev:api",
+    "predev:api": "npm run build --workspace @erp/shared",
     "dev:api": "npm run dev --workspace @erp/api",
+    "predev:web": "npm run build --workspace @erp/shared",
     "dev:web": "npm run dev --workspace @erp/web",
     "build": "npm run build --workspace @erp/shared && npm run build --workspace @erp/ui && npm run build --workspace @erp/api && npm run build --workspace @erp/web",
     "lint": "npm run lint --workspace @erp/shared && npm run lint --workspace @erp/ui && npm run lint --workspace @erp/api && npm run lint --workspace @erp/web",

@@ -39,6 +39,9 @@ describe('AuditService', () => {
   let runtimeSettings: {
     getDataGovernanceRuntime: ReturnType<typeof vi.fn>;
   };
+  let accessScope: {
+    resolveCurrentUserScope: ReturnType<typeof vi.fn>;
+  };
   let config: {
     get: ReturnType<typeof vi.fn>;
   };
@@ -62,10 +65,23 @@ describe('AuditService', () => {
         auditHotRetentionMonths: 12
       })
     };
+    accessScope = {
+      resolveCurrentUserScope: vi.fn().mockResolvedValue({
+        accessScope: 'company',
+        allowedActorIds: null,
+        managedOrgUnitIds: []
+      })
+    };
     config = {
       get: vi.fn().mockReturnValue(undefined)
     };
-    service = new AuditService(prisma as any, archive as any, runtimeSettings as any, config as any);
+    service = new AuditService(
+      prisma as any,
+      archive as any,
+      accessScope as any,
+      runtimeSettings as any,
+      config as any
+    );
   });
 
   it('lists audit logs with combined filters and normalized action/module', async () => {
@@ -163,6 +179,27 @@ describe('AuditService', () => {
     expect(actionMap.has('SENSITIVE_READ')).toBe(true);
   });
 
+  it('filters audit actions by resolved actor scope', async () => {
+    accessScope.resolveCurrentUserScope.mockResolvedValue({
+      accessScope: 'branch',
+      allowedActorIds: ['actor_1', 'actor_2'],
+      managedOrgUnitIds: ['ou_branch_1']
+    });
+    prisma.client.auditLog.groupBy.mockResolvedValue([]);
+
+    await service.getActions();
+
+    expect(prisma.client.auditLog.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          actorId: {
+            in: ['actor_1', 'actor_2']
+          }
+        }
+      })
+    );
+  });
+
   it('prunes old logs inside guarded transaction', async () => {
     const count = await service.pruneLogsBefore(now);
 
@@ -248,6 +285,120 @@ describe('AuditService', () => {
       scannedRows: 100,
       durationMs: 35
     });
+  });
+
+  it('filters hot and cold data by actor scope when manager is scoped', async () => {
+    accessScope.resolveCurrentUserScope.mockResolvedValue({
+      accessScope: 'branch',
+      allowedActorIds: ['manager_1'],
+      managedOrgUnitIds: ['ou_branch_1']
+    });
+
+    prisma.client.auditLog.findMany.mockResolvedValue([
+      {
+        id: 'log_hot_scope_1',
+        tenant_Id: 'GOIUUDAI',
+        module: 'sales',
+        entityType: 'Order',
+        entityId: 'ord_scope_1',
+        action: 'APPROVE_ORDER',
+        operationType: AuditOperationType.WRITE,
+        actorId: 'manager_1',
+        actorRole: 'MANAGER',
+        requestId: 'req_scope_hot_1',
+        route: '/api/v1/sales/orders/ord_scope_1/approve',
+        method: 'POST',
+        statusCode: 200,
+        ip: '127.0.0.1',
+        userAgent: 'vitest',
+        beforeData: null,
+        afterData: { status: 'APPROVED' },
+        changedFields: ['status'],
+        metadata: {},
+        prevHash: null,
+        hash: 'hash_scope_hot_1',
+        createdAt: new Date('2025-06-01T00:00:00.000Z')
+      }
+    ]);
+
+    archive.queryArchivedLogs.mockImplementation(async (args: any) => {
+      const matcher = args.matcher as (row: Record<string, unknown>) => boolean;
+      const coldRows = [
+        {
+          id: 'log_cold_scope_1',
+          tenant_Id: 'GOIUUDAI',
+          module: 'sales',
+          entityType: 'Order',
+          entityId: 'ord_scope_1',
+          action: 'APPROVE_ORDER',
+          operationType: 'WRITE',
+          actorId: 'manager_1',
+          actorRole: 'MANAGER',
+          requestId: 'req_scope_cold_1',
+          route: '/api/v1/sales/orders/ord_scope_1/approve',
+          method: 'POST',
+          statusCode: 200,
+          ip: '127.0.0.1',
+          userAgent: 'vitest',
+          beforeData: null,
+          afterData: { status: 'APPROVED' },
+          changedFields: ['status'],
+          metadata: {},
+          prevHash: null,
+          hash: 'hash_scope_cold_1',
+          createdAt: '2025-03-25T00:00:00.000Z'
+        },
+        {
+          id: 'log_cold_scope_2',
+          tenant_Id: 'GOIUUDAI',
+          module: 'sales',
+          entityType: 'Order',
+          entityId: 'ord_scope_2',
+          action: 'APPROVE_ORDER',
+          operationType: 'WRITE',
+          actorId: 'staff_outside_scope',
+          actorRole: 'STAFF',
+          requestId: 'req_scope_cold_2',
+          route: '/api/v1/sales/orders/ord_scope_2/approve',
+          method: 'POST',
+          statusCode: 200,
+          ip: '127.0.0.1',
+          userAgent: 'vitest',
+          beforeData: null,
+          afterData: { status: 'APPROVED' },
+          changedFields: ['status'],
+          metadata: {},
+          prevHash: null,
+          hash: 'hash_scope_cold_2',
+          createdAt: '2025-03-24T00:00:00.000Z'
+        }
+      ];
+
+      return {
+        items: coldRows.filter((item) => matcher(item as any)),
+        hasMore: false,
+        scannedFiles: 2,
+        scannedRows: 2,
+        durationMs: 18
+      };
+    });
+
+    const result = await service.listLogs({
+      from: '2025-03-20T00:00:00.000Z',
+      to: '2025-04-05T00:00:00.000Z',
+      limit: 10
+    });
+
+    const firstFindManyCall = prisma.client.auditLog.findMany.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstFindManyCall).toBeTruthy();
+    const serializedWhere = JSON.stringify(firstFindManyCall.where ?? {});
+    expect(serializedWhere).toContain('"actorId":{"in":["manager_1"]}');
+
+    const ids = result.items.map((item) => item.id);
+    expect(ids).toContain('log_hot_scope_1');
+    expect(ids).toContain('log_cold_scope_1');
+    expect(ids).not.toContain('log_cold_scope_2');
+    expect((result.pageInfo as Record<string, unknown>).accessScope).toBe('branch');
   });
 
   it('requires from/to when query reaches archive tier', async () => {

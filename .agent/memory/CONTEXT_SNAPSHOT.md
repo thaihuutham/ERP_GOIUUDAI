@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 11:20 +07
+- Time: 2026-04-03 14:25 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_1120_codex.md`
+- Session Log: `.agent/sessions/2026-04-03_1425_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,85 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-03 12:10 (Appendix metadata + employee lock + scope analytics)
+- Da implement policy-driven Appendix catalog cho Regulation:
+  - Settings key: `hr_policies.appendixCatalog`.
+  - Metadata endpoint moi: `GET /api/v1/hr/regulation/metadata`.
+  - Payload metadata: `appendices`, `viewerScope`, `canOverrideEmployeeId`, `requesterEmployeeId`.
+- Da enforce write authorization theo employee scope:
+  - Non-admin bi ep `employeeId = current user`.
+  - Admin duoc override employeeId.
+- Da enforce read scope cho Regulation list paths:
+  - submissions
+  - daily scores
+  - pip cases
+  - response shape thong nhat: `{ viewerScope, items }`.
+- Frontend Regulation:
+  - dropdown Appendix hien `code - name`, co description.
+  - render dynamic fields theo field map.
+  - doi Appendix se reset field phu thuoc.
+  - non-admin an Employee ID va khong gui employeeId tu UI.
+  - analytics quy tac:
+    - `self` => chart-only
+    - `shared` => chart + table.
+- Frontend Goals:
+  - bo sung analytics section theo scope:
+    - self => chart-only
+    - shared => chart + table detail.
+- ADR moi:
+  - `docs/decisions/ADR-032-POLICY-DRIVEN-APPENDIX-CATALOG.md`
+  - `docs/decisions/ADR-033-ROW-LEVEL-VISIBILITY-REUSE-GOALS-TO-REGULATION.md`
+- Runbook cap nhat:
+  - `docs/operations/RUNBOOK.md` (section Appendix catalog settings + viewerScope rendering rule).
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- hr-regulation.service.test.ts hr-regulation.api-flow.test.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4199 npx playwright test apps/web/e2e/tests/hr-regulation-board.spec.ts --config=apps/web/e2e/playwright.config.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4200 npx playwright test apps/web/e2e/tests/hr-goals-tracking-board.spec.ts --config=apps/web/e2e/playwright.config.ts` ✅
+
+## Update 2026-04-03 14:25 (Structured Field Library + Template-driven Regulation Form)
+- Da implement model `Global + Per-Appendix` cho Regulation form:
+  - `hr_policies.appendixFieldCatalog` (global field library)
+  - `hr_policies.appendixTemplates` (template field refs + local overrides)
+  - giu `appendixCatalog` legacy cho backward compatibility.
+- Runtime + contract:
+  - `GET /api/v1/hr/regulation/metadata` tra them `fieldCatalog` va `appendices.fields` da resolve.
+  - Submission create/patch validate payload dong theo `type + validation`.
+  - Payload luu snapshot `_schema.fieldVersions` de bao toan lich su khi template doi.
+- Governance:
+  - enforce namespace field local theo mau `PLxx_*`.
+  - non-admin lock `employeeId` theo auth context, admin duoc override.
+- Frontend Regulation:
+  - render dynamic field theo metadata resolve.
+  - doi appendix se reset/rebind field values + clear state.
+  - analytics field theo config:
+    - chi field co `analyticsEnabled=true` va `aggregator!=none`.
+    - `viewerScope=self`: chart-only.
+    - `viewerScope!=self`: chart + table.
+- Settings Center e2e selector:
+  - `apps/web/e2e/tests/settings-center-reports.spec.ts` doi selector tab HR sang regex `/Chính sách (HR|nhân sự)/i` de on dinh voi title domain hien tai.
+- ADR moi:
+  - `docs/decisions/ADR-034-HR-REGULATION-STRUCTURED-FIELD-LIBRARY-GLOBAL-PLUS-APPENDIX.md`
+- Runbook cap nhat:
+  - muc Structured Field Builder trong `docs/operations/RUNBOOK.md`.
+- Verify (session nay):
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/hr-regulation.service.test.ts test/hr-regulation.api-flow.test.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4245 npx playwright test apps/web/e2e/tests/hr-regulation-board.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4246 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
 
 ## Update 2026-04-03 11:20 (ERP No-JSON Input v1 - áp dụng toàn ERP)
 - Chuẩn bắt buộc mới (persistent, ưu tiên cao) cho toàn bộ AI agent:

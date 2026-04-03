@@ -2,9 +2,118 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-03 11:20 +07
+- Last updated: 2026-04-03 14:25 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-03 14:25 (Structured Field Library + Appendix Template + Analytics gating)
+- User yêu cầu implement plan `HR tự thiết kế form theo phụ lục (Regulation-first, Global-ready)`.
+- Đã hoàn tất backend contract và runtime normalization:
+  - `apps/api/src/modules/settings/settings-policy.types.ts`
+    - thêm mặc định `hr_policies.appendixFieldCatalog` + `hr_policies.appendixTemplates`.
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+    - normalize/validate cho `appendixFieldCatalog` và `appendixTemplates`.
+    - enforce namespace field local `PLxx_*`.
+    - auto build legacy `appendixCatalog` từ template để backward compatibility.
+  - `apps/api/src/common/settings/runtime-settings.service.ts`
+    - runtime trả `appendixFieldCatalog`, `appendixTemplates`, `appendixCatalog` (resolved fields + overrides).
+  - `apps/api/src/modules/hr/hr-regulation.service.ts`
+    - metadata trả `fieldCatalog` + `appendices` resolved field definitions.
+    - create/patch submission validate dynamic field theo `type + validation`.
+    - lưu snapshot `_schema.fieldVersions` trong payload để giữ lịch sử.
+    - giữ rule auth: non-admin lock `employeeId`, admin override.
+- Đã hoàn tất frontend:
+  - `apps/web/components/settings-center.tsx`
+    - section quản trị `Field library` + `Template theo phụ lục` cho `hr_policies`.
+  - `apps/web/components/hr-regulation-board.tsx`
+    - form render theo field definitions từ metadata.
+    - đổi appendix => reset/rebind dynamic fields.
+    - analytics theo field config:
+      - chỉ field `analyticsEnabled=true` + `aggregator!=none`.
+      - `scope=self`: chart-only.
+      - `scope!=self`: chart + table.
+- Đã cập nhật tests:
+  - `apps/api/test/hr-regulation.service.test.ts` (đồng bộ payload bắt buộc theo schema mới).
+  - `apps/api/test/hr-regulation.api-flow.test.ts` (assert metadata có `fieldCatalog` + resolved `appendices.fields`).
+  - `apps/api/test/settings-policy.service.test.ts` (pass regression).
+  - `apps/web/e2e/tests/hr-regulation-board.spec.ts` (pass flow sau cập nhật analytics section).
+  - `apps/web/e2e/tests/settings-center-reports.spec.ts` (cập nhật selector tab HR để tương thích title mới).
+- ADR mới:
+  - `docs/decisions/ADR-034-HR-REGULATION-STRUCTURED-FIELD-LIBRARY-GLOBAL-PLUS-APPENDIX.md`
+- Runbook cập nhật:
+  - `docs/operations/RUNBOOK.md` (mục Structured Field Builder cho Regulation).
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/hr-regulation.service.test.ts test/hr-regulation.api-flow.test.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4245 npx playwright test apps/web/e2e/tests/hr-regulation-board.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4246 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+
+## Session Update 2026-04-03 12:10 (Appendix metadata + employee lock + scope-based analytics)
+- User yêu cầu implement plan:
+  - Appendix catalog theo policy (code + name + description + field map),
+  - employeeId mặc định theo tài khoản đăng nhập và non-admin không được sửa,
+  - đổi Appendix phải reset field phụ thuộc,
+  - kiểm soát hiển thị dữ liệu theo scope cho Goals + Regulation (`self => chart-only`, `shared => chart + table`).
+- Đã hoàn tất backend:
+  - `apps/api/src/modules/hr/hr-regulation.controller.ts`
+    - thêm endpoint `GET /api/v1/hr/regulation/metadata`.
+  - `apps/api/src/modules/hr/hr-regulation.service.ts`
+    - metadata payload: `appendices`, `viewerScope`, `canOverrideEmployeeId`, `requesterEmployeeId`.
+    - enforce scope read cho submissions/daily-scores/pip-cases.
+    - enforce write rule:
+      - non-admin luôn bị ép `employeeId = current user`.
+      - admin được override `employeeId`.
+    - list responses trả object `{ viewerScope, items }`.
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+    - normalize/validate bổ sung cho `hr_policies.appendixCatalog`.
+- Đã hoàn tất frontend:
+  - `apps/web/components/hr-regulation-board.tsx`
+    - dropdown Appendix hiển thị `code - name`, kèm description.
+    - form fields render dynamic theo `fields` từ metadata.
+    - khi đổi Appendix: reset field phụ thuộc + clear notice/error cũ.
+    - non-admin ẩn Employee ID (form create + filter), payload không gửi employeeId chỉnh tay.
+    - scores analytics:
+      - `viewerScope=self` => chart-only.
+      - `viewerScope!=self` => chart + detail tables.
+  - `apps/web/components/hr-goals-tracking-board.tsx`
+    - thêm analytics section theo `scope` từ payload:
+      - self => chart-only,
+      - shared => chart + bảng chi tiết.
+- Đã cập nhật tests:
+  - `apps/api/test/hr-regulation.api-flow.test.ts`
+    - thêm test metadata endpoint.
+    - cập nhật assertions list response theo `{ viewerScope, items }`.
+  - `apps/api/test/hr-regulation.service.test.ts`
+    - thêm test non-admin lock employeeId.
+    - thêm test admin override employeeId.
+    - thêm test self-scope filtering.
+    - thêm test metadata trả catalog + access flags.
+  - `apps/web/e2e/tests/hr-regulation-board.spec.ts`
+    - mock metadata endpoint.
+    - verify non-admin không thấy Employee ID.
+    - verify scores tab self-scope chart-only.
+- ADR mới:
+  - `docs/decisions/ADR-032-POLICY-DRIVEN-APPENDIX-CATALOG.md`
+  - `docs/decisions/ADR-033-ROW-LEVEL-VISIBILITY-REUSE-GOALS-TO-REGULATION.md`
+- Tài liệu vận hành cập nhật:
+  - `docs/operations/RUNBOOK.md` (mục `HR Regulation Appendix catalog settings`).
+- Verify (System Stability Gate):
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- hr-regulation.service.test.ts hr-regulation.api-flow.test.ts` ✅ (`14 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4199 npx playwright test apps/web/e2e/tests/hr-regulation-board.spec.ts --config=apps/web/e2e/playwright.config.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4200 npx playwright test apps/web/e2e/tests/hr-goals-tracking-board.spec.ts --config=apps/web/e2e/playwright.config.ts` ✅
 
 ## Session Update 2026-04-03 11:20 (ERP No-JSON Input v1 - user non-IT)
 - User yêu cầu triển khai toàn hệ thống chuẩn nhập liệu không JSON thô cho người dùng không IT và lưu chuẩn này làm quy tắc bền vững cho các agent.

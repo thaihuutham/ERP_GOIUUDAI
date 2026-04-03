@@ -202,6 +202,13 @@ function statusPillClass(status: string) {
   return 'finance-status-pill finance-status-pill-neutral';
 }
 
+function scopeLabel(scope: GoalScope) {
+  if (scope === 'self') return 'Cá nhân';
+  if (scope === 'team') return 'Team';
+  if (scope === 'department') return 'Phòng ban';
+  return 'Toàn công ty';
+}
+
 export function HrGoalsTrackingBoard() {
   const [scope, setScope] = useState<GoalScope>('self');
   const [keyword, setKeyword] = useState('');
@@ -471,6 +478,31 @@ export function HrGoalsTrackingBoard() {
   };
 
   const grouped = tracker?.grouped;
+  const effectiveScope = overview?.scope ?? tracker?.scope ?? scope;
+  const isSelfScope = effectiveScope === 'self';
+  const analyticsChartRows = useMemo(() => {
+    if (!overview) {
+      return [] as Array<{ key: string; label: string; progress: number; total: number; approved: number }>;
+    }
+
+    if (effectiveScope === 'self') {
+      return overview.byEmployee.slice(0, 8).map((item) => ({
+        key: item.id,
+        label: item.name,
+        progress: Math.max(0, Math.min(100, item.avgProgressPercent ?? 0)),
+        total: item.total,
+        approved: item.approved
+      }));
+    }
+
+    return overview.byDepartment.slice(0, 8).map((item) => ({
+      key: item.key,
+      label: item.name,
+      progress: Math.max(0, Math.min(100, item.avgProgressPercent ?? 0)),
+      total: item.total,
+      approved: item.approved
+    }));
+  }, [overview, effectiveScope]);
 
   return (
     <article className="module-workbench" style={{ background: 'transparent' }}>
@@ -630,6 +662,73 @@ export function HrGoalsTrackingBoard() {
             <strong>{formatNumber(overview?.progress.weightedProgressPercent ?? 0)}%</strong>
           </div>
         </div>
+      </section>
+
+      <section style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.85rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <strong>Phân tích theo quyền truy cập</strong>
+          <span className="finance-status-pill finance-status-pill-neutral">Scope: {scopeLabel(effectiveScope)}</span>
+        </div>
+        {analyticsChartRows.length === 0 ? (
+          <p style={{ marginTop: '0.75rem', color: 'var(--muted)', fontSize: '0.82rem' }}>Chưa có dữ liệu biểu đồ.</p>
+        ) : (
+          <div
+            style={{
+              marginTop: '0.75rem',
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: '0.6rem',
+              minHeight: '220px',
+              padding: '0.75rem',
+              borderRadius: '10px',
+              border: '1px solid var(--line)',
+              background: 'var(--surface)'
+            }}
+          >
+            {analyticsChartRows.map((item) => (
+              <div key={item.key} style={{ flex: 1, minWidth: '36px', textAlign: 'center' }}>
+                <div
+                  title={`${item.label}: ${formatNumber(item.progress)}%`}
+                  style={{
+                    height: `${Math.max(8, item.progress * 1.8)}px`,
+                    borderRadius: '8px 8px 0 0',
+                    background: 'linear-gradient(180deg, var(--primary), var(--primary-soft))'
+                  }}
+                />
+                <div style={{ marginTop: '0.35rem', fontSize: '0.72rem', color: 'var(--muted)' }}>{item.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {isSelfScope ? (
+          <p style={{ marginTop: '0.75rem', color: 'var(--muted)', fontSize: '0.82rem' }}>
+            Scope cá nhân: chỉ hiển thị biểu đồ trực quan, ẩn bảng chi tiết.
+          </p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: '0.75rem' }}>
+            <table className="finance-table">
+              <thead>
+                <tr>
+                  <th>Đơn vị</th>
+                  <th>Tổng mục tiêu</th>
+                  <th>Đã duyệt</th>
+                  <th>Avg progress</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analyticsChartRows.map((item) => (
+                  <tr key={`detail-${item.key}`}>
+                    <td>{item.label}</td>
+                    <td>{formatNumber(item.total)}</td>
+                    <td>{formatNumber(item.approved)}</td>
+                    <td>{formatNumber(item.progress)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section

@@ -2051,6 +2051,68 @@ h4 {
   position: relative;
 }
 
+.standard-table-bulk-bar {
+  border: 1px solid #dbeadf;
+  border-radius: 10px;
+  background: #fbfefc;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.standard-table-bulk-meta {
+  color: #355544;
+  font-size: 0.82rem;
+}
+
+.standard-table-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.standard-table-bulk-result {
+  border: 1px solid #dbeadf;
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: #1f5938;
+  background: #f7fcf9;
+}
+
+.standard-table-bulk-result.is-error {
+  border-color: #f0d3d3;
+  background: #fff7f7;
+  color: #9b2c2c;
+}
+
+.standard-table-bulk-result-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.standard-table-bulk-notice {
+  border: 1px dashed #dbeadf;
+  border-radius: 9px;
+  padding: 0.4rem 0.55rem;
+  margin-bottom: 0.55rem;
+  font-size: 0.8rem;
+  color: #355544;
+  background: #f8fcf9;
+}
+
 .standard-table-config-btn {
   gap: 0.35rem;
 }
@@ -2111,12 +2173,22 @@ h4 {
   width: 92px;
 }
 
+.standard-table-select-head {
+  width: 44px;
+  text-align: center !important;
+}
+
 .standard-table-table tbody td {
   border-bottom: 1px solid #edf2ee;
   color: #2b342f;
   font-size: 0.86rem;
   padding: 0.66rem 0.8rem;
   vertical-align: middle;
+}
+
+.standard-table-select-cell {
+  width: 44px;
+  text-align: center;
 }
 
 .standard-table-row {

@@ -1,12 +1,19 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { GenericStatus } from '@prisma/client';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import {
+  decryptSettingsSecret,
+  encryptSettingsSecret,
+  getSettingsSecretEncryptionEnvKey,
+  isEncryptedSettingsSecret,
+  SettingsSecretCryptoError
+} from '../../common/settings/settings-secret-crypto.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditArchiveService } from '../audit/audit-archive.service';
 import { SearchService } from '../search/search.service';
 import { SearchReindexEntity } from '../search/search.types';
 import { SettingsPolicyService } from './settings-policy.service';
-import { RUNTIME_TOGGLABLE_ERP_MODULES } from './settings-policy.types';
+import { RUNTIME_TOGGLABLE_ERP_MODULES, SETTINGS_SECRET_ALLOWLIST } from './settings-policy.types';
 
 type OrderSettings = {
   allowIncreaseWithoutApproval: boolean;
@@ -60,9 +67,10 @@ const DEFAULT_BHTOT_SYNC_CONFIG: BhtotSyncConfig = {
 };
 
 const RUNTIME_TOGGLABLE_MODULES = new Set<string>(RUNTIME_TOGGLABLE_ERP_MODULES);
+const SETTINGS_SECRET_REF_SET = new Set<string>(SETTINGS_SECRET_ALLOWLIST as readonly string[]);
 
 const DEFAULT_CONFIG: SystemConfig = {
-  companyName: 'Digital Retail ERP Co.',
+  companyName: 'GOIUUDAI',
   taxCode: '',
   address: '',
   currency: 'VND',
@@ -95,11 +103,12 @@ export class SettingsService {
         ...DEFAULT_CONFIG,
         ...fallbackFromDomains
       });
+      const persistedConfig = this.serializeSystemConfigForStorage(createdConfig);
       const created = await this.prisma.client.setting.create({
         data: {
           tenant_Id: tenantId,
           settingKey: 'system_config',
-          settingValue: createdConfig as any
+          settingValue: persistedConfig as any
         }
       });
       await this.syncOrderSettingsFromConfig(createdConfig.orderSettings);
@@ -111,10 +120,11 @@ export class SettingsService {
     }
 
     const normalized = this.normalizeSystemConfig(row.settingValue);
-    if (JSON.stringify(row.settingValue ?? null) !== JSON.stringify(normalized)) {
+    const persistedConfig = this.serializeSystemConfigForStorage(normalized, row.settingValue);
+    if (JSON.stringify(row.settingValue ?? null) !== JSON.stringify(persistedConfig)) {
       await this.prisma.client.setting.updateMany({
         where: { id: row.id },
-        data: { settingValue: normalized as any }
+        data: { settingValue: persistedConfig as any }
       });
     }
 
@@ -204,14 +214,9 @@ export class SettingsService {
     await this.saveSystemConfigObject(nextConfig);
     await this.settingsPolicy.syncFromLegacySystemConfig(nextConfig);
 
-    const legacyApiKeyInput = this.cleanString(input.apiKey);
-    const notice = legacyApiKeyInput
-      ? 'Giá trị apiKey thô không được lưu. Hệ thống đã dùng secretRef (apiKeyRef) và đọc secret từ env/secret store.'
-      : null;
     return {
       message: 'Đã lưu cấu hình đồng bộ BHTOT_CTV.',
-      config: this.redactBhtotSyncConfig(nextConfig.bhtotSync),
-      notice
+      config: this.redactBhtotSyncConfig(nextConfig.bhtotSync)
     };
   }
 
@@ -236,9 +241,9 @@ export class SettingsService {
       throw new BadRequestException('Thiếu baseUrl trong cấu hình đồng bộ BHTOT_CTV.');
     }
 
-    const resolvedApiKey = this.settingsPolicy.resolveSecretByRef(sync.apiKeyRef);
+    const resolvedApiKey = this.settingsPolicy.resolveSecretValue(sync.apiKey, sync.apiKeyRef, 'BHTOT_API_KEY');
     if (!resolvedApiKey) {
-      throw new BadRequestException('Thiếu secret hợp lệ cho BHTOT (apiKeyRef/env).');
+      throw new BadRequestException('Thiếu apiKey hợp lệ cho BHTOT (apiKey hoặc apiKeyRef/env).');
     }
 
     try {
@@ -608,11 +613,12 @@ export class SettingsService {
         ...DEFAULT_CONFIG,
         ...fallbackFromDomains
       });
+      const persistedConfig = this.serializeSystemConfigForStorage(initial);
       await this.prisma.client.setting.create({
         data: {
           tenant_Id: tenantId,
           settingKey: 'system_config',
-          settingValue: initial as any
+          settingValue: persistedConfig as any
         }
       });
       await this.settingsPolicy.syncFromLegacySystemConfig(initial);
@@ -630,11 +636,12 @@ export class SettingsService {
     const existing = await this.prisma.client.setting.findFirst({
       where: { settingKey: 'system_config' }
     });
+    const persistedConfig = this.serializeSystemConfigForStorage(normalized, existing?.settingValue);
 
     if (existing) {
       await this.prisma.client.setting.updateMany({
         where: { id: existing.id },
-        data: { settingValue: normalized as any }
+        data: { settingValue: persistedConfig as any }
       });
       await this.settingsPolicy.syncFromLegacySystemConfig(normalized);
       return;
@@ -644,7 +651,7 @@ export class SettingsService {
       data: {
         tenant_Id: tenantId,
         settingKey: 'system_config',
-        settingValue: normalized as any
+        settingValue: persistedConfig as any
       }
     });
 
@@ -724,13 +731,15 @@ export class SettingsService {
         : DEFAULT_BHTOT_SYNC_CONFIG.lastSyncStatus;
 
     const apiKeyRefRaw = this.cleanString(payload.apiKeyRef);
-    const legacyApiKey = this.cleanString(payload.apiKey);
-    const apiKeyRef = apiKeyRefRaw || (legacyApiKey ? 'BHTOT_API_KEY' : DEFAULT_BHTOT_SYNC_CONFIG.apiKeyRef);
+    const legacyApiKey = this.readDecryptedSystemConfigSecret(payload.apiKey, 'system_config.bhtotSync.apiKey', false);
+    const legacyLooksLikeRef = !apiKeyRefRaw && SETTINGS_SECRET_REF_SET.has(legacyApiKey);
+    const apiKeyRef = apiKeyRefRaw || (legacyLooksLikeRef ? legacyApiKey : DEFAULT_BHTOT_SYNC_CONFIG.apiKeyRef);
+    const apiKey = legacyLooksLikeRef ? '' : legacyApiKey;
 
     return {
       enabled: typeof payload.enabled === 'boolean' ? payload.enabled : DEFAULT_BHTOT_SYNC_CONFIG.enabled,
       baseUrl: String(payload.baseUrl ?? DEFAULT_BHTOT_SYNC_CONFIG.baseUrl),
-      apiKey: '',
+      apiKey,
       apiKeyRef,
       timeoutMs,
       ordersStateKey: String(payload.ordersStateKey ?? DEFAULT_BHTOT_SYNC_CONFIG.ordersStateKey),
@@ -1057,11 +1066,9 @@ export class SettingsService {
   }
 
   private redactBhtotSyncConfig(config: BhtotSyncConfig): BhtotSyncConfig {
-    const hasSecret = Boolean(this.settingsPolicy.resolveSecretByRef(config.apiKeyRef));
+    const hasSecret = Boolean(this.settingsPolicy.resolveSecretValue(config.apiKey, config.apiKeyRef, 'BHTOT_API_KEY'));
     return {
       ...config,
-      apiKey: '',
-      apiKeyRef: config.apiKeyRef,
       lastSyncSummary: config.lastSyncSummary
         ? {
             ...config.lastSyncSummary,
@@ -1069,6 +1076,62 @@ export class SettingsService {
           }
         : null
     };
+  }
+
+  private serializeSystemConfigForStorage(config: SystemConfig, existingValue?: unknown): SystemConfig {
+    const existing = this.ensureRecord(existingValue);
+    const existingSync = this.ensureRecord(existing.bhtotSync);
+    return {
+      ...config,
+      bhtotSync: {
+        ...config.bhtotSync,
+        apiKey: this.encryptSystemConfigSecret(
+          config.bhtotSync.apiKey,
+          'system_config.bhtotSync.apiKey',
+          existingSync.apiKey
+        )
+      }
+    };
+  }
+
+  private readDecryptedSystemConfigSecret(secretValue: unknown, fieldPath: string, strict: boolean) {
+    const raw = this.cleanString(secretValue);
+    if (!raw) {
+      return '';
+    }
+    try {
+      return this.cleanString(decryptSettingsSecret(raw));
+    } catch (error) {
+      if (!strict) {
+        return '';
+      }
+      const message = error instanceof SettingsSecretCryptoError
+        ? error.message
+        : 'Không thể giải mã secret.';
+      throw new BadRequestException(`${fieldPath}: ${message}`);
+    }
+  }
+
+  private encryptSystemConfigSecret(secretValue: unknown, fieldPath: string, existingCipher?: unknown) {
+    const plain = this.cleanString(secretValue);
+    if (!plain) {
+      return '';
+    }
+    const existingRaw = this.cleanString(existingCipher);
+    if (existingRaw && isEncryptedSettingsSecret(existingRaw)) {
+      const existingPlain = this.readDecryptedSystemConfigSecret(existingRaw, fieldPath, false);
+      if (existingPlain && existingPlain === plain) {
+        return existingRaw;
+      }
+    }
+    try {
+      return this.cleanString(encryptSettingsSecret(plain));
+    } catch (error) {
+      const message = error instanceof SettingsSecretCryptoError
+        ? error.message
+        : 'Không thể mã hóa secret.';
+      throw new BadRequestException(`${fieldPath}: ${message} (env: ${getSettingsSecretEncryptionEnvKey()})`);
+    }
   }
 
   private parseSearchReindexEntity(input: unknown): SearchReindexEntity {
