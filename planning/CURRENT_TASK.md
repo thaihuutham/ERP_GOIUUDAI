@@ -2,9 +2,28 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-03 18:17 +07
+- Last updated: 2026-04-03 18:58 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-03 18:58 (Custom fields service tests)
+- Tiếp tục theo yêu cầu user `hãy tiếp tục`, tập trung tăng độ an toàn cho batch Custom Fields V1.
+- Đã thêm test mới:
+  - `apps/api/test/custom-fields.service.test.ts`
+- 5 test case đã cover:
+  - save draft + publish schema lifecycle.
+  - resolve ids với query `cf.*` (intersection nhiều điều kiện).
+  - validate typed SELECT option khi apply mutation.
+  - formula field tự tính và persist khi apply mutation.
+  - report metric aggregation + group key.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run test --workspace @erp/api -- test/custom-fields.service.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/custom-fields.service.test.ts test/catalog.service.test.ts test/sales.service.test.ts test/scm.service.test.ts test/finance.service.test.ts test/projects.service.test.ts test/workflows.service.test.ts test/hr.service.test.ts` ✅ (`34 passed`)
 
 ## Session Update 2026-04-03 18:17 (Custom Fields Platform V1 wiring + Day-1 integration)
 - User yêu cầu: `commit và đưa lên github rồi bắt đầu`.
