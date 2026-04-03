@@ -6,6 +6,7 @@ import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import { useUserRole } from './user-role-context';
+import { Badge, statusToBadge } from './ui';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
 
@@ -321,7 +322,7 @@ function renderCustomerCell(customer: Customer, key: CustomerColumnKey) {
     case 'totalSpent':
       return toCurrency(customer.totalSpent);
     case 'status':
-      return <span className={statusClass(customer.status)}>{customer.status || '--'}</span>;
+      return <Badge variant={statusToBadge(customer.status)}>{customer.status || '--'}</Badge>;
     case 'lastContactAt':
       return toDateTime(customer.lastContactAt);
     case 'updatedAt':
@@ -420,26 +421,6 @@ function tagsToText(tags: string[] | null | undefined) {
   return tags.join(', ');
 }
 
-function statusClass(status: string | null | undefined) {
-  switch (status) {
-    case 'ACTIVE':
-    case 'APPROVED':
-    case 'DA_THANH_TOAN':
-    case 'DA_MUA':
-      return 'finance-status-pill finance-status-pill-success';
-    case 'PENDING':
-    case 'DRAFT':
-    case 'DA_GUI':
-      return 'finance-status-pill finance-status-pill-warning';
-    case 'INACTIVE':
-    case 'REJECTED':
-    case 'HUY':
-    case 'CANCELLED':
-      return 'finance-status-pill finance-status-pill-danger';
-    default:
-      return 'finance-status-pill finance-status-pill-neutral';
-  }
-}
 
 export function CrmOperationsBoard() {
   const { role } = useUserRole();
@@ -1863,7 +1844,7 @@ export function CrmOperationsBoard() {
                         </td>
                         <td>{item.customer?.fullName || item.customerId || '--'}</td>
                         <td>{toCurrency(item.amount)}</td>
-                        <td><span className={statusClass(item.status)}>{item.status || '--'}</span></td>
+                        <td><Badge variant={statusToBadge(item.status)}>{item.status || '--'}</Badge></td>
                         <td>{toDateTime(item.sentAt)}</td>
                         <td>{toDateTime(item.paidAt)}</td>
                         <td>

@@ -23,6 +23,7 @@ import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type Bul
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
+import { Badge, statusToBadge } from './ui/badge';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
 
@@ -95,13 +96,6 @@ function toDateTime(value: string | null | undefined) {
   return isNaN(parsed.getTime()) ? value : formatRuntimeDateTime(parsed.toISOString());
 }
 
-function statusClass(status: string | null | undefined) {
-  const s = (status || '').toUpperCase();
-  if (['ACTIVE', 'APPROVED'].includes(s)) return 'finance-status-pill finance-status-pill-success';
-  if (['PENDING', 'DRAFT'].includes(s)) return 'finance-status-pill finance-status-pill-warning';
-  if (['INACTIVE', 'REJECTED', 'ARCHIVED', 'CANCELLED'].includes(s)) return 'finance-status-pill finance-status-pill-danger';
-  return 'finance-status-pill finance-status-pill-neutral';
-}
 
 function formatTaxonomyLabel(value: string) {
   return value
@@ -372,7 +366,7 @@ export function CrmCustomersBoard() {
         { label: 'Ngừng hoạt động', value: 'INACTIVE' },
         { label: 'Nháp', value: 'DRAFT' }
       ],
-      render: (c) => <span className={statusClass(c.status)}>{c.status || 'N/A'}</span>
+      render: (c) => <Badge variant={statusToBadge(c.status)}>{c.status || 'N/A'}</Badge>
     },
     { 
       key: 'updatedAt', 
@@ -652,7 +646,7 @@ export function CrmCustomersBoard() {
                   </select>
                 ) : (
                   <p style={{ fontSize: '0.9375rem' }}>
-                    <span className={statusClass(selectedCustomer.status)}>{selectedCustomer.status || '--'}</span>
+                    <Badge variant={statusToBadge(selectedCustomer.status)}>{selectedCustomer.status || '--'}</Badge>
                   </p>
                 )}
               </div>

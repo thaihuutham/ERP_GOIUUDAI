@@ -27,6 +27,7 @@ import type { BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
+import { Badge, statusToBadge } from './ui/badge';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
 
@@ -80,13 +81,7 @@ function toDateTime(value: any) {
   return isNaN(p.getTime()) ? value : formatRuntimeDateTime(p.toISOString());
 }
 
-function statusClass(status: string | null | undefined) {
-  const s = (status || '').toUpperCase();
-  if (['ACTIVE', 'APPROVED', 'RECEIVED', 'DELIVERED', 'CLOSED'].includes(s)) return 'finance-status-pill finance-status-pill-success';
-  if (['PENDING', 'SUBMITTED', 'DRAFT', 'IN_TRANSIT'].includes(s)) return 'finance-status-pill finance-status-pill-warning';
-  if (['REJECTED', 'CANCELLED'].includes(s)) return 'finance-status-pill finance-status-pill-danger';
-  return 'finance-status-pill finance-status-pill-neutral';
-}
+
 
 export function ScmOperationsBoard() {
   const { role } = useUserRole();
@@ -146,8 +141,8 @@ export function ScmOperationsBoard() {
     { key: 'vendor', label: 'Nhà cung cấp', render: (p) => p.vendor?.name || p.vendorId || '--' },
     { key: 'totalAmount', label: 'Tổng tiền', render: (p) => toCurrency(p.totalAmount) },
     { key: 'receivedAmount', label: 'Đã nhận', render: (p) => toCurrency(p.receivedAmount) },
-    { key: 'lifecycleStatus', label: 'Vòng đời', render: (p) => <span className={statusClass(p.lifecycleStatus)}>{p.lifecycleStatus}</span> },
-    { key: 'status', label: 'Trạng thái', render: (p) => <span className={statusClass(p.status)}>{p.status}</span> },
+    { key: 'lifecycleStatus', label: 'Vòng đời', render: (p) => <Badge variant={statusToBadge(p.lifecycleStatus)}>{p.lifecycleStatus}</Badge> },
+    { key: 'status', label: 'Trạng thái', render: (p) => <Badge variant={statusToBadge(p.status)}>{p.status}</Badge> },
     { key: 'expectedReceiveAt', label: 'Ngày nhận dự kiến', render: (p) => toDateTime(p.expectedReceiveAt) },
   ];
 
@@ -156,7 +151,7 @@ export function ScmOperationsBoard() {
     { key: 'name', label: 'Tên nhà cung cấp' },
     { key: 'phone', label: 'Điện thoại' },
     { key: 'email', label: 'Email' },
-    { key: 'status', label: 'Trạng thái', render: (v) => <span className={statusClass(v.status)}>{v.status}</span> },
+    { key: 'status', label: 'Trạng thái', render: (v) => <Badge variant={statusToBadge(v.status)}>{v.status}</Badge> },
   ];
 
   if (!canView) return <div style={{ padding: '2rem', textAlign: 'center' }}>Hạn chế truy cập module SCM.</div>;
@@ -273,7 +268,7 @@ export function ScmOperationsBoard() {
                 <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>{selectedPo.vendor?.name || 'NCC chưa xác định'}</p>
               </div>
               <div style={{ marginLeft: 'auto' }}>
-                <span className={statusClass(selectedPo.lifecycleStatus)}>{selectedPo.lifecycleStatus}</span>
+                <Badge variant={statusToBadge(selectedPo.lifecycleStatus)}>{selectedPo.lifecycleStatus}</Badge>
               </div>
             </div>
 

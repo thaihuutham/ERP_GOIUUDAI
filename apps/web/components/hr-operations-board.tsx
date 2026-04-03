@@ -28,6 +28,7 @@ import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type Bul
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
+import { Badge, statusToBadge } from './ui/badge';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
 
@@ -82,13 +83,7 @@ function toDateTime(value: any) {
   return isNaN(p.getTime()) ? value : formatRuntimeDateTime(p.toISOString());
 }
 
-function statusClass(status: string | null | undefined) {
-  const s = (status || '').toUpperCase();
-  if (['ACTIVE', 'APPROVED', 'SUCCESS'].includes(s)) return 'finance-status-pill finance-status-pill-success';
-  if (['PENDING', 'DRAFT'].includes(s)) return 'finance-status-pill finance-status-pill-warning';
-  if (['INACTIVE', 'REJECTED'].includes(s)) return 'finance-status-pill finance-status-pill-danger';
-  return 'finance-status-pill finance-status-pill-neutral';
-}
+
 
 export function HrOperationsBoard() {
   const { role } = useUserRole();
@@ -177,7 +172,7 @@ export function HrOperationsBoard() {
     { key: 'department', label: 'Phòng ban' },
     { key: 'position', label: 'Chức danh' },
     { key: 'employmentType', label: 'Loại HĐ' },
-    { key: 'status', label: 'Trạng thái', render: (e) => <span className={statusClass(e.status)}>{e.status}</span> },
+    { key: 'status', label: 'Trạng thái', render: (e) => <Badge variant={statusToBadge(e.status)}>{e.status}</Badge> },
     { key: 'joinDate', label: 'Ngày vào', render: (e) => toDateTime(e.joinDate) },
   ];
 
@@ -366,7 +361,7 @@ export function HrOperationsBoard() {
                           <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>{l.leaveType}</p>
                           <p style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{toDateTime(l.startDate)}</p>
                         </div>
-                        <span className={statusClass(l.status)} style={{ fontSize: '0.75rem' }}>{l.status}</span>
+                        <Badge variant={statusToBadge(l.status)}>{l.status}</Badge>
                       </div>
                     ))
                   )}

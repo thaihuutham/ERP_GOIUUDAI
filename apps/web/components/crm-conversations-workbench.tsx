@@ -7,6 +7,7 @@ import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useUserRole } from './user-role-context';
+import { Badge, statusToBadge } from './ui';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
 type ChannelFilter = ConversationChannel | 'ALL';
@@ -181,27 +182,6 @@ function toDateTime(value: string | null | undefined) {
     return value;
   }
   return formatRuntimeDateTime(parsed.toISOString());
-}
-
-function statusClass(status: string | null | undefined) {
-  const normalized = String(status ?? '').toUpperCase();
-  switch (normalized) {
-    case 'PASS':
-    case 'SUCCESS':
-    case 'CONNECTED':
-      return 'finance-status-pill finance-status-pill-success';
-    case 'RUNNING':
-    case 'PENDING':
-    case 'SCHEDULED':
-    case 'SKIP':
-      return 'finance-status-pill finance-status-pill-warning';
-    case 'FAIL':
-    case 'ERROR':
-    case 'DISCONNECTED':
-      return 'finance-status-pill finance-status-pill-danger';
-    default:
-      return 'finance-status-pill finance-status-pill-neutral';
-  }
 }
 
 function parseCommaSeparatedIds(raw: string) {
@@ -718,7 +698,7 @@ export function CrmConversationsWorkbench() {
         <section className="panel-surface crm-panel">
           <div className="crm-panel-head">
             <h2>Danh sách hội thoại</h2>
-            <span className={statusClass('CONNECTED')}>Tổng: {threads.length}</span>
+            <Badge variant={statusToBadge('CONNECTED')}>Tổng: {threads.length}</Badge>
           </div>
 
           <div className="filter-grid">
@@ -852,15 +832,15 @@ export function CrmConversationsWorkbench() {
                             </button>
                           </td>
                           <td>
-                            <span className={statusClass(thread.channel)}>{channelLabel(thread.channel)}</span>
+                            <Badge variant={statusToBadge(thread.channel)}>{channelLabel(thread.channel)}</Badge>
                           </td>
                           <td>{thread.unreadCount ?? 0}</td>
                           <td>
                             {latest ? (
-                              <span className={statusClass(latest.verdict)}>
+                              <Badge variant={statusToBadge(latest.verdict)}>
                                 {latest.verdict}
                                 {latest.score !== null && latest.score !== undefined ? ` (${latest.score})` : ''}
-                              </span>
+                              </Badge>
                             ) : (
                               '--'
                             )}
@@ -969,9 +949,9 @@ export function CrmConversationsWorkbench() {
           <section className="panel-surface">
             <div className="crm-panel-head">
               <h3>Kết quả AI mới nhất</h3>
-              <span className={statusClass(latestEvaluation?.verdict)}>
+              <Badge variant={statusToBadge(latestEvaluation?.verdict)}>
                 {latestEvaluation?.verdict || '--'}
-              </span>
+              </Badge>
             </div>
             {isLoadingEvaluation ? <p className="muted">Đang tải kết quả AI...</p> : null}
             {!isLoadingEvaluation && !latestEvaluation ? <p className="muted">Chưa có kết quả chấm điểm.</p> : null}
@@ -1033,7 +1013,7 @@ export function CrmConversationsWorkbench() {
         <section className="panel-surface crm-panel">
           <div className="crm-panel-head">
             <h2>Lịch đánh giá AI và phiên chạy</h2>
-            <span className={statusClass(selectedJob?.lastRunStatus)}>{selectedJob?.lastRunStatus || '--'}</span>
+            <Badge variant={statusToBadge(selectedJob?.lastRunStatus)}>{selectedJob?.lastRunStatus || '--'}</Badge>
           </div>
 
           <form className="form-grid" onSubmit={onCreateJob}>
@@ -1231,9 +1211,9 @@ export function CrmConversationsWorkbench() {
                         </td>
                         <td>{job.intervalMinutes ?? '--'} phút</td>
                         <td>
-                          <span className={statusClass(job.lastRunStatus)}>
+                          <Badge variant={statusToBadge(job.lastRunStatus)}>
                             {job.lastRunStatus || '--'}
-                          </span>
+                          </Badge>
                         </td>
                         <td>{toDateTime(job.nextRunAt)}</td>
                         <td>
@@ -1336,9 +1316,9 @@ export function CrmConversationsWorkbench() {
                           </button>
                         </td>
                         <td>
-                          <span className={statusClass(run.status)}>
+                          <Badge variant={statusToBadge(run.status)}>
                             {run.status || '--'}
-                          </span>
+                          </Badge>
                         </td>
                         <td data-testid={`run-evaluated-${run.id}`}>
                           {readSummaryCounter(run.summaryJson, 'evaluatedCount')}
@@ -1354,7 +1334,7 @@ export function CrmConversationsWorkbench() {
 
             <div className="crm-panel-head" style={{ marginTop: '0.5rem' }}>
               <h3>Chi tiết phiên chạy</h3>
-              <span className={statusClass(runDetail?.status)}>{runDetail?.status || '--'}</span>
+              <Badge variant={statusToBadge(runDetail?.status)}>{runDetail?.status || '--'}</Badge>
             </div>
             {isLoadingRunDetail ? <p className="muted">Đang tải chi tiết phiên chạy...</p> : null}
             {!isLoadingRunDetail && !runDetail ? <p className="muted">Chọn 1 phiên để xem chi tiết.</p> : null}
@@ -1397,7 +1377,7 @@ export function CrmConversationsWorkbench() {
                           <tr key={item.id}>
                             <td>{item.thread?.customerDisplayName || item.thread?.externalThreadId || '--'}</td>
                             <td>
-                              <span className={statusClass(item.verdict)}>{item.verdict || '--'}</span>
+                              <Badge variant={statusToBadge(item.verdict)}>{item.verdict || '--'}</Badge>
                             </td>
                             <td>{item.score ?? '--'}</td>
                             <td>{item.violations?.length ?? 0}</td>

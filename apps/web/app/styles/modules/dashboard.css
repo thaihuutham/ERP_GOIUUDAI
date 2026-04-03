@@ -1,0 +1,162 @@
+/* ═══════════════════════════════════════════════
+   Dashboard Module Styles
+   ═══════════════════════════════════════════════ */
+
+.dashboard-root {
+  display: grid;
+  gap: 0.9rem;
+}
+
+/* ── Hero Panel ────────────────────────────────── */
+
+.hero-panel {
+  border: 1px solid #cae7d4;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, #f2faf4 0%, #ffffff 70%);
+  padding: 1rem 1.05rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hero-panel h1 {
+  font-size: clamp(1.35rem, 2.1vw, 1.85rem);
+  margin-bottom: 0.4rem;
+}
+
+.hero-panel p {
+  color: var(--muted);
+  max-width: 78ch;
+}
+
+.hero-badge {
+  border: 1px solid #cce7d6;
+  background: #f4fbf6;
+  color: #1b663c;
+  border-radius: var(--radius-full);
+  padding: 0.38rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* ── Metrics Grid ──────────────────────────────── */
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+/* ── Module Card Grid ──────────────────────────── */
+
+.module-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+/* ── Dashboard Charts ──────────────────────────── */
+
+.dashboard-charts-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 0.75rem;
+}
+
+.dashboard-chart-card {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 1rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.dashboard-chart-card h3 {
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* ── Quick Tasks Panel ─────────────────────────── */
+
+.quick-tasks-panel {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 1rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.quick-tasks-panel h3 {
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.quick-task-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background: var(--gray-25);
+  font-size: var(--text-sm);
+  transition: background var(--duration-fast);
+}
+
+.quick-task-item:hover {
+  background: var(--primary-soft);
+}
+
+/* ── Activity Feed ─────────────────────────────── */
+
+.activity-feed {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.activity-feed h3 {
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.activity-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: var(--text-sm);
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.activity-time {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}

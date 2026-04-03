@@ -15,6 +15,7 @@ import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type Bul
 import { useUserRole } from '../user-role-context';
 import { SidePanel } from '../ui/side-panel';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from '../ui/standard-data-table';
+import { Badge, statusToBadge } from '../ui/badge';
 
 type GenericStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ACTIVE' | 'INACTIVE' | 'ARCHIVED' | 'DRAFT';
 
@@ -38,16 +39,7 @@ function artifactDispatchAttempts(artifacts: AssistantReportArtifact[] = []) {
   );
 }
 
-function statusClass(status: string) {
-  const normalized = status.toUpperCase();
-  if (normalized === 'APPROVED' || normalized === 'ACTIVE' || normalized === 'SUCCESS') {
-    return 'banner banner-success';
-  }
-  if (normalized === 'REJECTED' || normalized === 'FAILED' || normalized === 'ARCHIVED' || normalized === 'INACTIVE') {
-    return 'banner banner-error';
-  }
-  return 'banner banner-warning';
-}
+
 
 export function AssistantRunsBoard() {
   const { role } = useUserRole();
@@ -176,7 +168,7 @@ export function AssistantRunsBoard() {
     () => [
       { key: 'createdAt', label: 'Tạo lúc', render: (row) => formatDateTime(row.createdAt), isLink: true },
       { key: 'runType', label: 'Loại phiên', render: (row) => row.runType },
-      { key: 'status', label: 'Trạng thái', render: (row) => row.status },
+      { key: 'status', label: 'Trạng thái', render: (row) => <Badge variant={statusToBadge(row.status)}>{row.status}</Badge> },
       {
         key: 'reportPacksJson',
         label: 'Gói báo cáo',
@@ -472,7 +464,7 @@ export function AssistantRunsBoard() {
                       (selectedRun.artifacts ?? []).map((artifact) => (
                         <tr key={artifact.id}>
                           <td>{artifact.artifactType}</td>
-                          <td>{artifact.status}</td>
+                          <td><Badge variant={statusToBadge(artifact.status)}>{artifact.status}</Badge></td>
                           <td>{artifact.channelId ?? '--'}</td>
                           <td>{formatDateTime(artifact.publishedAt)}</td>
                         </tr>
@@ -507,7 +499,7 @@ export function AssistantRunsBoard() {
                           <td>{attempt.artifactType}</td>
                           <td>{attempt.channelId}</td>
                           <td>#{attempt.attemptNo}</td>
-                          <td>{attempt.status}</td>
+                          <td><Badge variant={statusToBadge(attempt.status)}>{attempt.status}</Badge></td>
                           <td>{formatDateTime(attempt.dispatchedAt)}</td>
                         </tr>
                       ))}
@@ -571,9 +563,10 @@ export function AssistantRunsBoard() {
               </div>
             )}
 
-            <span className={statusClass(selectedRun.status)} style={{ margin: 0 }}>
-              Trạng thái hiện tại: {selectedRun.status}
-            </span>
+            <div style={{ margin: 0 }}>
+              <span>Trạng thái hiện tại: </span>
+              <Badge variant={statusToBadge(selectedRun.status)}>{selectedRun.status}</Badge>
+            </div>
           </div>
         )}
       </SidePanel>

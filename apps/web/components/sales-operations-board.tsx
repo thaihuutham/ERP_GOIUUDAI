@@ -23,6 +23,7 @@ import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type Bul
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
+import { Badge, statusToBadge } from './ui';
 
 type SalesOrderItem = {
   id?: string;
@@ -224,7 +225,7 @@ export function SalesOperationsBoard() {
     {
       key: 'status',
       label: 'Trạng thái',
-      render: (order) => <span className={getStatusClass(order.status)}>{order.status || '--'}</span>
+      render: (order) => <Badge variant={statusToBadge(order.status)}>{order.status || '--'}</Badge>
     },
     {
       key: 'invoices',
@@ -618,7 +619,7 @@ export function SalesOperationsBoard() {
                 <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>Khách hàng: {selectedOrder.customerName || '--'}</p>
               </div>
               <div style={{ marginLeft: 'auto' }}>
-                <span className={getStatusClass(selectedOrder.status)}>{selectedOrder.status || '--'}</span>
+                <Badge variant={statusToBadge(selectedOrder.status)}>{selectedOrder.status || '--'}</Badge>
               </div>
             </div>
 
@@ -687,7 +688,7 @@ export function SalesOperationsBoard() {
                   {selectedOrderApprovals.map((approval) => (
                     <div key={approval.id} style={{ padding: '0.75rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-                        <span className={getStatusClass(approval.status)}>{approval.status || '--'}</span>
+                        <Badge variant={statusToBadge(approval.status)}>{approval.status || '--'}</Badge>
                         <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{toDateTime(approval.createdAt)}</span>
                       </div>
                       <p style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)' }}>

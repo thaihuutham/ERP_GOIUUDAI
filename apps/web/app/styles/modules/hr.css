@@ -1,0 +1,27 @@
+/* ═══════════════════════════════════════════════
+   HR Module Styles
+   ═══════════════════════════════════════════════ */
+
+.hr-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.hr-panel {
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.hr-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.hr-panel-head h2,
+.hr-panel-head h3 {
+  font-size: 0.98rem;
+}

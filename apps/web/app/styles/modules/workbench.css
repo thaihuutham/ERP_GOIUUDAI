@@ -1,0 +1,228 @@
+/* ═══════════════════════════════════════════════
+   Module Workbench — Shared Layout for all modules
+   ═══════════════════════════════════════════════ */
+
+.module-workbench,
+.dashboard-container {
+  display: grid;
+  gap: 0.8rem;
+}
+
+/* ── Module Header ─────────────────────────────── */
+
+.module-header {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #ffffff 0%, #edf8f1 100%);
+  padding: 0.95rem 1rem;
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 0.9rem;
+  box-shadow: none;
+}
+
+.module-header h1 {
+  font-size: clamp(1.25rem, 1.9vw, 1.65rem);
+  margin-bottom: 0.33rem;
+}
+
+.module-header p {
+  color: var(--muted);
+}
+
+.module-header ul {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.32rem;
+  color: #294d38;
+  font-size: var(--text-base);
+  font-weight: 400;
+}
+
+/* ── Module Body Grid ──────────────────────────── */
+
+.module-body-grid {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  gap: 0.85rem;
+}
+
+/* ── Feature Menu (sidebar within module) ──────── */
+
+.module-feature-menu {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: 0.75rem;
+  height: fit-content;
+  box-shadow: none;
+}
+
+.module-feature-menu h3 {
+  font-size: 0.86rem;
+  margin-bottom: 0.55rem;
+  color: #25553b;
+}
+
+.module-feature-links {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.module-feature-link {
+  border: 1px solid #d8eadf;
+  border-radius: var(--radius-lg);
+  background: #f7fcf8;
+  color: #40644f;
+  text-align: left;
+  font-size: 0.86rem;
+  font-weight: 400;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.module-feature-link:hover,
+.module-feature-link:focus-visible {
+  background: #eff9f2;
+  border-color: #bde1cb;
+  outline: none;
+}
+
+.module-feature-link.active {
+  background: #e3f5e9;
+  border-color: #acd8bd;
+  color: #0f5f33;
+}
+
+/* ── Feature Content Area ──────────────────────── */
+
+.module-feature-content {
+  min-width: 0;
+}
+
+.feature-panel {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.8rem;
+  box-shadow: none;
+}
+
+.feature-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.feature-head h2 {
+  font-size: 1.02rem;
+  margin-bottom: 0.12rem;
+}
+
+.feature-head p {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+/* ── Charts ────────────────────────────────────── */
+
+.module-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.chart-card {
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: #fbfffc;
+  padding: 0.62rem;
+  display: grid;
+  gap: 0.55rem;
+  box-shadow: none;
+}
+
+.chart-card h3 {
+  font-size: 0.84rem;
+  color: #24563b;
+}
+
+/* Status chart (horizontal bars) */
+.status-chart {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.status-chart-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 40px;
+  gap: 0.42rem;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.status-chart-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: #e2f1e7;
+  overflow: hidden;
+}
+
+.status-chart-bar {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, #2b9657 0%, #5bb676 100%);
+}
+
+/* Trend chart (vertical bars) */
+.trend-chart {
+  height: 165px;
+  display: flex;
+  gap: 0.36rem;
+  align-items: flex-end;
+}
+
+.trend-chart-col {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 0.22rem;
+  justify-items: center;
+}
+
+.trend-chart-value {
+  font-size: 0.72rem;
+  color: #436250;
+}
+
+.trend-chart-bar {
+  width: 100%;
+  border-radius: 8px 8px 3px 3px;
+  background: linear-gradient(180deg, #53af70 0%, #208f4d 100%);
+}
+
+.trend-chart-col span {
+  font-size: 0.68rem;
+  color: #547362;
+}
+
+/* ── Overview Cards ────────────────────────────── */
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+/* ── Actions Grid ──────────────────────────────── */
+
+.actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.7rem;
+}

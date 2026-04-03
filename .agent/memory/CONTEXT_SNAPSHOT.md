@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 20:28 +07
+- Time: 2026-04-03 22:16 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_2028_codex.md`
+- Session Log: `.agent/sessions/2026-04-03_2216_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,30 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-03 22:16 (Project-wide check before commit all)
+- User yêu cầu kiểm tra dự án và commit/push toàn bộ thay đổi hiện có trên workspace.
+- Gate verification đã pass:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/custom-fields.service.test.ts test/custom-fields-day1.api-flow.test.ts` ✅ (`9 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4251 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+- Session này chốt theo chỉ đạo user: commit all pending changes rồi push `main`.
+
+## Update 2026-04-03 21:47 (UI Modernization Phase 5 & 6)
+- Đã hoàn thiện Phase 5:
+  - Migrate legacy CSS `statusClass` sang UI component chuẩn `Badge` (thông qua hàm `statusToBadge`) tại các board chính: `crm-customers-board.tsx`, `assistant-runs-board.tsx`, và `crm-operations-board.tsx`.
+- Đã hoàn thiện Phase 6:
+  - Thêm support input `color` trong form quản trị `settings-center.tsx`.
+  - Áp dụng real-time update cho biến CSS `--primary` giúp admin preview màu Theme dễ dàng không cần reload trang.
+- Đã verify frontend UI (không đổi backend API):
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
 
 ## Update 2026-04-03 20:28 (Custom Fields page trong Settings)
 - Da them trang rieng trong Settings de tao/quan ly custom fields:

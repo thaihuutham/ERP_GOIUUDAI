@@ -1,0 +1,91 @@
+/* ═══════════════════════════════════════════════
+   Finance Module Styles
+   ═══════════════════════════════════════════════ */
+
+.finance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.finance-panel {
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.finance-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.finance-panel-head h2,
+.finance-panel-head h3 {
+  font-size: 0.98rem;
+}
+
+.finance-transition-actions .btn {
+  min-width: 74px;
+}
+
+/* Buckets */
+.finance-bucket-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.finance-bucket-item {
+  border: 1px solid #d8e9de;
+  border-radius: var(--radius-lg);
+  background: #f8fcf9;
+  padding: 0.52rem 0.58rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.finance-bucket-item span   { color: #3f5f4d; font-size: var(--text-xs); }
+.finance-bucket-item strong  { color: #174f31; font-size: 0.94rem; font-weight: 500; }
+
+/* Partners */
+.finance-partner-list {
+  display: grid;
+  gap: 0.46rem;
+}
+
+.finance-partner-item {
+  border: 1px solid #d8e9de;
+  border-radius: var(--radius-lg);
+  background: #f9fdfa;
+  padding: 0.48rem 0.56rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.finance-partner-item strong { font-size: 0.84rem; }
+.finance-partner-item p      { font-size: var(--text-xs); color: #4c6a59; }
+.finance-partner-item span   { font-size: 0.84rem; color: #24543b; font-weight: 500; }
+
+/* Allocation */
+.finance-allocation-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.finance-allocation-item {
+  border: 1px solid #dbeadf;
+  border-radius: var(--radius-lg);
+  background: #f8fcf9;
+  padding: 0.48rem 0.56rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.finance-allocation-item strong { font-size: 0.84rem; }
+.finance-allocation-item p      { font-size: var(--text-xs); color: #4c6a59; }

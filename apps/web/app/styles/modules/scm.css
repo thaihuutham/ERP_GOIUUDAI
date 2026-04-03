@@ -1,0 +1,27 @@
+/* ═══════════════════════════════════════════════
+   SCM Module Styles
+   ═══════════════════════════════════════════════ */
+
+.scm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.scm-panel {
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.scm-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.scm-panel-head h2,
+.scm-panel-head h3 {
+  font-size: 0.98rem;
+}

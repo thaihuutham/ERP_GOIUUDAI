@@ -1,0 +1,46 @@
+/* ═══════════════════════════════════════════════
+   Side Panel / Drawer Styles
+   ═══════════════════════════════════════════════ */
+
+.side-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 50;
+  animation: fadeOverlay var(--duration-fast) var(--ease-smooth);
+}
+
+.side-panel-container {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 500px;
+  background: var(--bg-card);
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight var(--duration-normal) var(--ease-smooth);
+}
+
+.side-panel-header {
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.side-panel-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.side-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6);
+}

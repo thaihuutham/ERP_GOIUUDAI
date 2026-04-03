@@ -1,0 +1,62 @@
+/* ═══════════════════════════════════════════════
+   Sales Module Styles
+   ═══════════════════════════════════════════════ */
+
+.sales-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.sales-panel {
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.sales-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.sales-panel-head h2 {
+  font-size: 0.98rem;
+}
+
+/* Approval list */
+.sales-approval-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sales-approval-item {
+  border: 1px solid #d8e9de;
+  border-radius: 12px;
+  background: #f9fdfb;
+  padding: 0.56rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.sales-approval-item p {
+  font-size: 0.8rem;
+  color: #355545;
+}
+
+.sales-approval-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.86rem;
+}
+
+.sales-approval-meta span {
+  border: 1px solid #cae4d5;
+  border-radius: var(--radius-full);
+  padding: 0.14rem 0.46rem;
+  background: #eff9f3;
+  color: #1c5f3a;
+}

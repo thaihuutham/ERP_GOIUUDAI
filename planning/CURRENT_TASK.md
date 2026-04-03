@@ -2,9 +2,35 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-03 20:28 +07
+- Last updated: 2026-04-03 22:16 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-03 22:16 (Project check + commit all pending changes)
+- User yêu cầu: `kiểm tra dự án và commit sau đó đưa lên github`, sau đó xác nhận `commit và đưa toàn bộ lên github`.
+- Đã chạy gate kiểm tra hệ thống:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/custom-fields.service.test.ts test/custom-fields-day1.api-flow.test.ts` ✅ (`9 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4251 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+- Tiếp theo theo đúng yêu cầu user: commit toàn bộ thay đổi workspace hiện tại và push lên `main`.
+
+## Session Update 2026-04-03 21:45 (UI Modernization Phase 5 & 6)
+- User yêu cầu: Tiếp tục hoàn thiện thiết kế frontend (Phase 5 và Phase 6, migrate thẻ trạng thái cũ sang phần tử `Badge`, thêm Settings chỉnh màu sắc Branding).
+- Đã triển khai Phase 5:
+  - Migrate hàm `statusClass` cũ ở `crm-customers-board.tsx`, `assistant-runs-board.tsx`, và `crm-operations-board.tsx` sang sử dụng `statusToBadge` và `Badge`.
+- Đã triển khai Phase 6:
+  - Component `SettingsCenter` (`settings-center.tsx`) đã hỗ trợ kiểu cấu hình `color`.
+  - Cập nhật trực tiếp biến CSS `--primary` chạy ngay trên trình duyệt khi admin thay đổi giá trị màu sắc theo thời gian thực.
+- Xác nhận độ ổn định frontend (System Stability Gate):
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+- Handoff kết thúc hoàn thiện Frontend UI Modernization Task.
 
 ## Session Update 2026-04-03 20:28 (Settings page cho Custom Fields)
 - User yêu cầu: "vào đâu để tạo trường tùy chỉnh" và đưa thành 1 trang trong Cài đặt hệ thống.

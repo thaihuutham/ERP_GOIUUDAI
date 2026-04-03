@@ -26,6 +26,29 @@ const DOMAIN_ORDER = [
 
 type DomainKey = (typeof DOMAIN_ORDER)[number];
 
+const DOMAIN_GROUPS = [
+  {
+    id: 'general',
+    label: 'Hệ thống chung',
+    domains: ['org_profile', 'locale_calendar'] as const
+  },
+  {
+    id: 'modules',
+    label: 'Quy định Phân hệ',
+    domains: ['sales_crm_policies', 'catalog_scm_policies', 'hr_policies'] as const
+  },
+  {
+    id: 'management',
+    label: 'Quản trị & Kiểm soát',
+    domains: ['access_security', 'approval_matrix', 'finance_controls', 'data_governance_backup'] as const
+  },
+  {
+    id: 'integration',
+    label: 'Tích hợp & Cấu hình IT',
+    domains: ['integrations', 'notifications_templates', 'search_performance'] as const
+  }
+];
+
 type DomainState = {
   domain: DomainKey;
   ok: boolean;
@@ -80,7 +103,7 @@ type FieldOption = {
   label: string;
 };
 
-type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'switch' | 'tags' | 'multiSelect' | 'userDomainMap' | 'secret';
+type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'switch' | 'tags' | 'multiSelect' | 'userDomainMap' | 'secret' | 'color';
 
 type FieldConfig = {
   id: string;
@@ -94,6 +117,7 @@ type FieldConfig = {
   max?: number;
   step?: number;
   options?: FieldOption[];
+  isAdvanced?: boolean;
 };
 
 type SectionConfig = {
@@ -101,6 +125,7 @@ type SectionConfig = {
   title: string;
   description?: string;
   fields: FieldConfig[];
+  isAdvanced?: boolean;
 };
 
 type DomainConfig = {
@@ -293,7 +318,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         title: 'Nhận diện & chứng từ',
         fields: [
           { id: 'org-logo', path: 'branding.logoUrl', label: 'Link logo', type: 'text', placeholder: 'https://...' },
-          { id: 'org-primary-color', path: 'branding.primaryColor', label: 'Màu thương hiệu chính', type: 'text', placeholder: '#0a5f38' },
+          { id: 'org-primary-color', path: 'branding.primaryColor', label: 'Màu thương hiệu chính', type: 'color', placeholder: '#0a5f38' },
           { id: 'org-invoice-template', path: 'documentLayout.invoiceTemplate', label: 'Mẫu hóa đơn', type: 'select', options: INVOICE_TEMPLATE_OPTIONS },
           { id: 'org-seal', path: 'documentLayout.showCompanySeal', label: 'Hiển thị dấu công ty trên chứng từ', type: 'switch' }
         ]
@@ -648,13 +673,13 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         title: 'BHTOT',
         fields: [
           { id: 'int-bhtot-enabled', path: 'bhtot.enabled', label: 'Bật tích hợp BHTOT', type: 'switch' },
-          { id: 'int-bhtot-base-url', path: 'bhtot.baseUrl', label: 'BHTOT Base URL', type: 'text', placeholder: 'https://api.example.com' },
+          { id: 'int-bhtot-base-url', path: 'bhtot.baseUrl', label: 'BHTOT Base URL', type: 'text', placeholder: 'https://api.example.com', isAdvanced: true },
           { id: 'int-bhtot-api-key', path: 'bhtot.apiKey', label: 'API key (nhập trực tiếp)', type: 'secret', helper: 'Đổi key tại đây sẽ áp dụng ngay sau khi lưu.', placeholder: 'sk-...' },
-          { id: 'int-bhtot-secret-ref', path: 'bhtot.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS },
-          { id: 'int-bhtot-timeout', path: 'bhtot.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000 },
-          { id: 'int-bhtot-orders-key', path: 'bhtot.ordersStateKey', label: 'State key đơn hàng', type: 'text' },
-          { id: 'int-bhtot-users-key', path: 'bhtot.usersStateKey', label: 'State key người dùng', type: 'text' },
-          { id: 'int-bhtot-sync-users', path: 'bhtot.syncAllUsersAsEmployees', label: 'Đồng bộ user thành employee', type: 'switch' }
+          { id: 'int-bhtot-secret-ref', path: 'bhtot.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
+          { id: 'int-bhtot-timeout', path: 'bhtot.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000, isAdvanced: true },
+          { id: 'int-bhtot-orders-key', path: 'bhtot.ordersStateKey', label: 'State key đơn hàng', type: 'text', isAdvanced: true },
+          { id: 'int-bhtot-users-key', path: 'bhtot.usersStateKey', label: 'State key người dùng', type: 'text', isAdvanced: true },
+          { id: 'int-bhtot-sync-users', path: 'bhtot.syncAllUsersAsEmployees', label: 'Đồng bộ user thành employee', type: 'switch', isAdvanced: true }
         ]
       },
       {
@@ -662,13 +687,13 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         title: 'Zalo OA',
         fields: [
           { id: 'int-zalo-enabled', path: 'zalo.enabled', label: 'Bật tích hợp Zalo OA', type: 'switch' },
-          { id: 'int-zalo-outbound-url', path: 'zalo.outboundUrl', label: 'Webhook outbound URL', type: 'text' },
-          { id: 'int-zalo-api-base', path: 'zalo.apiBaseUrl', label: 'API base URL', type: 'text' },
-          { id: 'int-zalo-timeout', path: 'zalo.outboundTimeoutMs', label: 'Timeout outbound', type: 'number', unit: 'ms', min: 2000, max: 180000 },
+          { id: 'int-zalo-outbound-url', path: 'zalo.outboundUrl', label: 'Webhook outbound URL', type: 'text', isAdvanced: true },
+          { id: 'int-zalo-api-base', path: 'zalo.apiBaseUrl', label: 'API base URL', type: 'text', isAdvanced: true },
+          { id: 'int-zalo-timeout', path: 'zalo.outboundTimeoutMs', label: 'Timeout outbound', type: 'number', unit: 'ms', min: 2000, max: 180000, isAdvanced: true },
           { id: 'int-zalo-access-token', path: 'zalo.accessToken', label: 'Access token (nhập trực tiếp)', type: 'secret', placeholder: 'oa_access_...' },
-          { id: 'int-zalo-secret-ref', path: 'zalo.accessTokenRef', label: 'SecretRef access token (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-zalo-secret-ref', path: 'zalo.accessTokenRef', label: 'SecretRef access token (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
           { id: 'int-zalo-webhook-secret', path: 'zalo.webhookSecret', label: 'Webhook secret (nhập trực tiếp)', type: 'secret' },
-          { id: 'int-zalo-webhook-secret-ref', path: 'zalo.webhookSecretRef', label: 'SecretRef webhook secret (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS }
+          { id: 'int-zalo-webhook-secret-ref', path: 'zalo.webhookSecretRef', label: 'SecretRef webhook secret (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true }
         ]
       },
       {
@@ -676,11 +701,11 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         title: 'AI Connector',
         fields: [
           { id: 'int-ai-enabled', path: 'ai.enabled', label: 'Bật AI connector', type: 'switch' },
-          { id: 'int-ai-base-url', path: 'ai.baseUrl', label: 'AI base URL', type: 'text' },
-          { id: 'int-ai-model', path: 'ai.model', label: 'Model mặc định', type: 'text', placeholder: 'gpt-4o-mini' },
+          { id: 'int-ai-base-url', path: 'ai.baseUrl', label: 'AI base URL', type: 'text', isAdvanced: true },
+          { id: 'int-ai-model', path: 'ai.model', label: 'Model mặc định', type: 'text', placeholder: 'gpt-4o-mini', isAdvanced: true },
           { id: 'int-ai-api-key', path: 'ai.apiKey', label: 'AI API key (nhập trực tiếp)', type: 'secret', helper: 'Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
-          { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS },
-          { id: 'int-ai-timeout', path: 'ai.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000 }
+          { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
+          { id: 'int-ai-timeout', path: 'ai.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000, isAdvanced: true }
         ]
       }
     ]
@@ -709,6 +734,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       {
         id: 'notify-retry',
         title: 'Retry/Backoff',
+        isAdvanced: true,
         fields: [
           { id: 'notify-retry-max', path: 'retry.maxAttempts', label: 'Số lần retry tối đa', type: 'number', min: 1, max: 10 },
           { id: 'notify-retry-backoff', path: 'retry.backoffSeconds', label: 'Khoảng chờ giữa các lần retry', type: 'number', unit: 'giây', min: 1, max: 3600 }
@@ -724,13 +750,14 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         id: 'search-runtime',
         title: 'Vận hành runtime',
         fields: [
-          { id: 'search-engine', path: 'engine', label: 'Chế độ search engine', type: 'select', options: SEARCH_ENGINE_OPTIONS },
-          { id: 'search-timeout', path: 'timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 300000 }
+          { id: 'search-engine', path: 'engine', label: 'Chế độ search engine', type: 'select', options: SEARCH_ENGINE_OPTIONS, isAdvanced: true },
+          { id: 'search-timeout', path: 'timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 300000, isAdvanced: true }
         ]
       },
       {
         id: 'search-reindex',
         title: 'Quy tắc reindex',
+        isAdvanced: true,
         fields: [
           { id: 'search-auto-deploy', path: 'reindexPolicy.autoAfterDeploy', label: 'Tự reindex sau deploy', type: 'switch' },
           {
@@ -759,8 +786,8 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         fields: [
           { id: 'data-retention-days', path: 'retentionDays', label: 'Giữ dữ liệu tối đa', type: 'number', unit: 'ngày', min: 1, max: 3650 },
           { id: 'data-audit-retention-years', path: 'auditRetentionYears', label: 'Giữ audit log', type: 'number', unit: 'năm', min: 1, max: 20 },
-          { id: 'data-audit-hot-retention-months', path: 'auditHotRetentionMonths', label: 'Giữ audit hot tier', type: 'number', unit: 'tháng', min: 1, max: 120 },
-          { id: 'data-archive-days', path: 'archiveAfterDays', label: 'Chuyển archive sau', type: 'number', unit: 'ngày', min: 1, max: 3650 },
+          { id: 'data-audit-hot-retention-months', path: 'auditHotRetentionMonths', label: 'Giữ audit hot tier', type: 'number', unit: 'tháng', min: 1, max: 120, isAdvanced: true },
+          { id: 'data-archive-days', path: 'archiveAfterDays', label: 'Chuyển archive sau', type: 'number', unit: 'ngày', min: 1, max: 3650, isAdvanced: true },
           { id: 'data-backup-cadence', path: 'backupCadence', label: 'Chu kỳ backup', type: 'select', options: BACKUP_CADENCE_OPTIONS }
         ]
       },
@@ -2121,6 +2148,47 @@ export function SettingsCenter() {
                             placeholder={field.placeholder ?? 'A, B, C'}
                             onChange={(event) => updateField(field, event.target.value)}
                           />
+                          {field.helper && <small>{field.helper}</small>}
+                          {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
+                        </div>
+                      );
+                    }
+
+                    if (field.type === 'color') {
+                      return (
+                        <div className="field" key={field.id}>
+                          <label htmlFor={field.id}>{field.label}</label>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                            <input
+                              id={`${field.id}-picker`}
+                              type="color"
+                              value={String(value) || field.placeholder || '#0a5f38'}
+                              onChange={(event) => {
+                                updateField(field, event.target.value);
+                                if (field.path === 'branding.primaryColor' && typeof document !== 'undefined') {
+                                  document.documentElement.style.setProperty('--primary', event.target.value);
+                                }
+                              }}
+                              style={{ width: '38px', height: '38px', padding: '0', border: '1px solid var(--border)', cursor: 'pointer', borderRadius: 'var(--radius)' }}
+                            />
+                            <input
+                              id={field.id}
+                              type="text"
+                              value={String(value)}
+                              placeholder={field.placeholder}
+                              onChange={(event) => {
+                                updateField(field, event.target.value);
+                                if (field.path === 'branding.primaryColor' && typeof document !== 'undefined') {
+                                  // Only apply valid hex colors
+                                  const hexRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
+                                  if (hexRegex.test(event.target.value)) {
+                                    document.documentElement.style.setProperty('--primary', event.target.value);
+                                  }
+                                }
+                              }}
+                              style={{ flex: 1, textTransform: 'uppercase', fontFamily: 'monospace' }}
+                            />
+                          </div>
                           {field.helper && <small>{field.helper}</small>}
                           {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
                         </div>

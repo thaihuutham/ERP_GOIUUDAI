@@ -1,0 +1,183 @@
+/* ═══════════════════════════════════════════════
+   Responsive — All Media Queries
+   ═══════════════════════════════════════════════ */
+
+/* ── Tablet (≤ 1024px) ─────────────────────────── */
+
+@media (max-width: 1140px) {
+  .module-body-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .module-header {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .module-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sales-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scm-grid,
+  .hr-grid,
+  .crm-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-charts-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Mobile Sidebar (≤ 860px) ──────────────────── */
+
+@media (max-width: 860px) {
+  .shell-layout,
+  .shell-layout.shell-layout-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .side-menu {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: min(280px, 88vw);
+    transform: translateX(-102%);
+    transition: transform 180ms var(--ease-smooth);
+    z-index: 32;
+  }
+
+  .side-menu.side-menu-open {
+    transform: translateX(0);
+  }
+
+  .shell-backdrop {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms var(--ease-smooth);
+  }
+
+  .shell-backdrop.shell-backdrop-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: inline-flex;
+  }
+
+  .main-toolbar {
+    padding: 0.72rem 0.75rem;
+  }
+
+  .toolbar-right {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-title {
+    font-size: 1.2rem;
+  }
+
+  .shell-main {
+    padding: 0;
+  }
+
+  .app-content {
+    padding: 0.72rem 0.75rem 1rem;
+  }
+
+  .global-search-form {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .side-submenu {
+    margin-left: 1.02rem;
+    padding-left: 0.52rem;
+  }
+
+  .breadcrumb {
+    padding: 0.4rem 0.75rem 0;
+    font-size: var(--text-xs);
+  }
+}
+
+/* ── Small Mobile (≤ 640px) ────────────────────── */
+
+@media (max-width: 720px) {
+  .hero-panel {
+    flex-direction: column;
+  }
+
+  .metrics-grid,
+  .module-card-grid,
+  .actions-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-customer-toolbar-right {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .crm-customer-search-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .crm-customer-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-column-setting-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .advanced-condition-row {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-actions {
+    justify-content: flex-start;
+  }
+
+  .status-chart-row {
+    grid-template-columns: 88px 1fr 34px;
+  }
+
+  .finance-bucket-list {
+    grid-template-columns: 1fr;
+  }
+}

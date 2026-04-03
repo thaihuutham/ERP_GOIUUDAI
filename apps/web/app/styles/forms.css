@@ -1,0 +1,159 @@
+/* ═══════════════════════════════════════════════
+   Forms — Fields, Filter Bars, Validation
+   ═══════════════════════════════════════════════ */
+
+/* ── Form Grid ─────────────────────────────────── */
+
+.form-grid {
+  display: grid;
+  gap: 0.46rem;
+}
+
+/* ── Field ─────────────────────────────────────── */
+
+.field {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.field label {
+  font-size: 0.71rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 400;
+  color: #6e7b72;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid #d5dfd8;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 0.42rem 0.55rem;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 400;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.field small {
+  color: #5d7a69;
+  font-size: var(--text-xxs);
+}
+
+/* ── Filter Bar ────────────────────────────────── */
+
+.filter-bar {
+  border: 1px solid #dcece2;
+  border-radius: var(--radius-lg);
+  background: #f7fcf8;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.48rem;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+/* ── Advanced Filter ───────────────────────────── */
+
+.advanced-filter-panel {
+  border: 1px solid #dcece2;
+  border-radius: var(--radius-lg);
+  background: #f9fdfa;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.advanced-filter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.advanced-filter-head h3 {
+  font-size: 0.84rem;
+  color: #2a5f42;
+}
+
+.advanced-condition-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.advanced-condition-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 140px minmax(120px, 1fr) auto;
+  gap: 0.42rem;
+}
+
+/* ── Quick Range Buttons ───────────────────────── */
+
+.quick-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.quick-range-btn {
+  border: 1px solid #cfe5d7;
+  border-radius: var(--radius-full);
+  background: #f4fbf6;
+  color: #2f6347;
+  font-size: 0.8rem;
+  font-weight: 400;
+  padding: 0.28rem 0.58rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.quick-range-btn:hover,
+.quick-range-btn:focus-visible {
+  background: #ebf7ef;
+  outline: none;
+}
+
+.quick-range-btn.active {
+  border-color: #96c8a7;
+  background: #dff2e6;
+  color: #0e5e32;
+}
+
+/* ── Panel Surface (inner container) ───────────── */
+
+.panel-surface {
+  border: 1px solid #dcece2;
+  border-radius: 12px;
+  background: #fcfffd;
+  padding: 0.65rem;
+  display: grid;
+  gap: 0.7rem;
+}

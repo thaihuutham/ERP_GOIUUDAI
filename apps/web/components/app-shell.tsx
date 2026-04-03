@@ -37,6 +37,7 @@ import { getVisibleModuleCards, moduleCards } from '../lib/modules';
 import { canAccessModule, USER_ROLES } from '../lib/rbac';
 import { setRuntimeLocale } from '../lib/runtime-format';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
+import { Breadcrumb } from './ui/breadcrumb';
 import { useUserRole } from './user-role-context';
 
 function isActive(pathname: string, href: string) {
@@ -184,20 +185,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const assistantRouteKey = useMemo(() => resolveAssistantRouteFromPath(pathname), [pathname]);
   const assistantRoutes = useMemo(() => getAllowedAssistantRoutes(role), [role]);
 
-  const { modulesBeforeZalo, modulesAfterZalo } = useMemo(() => {
-    const projectsIndex = visibleModules.findIndex((item) => item.key === 'projects');
-    if (projectsIndex === -1) {
-      return {
-        modulesBeforeZalo: visibleModules,
-        modulesAfterZalo: [] as typeof visibleModules
-      };
-    }
 
-    return {
-      modulesBeforeZalo: visibleModules.slice(0, projectsIndex + 1),
-      modulesAfterZalo: visibleModules.slice(projectsIndex + 1)
-    };
-  }, [visibleModules]);
 
   const isModuleLinkActive = (moduleKey: string) => {
     if (moduleKey === 'crm') {
@@ -611,9 +599,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </p>
         )}
 
-        {!menuCollapsed && <p className="side-section-title">Điều hướng</p>}
-
         <nav className="side-nav">
+          {/* Dashboard */}
           <div className="side-nav-group">
             <Link
               href="/"
@@ -623,13 +610,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               <LayoutDashboard size={18} />
               <span className="link-text">Tổng quan</span>
             </Link>
+          </div>
 
-            {modulesBeforeZalo.map((item) => renderModuleLink(item))}
+          {/* ─── Kinh doanh ─── */}
+          {!menuCollapsed && <p className="side-section-title">Kinh doanh</p>}
+          <div className="side-nav-group">
+            {visibleModules
+              .filter((m) => ['crm', 'sales', 'catalog'].includes(m.key))
+              .map((item) => renderModuleLink(item))}
           </div>
 
           {showZaloAutomation && (
             <>
-              {!menuCollapsed && <p className="side-section-title side-section-title-accent">Tự động hội thoại</p>}
+              {!menuCollapsed && <p className="side-section-title side-section-title-accent">Hội thoại</p>}
               <div className="side-nav-group">
                 <Link
                   href="/modules/crm/conversations"
@@ -643,15 +636,39 @@ export function AppShell({ children }: { children: ReactNode }) {
             </>
           )}
 
-          {modulesAfterZalo.length > 0 && (
-            <div className="side-nav-group">
-              {modulesAfterZalo.map((item) => renderModuleLink(item))}
-            </div>
-          )}
+          {/* ─── Nhân sự ─── */}
+          {!menuCollapsed && <p className="side-section-title">Nhân sự</p>}
+          <div className="side-nav-group">
+            {visibleModules
+              .filter((m) => ['hr'].includes(m.key))
+              .map((item) => renderModuleLink(item))}
+          </div>
+
+          {/* ─── Tài chính & Vận hành ─── */}
+          {!menuCollapsed && <p className="side-section-title">Tài chính & Vận hành</p>}
+          <div className="side-nav-group">
+            {visibleModules
+              .filter((m) => ['finance', 'scm', 'assets', 'projects'].includes(m.key))
+              .map((item) => renderModuleLink(item))}
+          </div>
+
+          {/* ─── Hệ thống ─── */}
+          {!menuCollapsed && <p className="side-section-title">Hệ thống</p>}
+          <div className="side-nav-group">
+            {visibleModules
+              .filter((m) => ['workflows', 'reports', 'assistant', 'audit', 'notifications', 'settings'].includes(m.key))
+              .map((item) => renderModuleLink(item))}
+          </div>
         </nav>
 
         <div className="side-footer">
-          <span className="side-footer-avatar">{role.slice(0, 1)}</span>
+          {authEnabled ? (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void logout()} style={{ width: '100%' }}>
+              Đăng xuất
+            </button>
+          ) : (
+            <span className="side-footer-avatar">{role.slice(0, 1)}</span>
+          )}
         </div>
       </aside>
 
@@ -707,6 +724,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
+        <Breadcrumb />
         <main className="app-content">{children}</main>
       </section>
     </div>
