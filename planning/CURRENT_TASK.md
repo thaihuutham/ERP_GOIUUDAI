@@ -28,6 +28,11 @@
   - create/update endpoint nhận unified payload `{ base, customFields, schemaVersion }`.
   - response entity/list trả unified contract có `customFields`.
 - Verify theo phạm vi backend:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ⚠️ pending `20260403183000_add_custom_fields_platform_v1`
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
   - `npm run build --workspace @erp/api` ✅
   - `npm run lint --workspace @erp/api` ✅
   - `npm run test --workspace @erp/api -- test/catalog.service.test.ts test/sales.service.test.ts test/scm.service.test.ts test/finance.service.test.ts test/projects.service.test.ts test/workflows.service.test.ts test/hr.service.test.ts` ✅ (`29 passed`)
