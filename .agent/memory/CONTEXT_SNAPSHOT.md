@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 18:58 +07
+- Time: 2026-04-03 19:30 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_1858_codex.md`
+- Session Log: `.agent/sessions/2026-04-03_1930_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,23 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-03 19:30 (Custom fields day-1 API flow test coverage)
+- Da bo sung test file moi:
+  - `apps/api/test/custom-fields-day1.api-flow.test.ts`
+- Coverage moi gom 4 route Day-1 quan trong:
+  - catalog list voi `cf.*` filter -> `resolveEntityIdsByQuery` + `wrapResult`.
+  - sales order create voi unified mutation -> `applyEntityMutation`.
+  - workflows definition list voi `cf.*` filter -> `resolveEntityIdsByQuery` + `wrapResult`.
+  - HR event create voi unified mutation -> `applyEntityMutation`.
+- Verify session:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run test --workspace @erp/api -- test/custom-fields-day1.api-flow.test.ts` ✅ (`4 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/custom-fields.service.test.ts test/custom-fields-day1.api-flow.test.ts test/catalog.service.test.ts test/sales.service.test.ts test/scm.service.test.ts test/finance.service.test.ts test/projects.service.test.ts test/workflows.service.test.ts test/hr.service.test.ts` ✅ (`38 passed`)
 
 ## Update 2026-04-03 18:58 (Custom fields service test coverage)
 - Da bo sung test file moi:
