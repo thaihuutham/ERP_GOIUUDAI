@@ -26,7 +26,15 @@ export class CrmService {
     const where: Prisma.CustomerWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
     };
-    const normalizedStage = filters.stage ? this.cleanString(filters.stage).toUpperCase() : undefined;
+    let normalizedStage: string | undefined;
+    if (filters.stage) {
+      const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+      normalizedStage = this.resolveCustomerTaxonomyValue(
+        this.cleanString(filters.stage),
+        salesPolicy.customerTaxonomy.stages,
+        'customerStage'
+      );
+    }
     const normalizedStatus = filters.status && filters.status !== 'ALL' ? filters.status : undefined;
 
     if (normalizedStatus) {
@@ -107,6 +115,11 @@ export class CrmService {
       customerTaxonomy: {
         stages: salesPolicy.customerTaxonomy.stages,
         sources: salesPolicy.customerTaxonomy.sources
+      },
+      tagRegistry: {
+        customerTags: salesPolicy.tagRegistry.customerTags,
+        interactionTags: salesPolicy.tagRegistry.interactionTags,
+        interactionResultTags: salesPolicy.tagRegistry.interactionResultTags
       }
     };
   }
@@ -114,14 +127,14 @@ export class CrmService {
   async createCustomer(payload: Record<string, unknown>) {
     const phone = normalizeVietnamPhone(this.optionalString(payload.phone));
     const email = this.normalizeEmail(this.optionalString(payload.email));
-    const tags = this.parseTags(payload.tags);
 
     assertValidVietnamPhone(phone);
     this.assertValidEmail(email);
     const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
-    this.assertCustomerTaxonomy(
-      this.optionalString(payload.customerStage)?.toUpperCase(),
-      this.optionalString(payload.source)?.toUpperCase(),
+    const tags = this.parseTags(payload.tags, salesPolicy.tagRegistry.customerTags, 'customer.tags');
+    const normalizedTaxonomy = this.resolveCustomerTaxonomy(
+      this.optionalString(payload.customerStage),
+      this.optionalString(payload.source),
       salesPolicy.customerTaxonomy
     );
 
@@ -137,10 +150,10 @@ export class CrmService {
           email: email ?? duplicate.email,
           emailNormalized: email ?? duplicate.emailNormalized,
           segment: this.optionalString(payload.segment) ?? duplicate.segment,
-          source: this.optionalString(payload.source) ?? duplicate.source,
+          source: normalizedTaxonomy.source ?? duplicate.source,
           ownerStaffId: this.optionalString(payload.ownerStaffId) ?? duplicate.ownerStaffId,
           consentStatus: this.optionalString(payload.consentStatus) ?? duplicate.consentStatus,
-          customerStage: this.optionalString(payload.customerStage)?.toUpperCase() ?? duplicate.customerStage,
+          customerStage: normalizedTaxonomy.stage ?? duplicate.customerStage,
           status: this.parseStatus(payload.status, duplicate.status),
           tags: mergedTags
         }
@@ -167,10 +180,10 @@ export class CrmService {
         phoneNormalized: phone ?? null,
         code: this.optionalString(payload.code) ?? null,
         segment: this.optionalString(payload.segment) ?? null,
-        source: this.optionalString(payload.source) ?? null,
+        source: normalizedTaxonomy.source ?? null,
         ownerStaffId: this.optionalString(payload.ownerStaffId) ?? null,
         consentStatus: this.optionalString(payload.consentStatus) ?? null,
-        customerStage: this.optionalString(payload.customerStage)?.toUpperCase() ?? 'MOI',
+        customerStage: normalizedTaxonomy.stage ?? 'MOI',
         status: this.parseStatus(payload.status, GenericStatus.ACTIVE),
         tags
       }
@@ -200,9 +213,9 @@ export class CrmService {
     assertValidVietnamPhone(nextPhone);
     this.assertValidEmail(nextEmail);
     const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
-    this.assertCustomerTaxonomy(
-      payload.customerStage !== undefined ? this.cleanString(payload.customerStage).toUpperCase() : undefined,
-      payload.source !== undefined ? this.cleanString(payload.source).toUpperCase() : undefined,
+    const normalizedTaxonomy = this.resolveCustomerTaxonomy(
+      payload.customerStage !== undefined ? this.cleanString(payload.customerStage) : undefined,
+      payload.source !== undefined ? this.cleanString(payload.source) : undefined,
       salesPolicy.customerTaxonomy
     );
 
@@ -211,7 +224,9 @@ export class CrmService {
       throw new BadRequestException('Số điện thoại hoặc email đã được dùng bởi khách hàng khác.');
     }
 
-    const parsedTags = payload.tags !== undefined ? this.parseTags(payload.tags) : current.tags;
+    const parsedTags = payload.tags !== undefined
+      ? this.parseTags(payload.tags, salesPolicy.tagRegistry.customerTags, 'customer.tags')
+      : current.tags;
 
     const nextTotalSpent = payload.totalSpent !== undefined
       ? this.parseDecimal(payload.totalSpent, 'totalSpent')
@@ -230,10 +245,10 @@ export class CrmService {
         phoneNormalized: nextPhone ?? null,
         code: payload.code ? String(payload.code) : undefined,
         segment: payload.segment ? String(payload.segment) : undefined,
-        source: payload.source ? String(payload.source) : undefined,
+        source: payload.source ? normalizedTaxonomy.source : undefined,
         ownerStaffId: payload.ownerStaffId ? String(payload.ownerStaffId) : undefined,
         consentStatus: payload.consentStatus ? String(payload.consentStatus) : undefined,
-        customerStage: payload.customerStage ? this.cleanString(payload.customerStage).toUpperCase() : undefined,
+        customerStage: payload.customerStage ? normalizedTaxonomy.stage : undefined,
         status: payload.status ? this.parseStatus(payload.status, current.status) : undefined,
         tags: parsedTags,
         totalSpent: nextTotalSpent,
@@ -324,14 +339,19 @@ export class CrmService {
     const channel = this.cleanString(payload.channel).toUpperCase() || 'ZALO';
     const content = this.requiredString(payload.content, 'Thiếu nội dung tương tác.');
     const resultTag = this.cleanString(payload.resultTag).toLowerCase() || null;
-    const extraTags = this.parseTags(payload.tags);
     const interactionAt = payload.interactionAt ? this.parseDate(payload.interactionAt, 'interactionAt') : new Date();
     const nextActionAt = payload.nextActionAt ? this.parseDate(payload.nextActionAt, 'nextActionAt') : null;
     const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
-    this.assertCustomerTaxonomy(
-      this.optionalString(payload.customerStage)?.toUpperCase(),
-      undefined,
-      salesPolicy.customerTaxonomy
+    const extraTags = this.parseTags(payload.tags, salesPolicy.tagRegistry.interactionTags, 'interaction.tags');
+    const normalizedInteractionStage = this.resolveCustomerTaxonomyValue(
+      this.optionalString(payload.customerStage),
+      salesPolicy.customerTaxonomy.stages,
+      'customerStage'
+    );
+    this.assertAllowedSingleTagValue(
+      resultTag,
+      salesPolicy.tagRegistry.interactionResultTags,
+      'interaction.resultTag'
     );
 
     const interaction = await this.prisma.client.customerInteraction.create({
@@ -355,7 +375,7 @@ export class CrmService {
       data: {
         lastContactAt: interactionAt,
         tags: mergedTags,
-        customerStage: this.optionalString(payload.customerStage)?.toUpperCase() ?? undefined
+        customerStage: normalizedInteractionStage ?? undefined
       }
     });
     const updatedCustomer = await this.prisma.client.customer.findFirst({ where: { id: customer.id } });
@@ -677,15 +697,38 @@ export class CrmService {
     return customer;
   }
 
-  private parseTags(input: unknown): string[] {
+  private parseTags(input: unknown, allowedValues: string[] = [], fieldName = 'tags'): string[] {
+    const normalizedAllowList = Array.from(
+      new Set(
+        allowedValues
+          .map((item) => this.cleanString(item).toLowerCase())
+          .filter(Boolean)
+      )
+    );
+
+    const assertAllowedValues = (values: string[]) => {
+      if (normalizedAllowList.length === 0 || values.length === 0) {
+        return;
+      }
+      const invalid = values.filter((value) => !normalizedAllowList.includes(value));
+      if (invalid.length === 0) {
+        return;
+      }
+      throw new BadRequestException(
+        `${fieldName} chứa giá trị không hợp lệ: ${invalid.join(', ')}.`
+      );
+    };
+
     if (Array.isArray(input)) {
-      return Array.from(
+      const parsed = Array.from(
         new Set(
           input
             .map((item) => this.cleanString(item).toLowerCase())
             .filter(Boolean)
         )
       );
+      assertAllowedValues(parsed);
+      return parsed;
     }
 
     const raw = this.cleanString(input);
@@ -693,7 +736,7 @@ export class CrmService {
       return [];
     }
 
-    return Array.from(
+    const parsed = Array.from(
       new Set(
         raw
           .split(/[;,]/)
@@ -701,6 +744,8 @@ export class CrmService {
           .filter(Boolean)
       )
     );
+    assertAllowedValues(parsed);
+    return parsed;
   }
 
   private mergeTags(...groups: Array<string[] | null | undefined>) {
@@ -714,16 +759,61 @@ export class CrmService {
     );
   }
 
-  private assertCustomerTaxonomy(
+  private resolveCustomerTaxonomy(
     stage: string | undefined,
     source: string | undefined,
     policy: { stages: string[]; sources: string[] }
   ) {
-    if (stage && policy.stages.length > 0 && !policy.stages.includes(stage)) {
-      throw new BadRequestException(`customerStage '${stage}' không nằm trong taxonomy đã cấu hình.`);
+    return {
+      stage: this.resolveCustomerTaxonomyValue(stage, policy.stages, 'customerStage'),
+      source: this.resolveCustomerTaxonomyValue(source, policy.sources, 'source')
+    };
+  }
+
+  private resolveCustomerTaxonomyValue(
+    input: string | undefined,
+    allowedValues: string[],
+    fieldName: 'customerStage' | 'source'
+  ) {
+    const candidate = this.cleanString(input);
+    if (!candidate) {
+      return undefined;
     }
-    if (source && policy.sources.length > 0 && !policy.sources.includes(source)) {
-      throw new BadRequestException(`source '${source}' không nằm trong taxonomy đã cấu hình.`);
+
+    if (allowedValues.length === 0) {
+      return candidate;
+    }
+
+    const directMatch = allowedValues.find((item) => this.cleanString(item) === candidate);
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const lowercaseCandidate = candidate.toLowerCase();
+    const caseInsensitiveMatch = allowedValues.find(
+      (item) => this.cleanString(item).toLowerCase() === lowercaseCandidate
+    );
+    if (caseInsensitiveMatch) {
+      return caseInsensitiveMatch;
+    }
+
+    throw new BadRequestException(`${fieldName} '${candidate}' không nằm trong taxonomy đã cấu hình.`);
+  }
+
+  private assertAllowedSingleTagValue(value: string | null, allowedValues: string[], fieldName: string) {
+    if (!value) {
+      return;
+    }
+    const normalizedAllowedValues = allowedValues
+      .map((item) => this.cleanString(item).toLowerCase())
+      .filter(Boolean);
+    if (normalizedAllowedValues.length === 0) {
+      return;
+    }
+    if (!normalizedAllowedValues.includes(value)) {
+      throw new BadRequestException(
+        `${fieldName} '${value}' không nằm trong CRM tag registry đã cấu hình.`
+      );
     }
   }
 

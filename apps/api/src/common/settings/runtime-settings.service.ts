@@ -327,6 +327,7 @@ export class RuntimeSettingsService {
     const discountPolicy = this.toRecord(domain.discountPolicy);
     const creditPolicy = this.toRecord(domain.creditPolicy);
     const customerTaxonomy = this.toRecord(domain.customerTaxonomy);
+    const tagRegistry = this.toRecord(domain.tagRegistry);
 
     return {
       orderSettings: {
@@ -343,8 +344,13 @@ export class RuntimeSettingsService {
         maxCreditLimit: this.toNumber(creditPolicy.maxCreditLimit, 0)
       },
       customerTaxonomy: {
-        stages: this.toStringArray(customerTaxonomy.stages).map((item) => item.toUpperCase()),
-        sources: this.toStringArray(customerTaxonomy.sources).map((item) => item.toUpperCase())
+        stages: this.toStringArray(customerTaxonomy.stages),
+        sources: this.toStringArray(customerTaxonomy.sources)
+      },
+      tagRegistry: {
+        customerTags: this.toStringArray(tagRegistry.customerTags).map((item) => item.toLowerCase()),
+        interactionTags: this.toStringArray(tagRegistry.interactionTags).map((item) => item.toLowerCase()),
+        interactionResultTags: this.toStringArray(tagRegistry.interactionResultTags).map((item) => item.toLowerCase())
       }
     };
   }

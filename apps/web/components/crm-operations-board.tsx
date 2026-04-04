@@ -30,6 +30,18 @@ type Customer = {
   updatedAt?: string | null;
 };
 
+type CustomerTaxonomyPayload = {
+  customerTaxonomy?: {
+    stages?: string[];
+    sources?: string[];
+  };
+  tagRegistry?: {
+    customerTags?: string[];
+    interactionTags?: string[];
+    interactionResultTags?: string[];
+  };
+};
+
 type Interaction = {
   id: string;
   customerId?: string | null;
@@ -87,7 +99,7 @@ type CreateCustomerForm = {
   segment: string;
   source: string;
   status: Exclude<GenericStatus, 'ALL'>;
-  tags: string;
+  tags: string[];
 };
 
 type UpdateCustomerForm = {
@@ -100,7 +112,7 @@ type UpdateCustomerForm = {
   segment: string;
   source: string;
   status: Exclude<GenericStatus, 'ALL'>;
-  tags: string;
+  tags: string[];
   totalOrders: string;
   totalSpent: string;
 };
@@ -113,7 +125,7 @@ type CreateInteractionForm = {
   channel: string;
   content: string;
   resultTag: string;
-  tags: string;
+  tags: string[];
   staffName: string;
   staffCode: string;
   interactionAt: string;
@@ -167,6 +179,11 @@ const STATUS_OPTIONS: GenericStatus[] = ['ALL', 'ACTIVE', 'INACTIVE', 'DRAFT', '
 const PAYMENT_STATUS_OPTIONS = ['ALL', 'DA_GUI', 'DA_THANH_TOAN', 'HUY'] as const;
 const CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.customer-column-settings.v1';
 const CUSTOMER_IMPORT_MAX_ROWS = 400;
+const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
+const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
+const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
+const DEFAULT_INTERACTION_TAG_OPTIONS = ['quan_tam', 'can_cham_soc', 'da_dat_lich'];
+const DEFAULT_INTERACTION_RESULT_TAG_OPTIONS = ['quan_tam', 'da_mua', 'khong_phan_hoi'];
 
 const CUSTOMER_COLUMN_DEFINITIONS: CustomerColumnDefinition[] = [
   { key: 'code', label: 'Mã KH' },
@@ -390,6 +407,15 @@ function toDateTime(value: string | null | undefined) {
   return formatRuntimeDateTime(parsed.toISOString());
 }
 
+function formatTaxonomyLabel(value: string) {
+  return value
+    .toLowerCase()
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function normalizeArray<T>(payload: unknown): T[] {
   if (Array.isArray(payload)) {
     return payload as T[];
@@ -414,11 +440,18 @@ function parseTagsInput(raw: string) {
   );
 }
 
-function tagsToText(tags: string[] | null | undefined) {
-  if (!tags || tags.length === 0) {
-    return '';
-  }
-  return tags.join(', ');
+function normalizeTagArray(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((item) => String(item ?? '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+function readSelectedOptions(event: ChangeEvent<HTMLSelectElement>) {
+  return normalizeTagArray(Array.from(event.target.selectedOptions).map((option) => option.value));
 }
 
 
@@ -457,6 +490,11 @@ export function CrmOperationsBoard() {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [dedupCandidates, setDedupCandidates] = useState<DedupCandidate[]>([]);
+  const [stageOptions, setStageOptions] = useState<string[]>(DEFAULT_STAGE_OPTIONS);
+  const [sourceOptions, setSourceOptions] = useState<string[]>(DEFAULT_SOURCE_OPTIONS);
+  const [customerTagOptions, setCustomerTagOptions] = useState<string[]>(DEFAULT_CUSTOMER_TAG_OPTIONS);
+  const [interactionTagOptions, setInteractionTagOptions] = useState<string[]>(DEFAULT_INTERACTION_TAG_OPTIONS);
+  const [interactionResultTagOptions, setInteractionResultTagOptions] = useState<string[]>(DEFAULT_INTERACTION_RESULT_TAG_OPTIONS);
 
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState('');
@@ -471,13 +509,13 @@ export function CrmOperationsBoard() {
     fullName: '',
     phone: '',
     email: '',
-    customerStage: 'MOI',
+    customerStage: DEFAULT_STAGE_OPTIONS[0] ?? 'MOI',
     ownerStaffId: '',
     consentStatus: '',
     segment: '',
-    source: '',
+    source: DEFAULT_SOURCE_OPTIONS[0] ?? '',
     status: 'ACTIVE',
-    tags: ''
+    tags: []
   });
 
   const [updateCustomerForm, setUpdateCustomerForm] = useState<UpdateCustomerForm>({
@@ -490,7 +528,7 @@ export function CrmOperationsBoard() {
     segment: '',
     source: '',
     status: 'ACTIVE',
-    tags: '',
+    tags: [],
     totalOrders: '',
     totalSpent: ''
   });
@@ -503,7 +541,7 @@ export function CrmOperationsBoard() {
     channel: 'ZALO',
     content: '',
     resultTag: '',
-    tags: '',
+    tags: [],
     staffName: '',
     staffCode: '',
     interactionAt: '',
@@ -644,7 +682,7 @@ export function CrmOperationsBoard() {
         segment: '',
         source: '',
         status: 'ACTIVE',
-        tags: '',
+        tags: [],
         totalOrders: '',
         totalSpent: ''
       });
@@ -661,7 +699,7 @@ export function CrmOperationsBoard() {
       segment: selectedCustomer.segment || '',
       source: selectedCustomer.source || '',
       status: (selectedCustomer.status as Exclude<GenericStatus, 'ALL'> | undefined) || 'ACTIVE',
-      tags: tagsToText(selectedCustomer.tags),
+      tags: normalizeTagArray((selectedCustomer.tags ?? []).map((item) => String(item ?? ''))),
       totalOrders: selectedCustomer.totalOrders !== null && selectedCustomer.totalOrders !== undefined ? String(selectedCustomer.totalOrders) : '',
       totalSpent: selectedCustomer.totalSpent !== null && selectedCustomer.totalSpent !== undefined ? String(selectedCustomer.totalSpent) : ''
     });
@@ -756,6 +794,55 @@ export function CrmOperationsBoard() {
     }
   };
 
+  const loadTaxonomy = async () => {
+    if (!canView) return;
+
+    try {
+      const payload = await apiRequest<CustomerTaxonomyPayload>('/crm/taxonomy');
+      const stages = payload.customerTaxonomy?.stages?.filter(Boolean) ?? [];
+      const sources = payload.customerTaxonomy?.sources?.filter(Boolean) ?? [];
+      const customerTags = payload.tagRegistry?.customerTags?.filter(Boolean) ?? [];
+      const interactionTags = payload.tagRegistry?.interactionTags?.filter(Boolean) ?? [];
+      const interactionResultTags = payload.tagRegistry?.interactionResultTags?.filter(Boolean) ?? [];
+      const nextStages = stages.length > 0 ? stages : DEFAULT_STAGE_OPTIONS;
+      const nextSources = sources.length > 0 ? sources : DEFAULT_SOURCE_OPTIONS;
+      const nextCustomerTags = customerTags.length > 0 ? customerTags : DEFAULT_CUSTOMER_TAG_OPTIONS;
+      const nextInteractionTags = interactionTags.length > 0 ? interactionTags : DEFAULT_INTERACTION_TAG_OPTIONS;
+      const nextInteractionResultTags = interactionResultTags.length > 0
+        ? interactionResultTags
+        : DEFAULT_INTERACTION_RESULT_TAG_OPTIONS;
+
+      setStageOptions(nextStages);
+      setSourceOptions(nextSources);
+      setCustomerTagOptions(nextCustomerTags);
+      setInteractionTagOptions(nextInteractionTags);
+      setInteractionResultTagOptions(nextInteractionResultTags);
+
+      setCreateCustomerForm((prev) => ({
+        ...prev,
+        tags: prev.tags.filter((tag) => nextCustomerTags.includes(tag))
+      }));
+      setUpdateCustomerForm((prev) => ({
+        ...prev,
+        tags: prev.tags.filter((tag) => nextCustomerTags.includes(tag))
+      }));
+      setCreateInteractionForm((prev) => ({
+        ...prev,
+        tags: prev.tags.filter((tag) => nextInteractionTags.includes(tag)),
+        resultTag: prev.resultTag && !nextInteractionResultTags.includes(prev.resultTag)
+          ? ''
+          : prev.resultTag
+      }));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không tải được taxonomy CRM.');
+      setStageOptions(DEFAULT_STAGE_OPTIONS);
+      setSourceOptions(DEFAULT_SOURCE_OPTIONS);
+      setCustomerTagOptions(DEFAULT_CUSTOMER_TAG_OPTIONS);
+      setInteractionTagOptions(DEFAULT_INTERACTION_TAG_OPTIONS);
+      setInteractionResultTagOptions(DEFAULT_INTERACTION_RESULT_TAG_OPTIONS);
+    }
+  };
+
   const loadInteractions = async () => {
     if (!canView) return;
 
@@ -833,8 +920,37 @@ export function CrmOperationsBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canView]);
 
+  useEffect(() => {
+    void loadTaxonomy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView]);
+
+  useEffect(() => {
+    setCreateCustomerForm((prev) => ({
+      ...prev,
+      customerStage: stageOptions.includes(prev.customerStage) ? prev.customerStage : (stageOptions[0] ?? ''),
+      source: sourceOptions.includes(prev.source) ? prev.source : (sourceOptions[0] ?? ''),
+      tags: prev.tags.filter((tag) => customerTagOptions.includes(tag))
+    }));
+    setUpdateCustomerForm((prev) => ({
+      ...prev,
+      tags: prev.tags.filter((tag) => customerTagOptions.includes(tag))
+    }));
+    setCreateInteractionForm((prev) => ({
+      ...prev,
+      customerStage: prev.customerStage && !stageOptions.includes(prev.customerStage) ? '' : prev.customerStage,
+      tags: prev.tags.filter((tag) => interactionTagOptions.includes(tag)),
+      resultTag: prev.resultTag && !interactionResultTagOptions.includes(prev.resultTag)
+        ? ''
+        : prev.resultTag
+    }));
+    setCustomerStageFilter((prev) => (prev && !stageOptions.includes(prev) ? '' : prev));
+    setCustomerSourceFilter((prev) => (prev && !sourceOptions.includes(prev) ? '' : prev));
+    setCustomerTagFilter((prev) => (prev && !customerTagOptions.includes(prev) ? '' : prev));
+  }, [customerTagOptions, interactionResultTagOptions, interactionTagOptions, sourceOptions, stageOptions]);
+
   const refreshAll = async () => {
-    await Promise.all([loadCustomers(), loadInteractions(), loadPaymentRequests(), loadDedupCandidates()]);
+    await Promise.all([loadCustomers(), loadInteractions(), loadPaymentRequests(), loadDedupCandidates(), loadTaxonomy()]);
   };
 
   const onCreateCustomer = async (event: FormEvent<HTMLFormElement>) => {
@@ -861,7 +977,7 @@ export function CrmOperationsBoard() {
           segment: createCustomerForm.segment || undefined,
           source: createCustomerForm.source || undefined,
           status: createCustomerForm.status,
-          tags: parseTagsInput(createCustomerForm.tags)
+          tags: createCustomerForm.tags
         }
       });
 
@@ -872,11 +988,12 @@ export function CrmOperationsBoard() {
         fullName: '',
         phone: '',
         email: '',
+        customerStage: stageOptions[0] ?? '',
         ownerStaffId: '',
         consentStatus: '',
         segment: '',
-        source: '',
-        tags: ''
+        source: sourceOptions[0] ?? '',
+        tags: []
       }));
       await Promise.all([loadCustomers(), loadDedupCandidates()]);
     } catch (error) {
@@ -903,7 +1020,7 @@ export function CrmOperationsBoard() {
           segment: updateCustomerForm.segment || undefined,
           source: updateCustomerForm.source || undefined,
           status: updateCustomerForm.status || undefined,
-          tags: parseTagsInput(updateCustomerForm.tags),
+          tags: updateCustomerForm.tags,
           totalOrders: updateCustomerForm.totalOrders !== '' ? Number(updateCustomerForm.totalOrders) : undefined,
           totalSpent: updateCustomerForm.totalSpent !== '' ? Number(updateCustomerForm.totalSpent) : undefined
         }
@@ -941,7 +1058,7 @@ export function CrmOperationsBoard() {
           channel: createInteractionForm.channel || undefined,
           content: createInteractionForm.content,
           resultTag: createInteractionForm.resultTag || undefined,
-          tags: parseTagsInput(createInteractionForm.tags),
+          tags: createInteractionForm.tags,
           staffName: createInteractionForm.staffName || undefined,
           staffCode: createInteractionForm.staffCode || undefined,
           interactionAt: createInteractionForm.interactionAt || undefined,
@@ -955,7 +1072,7 @@ export function CrmOperationsBoard() {
         ...prev,
         content: '',
         resultTag: '',
-        tags: '',
+        tags: [],
         interactionAt: '',
         nextActionAt: ''
       }));
@@ -1385,11 +1502,25 @@ export function CrmOperationsBoard() {
               </div>
               <div className="field">
                 <label htmlFor="crm-customer-stage">Giai đoạn</label>
-                <input id="crm-customer-stage" value={customerStageFilter} onChange={(event) => setCustomerStageFilter(event.target.value)} placeholder="MOI / DA_MUA..." />
+                <select id="crm-customer-stage" value={customerStageFilter} onChange={(event) => setCustomerStageFilter(event.target.value)}>
+                  <option value="">Tất cả giai đoạn</option>
+                  {stageOptions.map((stage) => (
+                    <option key={`customer-filter-stage-${stage}`} value={stage}>
+                      {formatTaxonomyLabel(stage)}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="field">
                 <label htmlFor="crm-customer-tag">Tag</label>
-                <input id="crm-customer-tag" value={customerTagFilter} onChange={(event) => setCustomerTagFilter(event.target.value)} placeholder="vip / da_mua / ..." />
+                <select id="crm-customer-tag" value={customerTagFilter} onChange={(event) => setCustomerTagFilter(event.target.value)}>
+                  <option value="">Tất cả tag</option>
+                  {customerTagOptions.map((tag) => (
+                    <option key={`customer-filter-tag-${tag}`} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="field">
                 <label htmlFor="crm-customer-segment">Nhóm khách</label>
@@ -1397,7 +1528,14 @@ export function CrmOperationsBoard() {
               </div>
               <div className="field">
                 <label htmlFor="crm-customer-source">Nguồn</label>
-                <input id="crm-customer-source" value={customerSourceFilter} onChange={(event) => setCustomerSourceFilter(event.target.value)} placeholder="Facebook / Zalo / Store..." />
+                <select id="crm-customer-source" value={customerSourceFilter} onChange={(event) => setCustomerSourceFilter(event.target.value)}>
+                  <option value="">Tất cả nguồn</option>
+                  {sourceOptions.map((source) => (
+                    <option key={`customer-filter-source-${source}`} value={source}>
+                      {formatTaxonomyLabel(source)}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           ) : null}
@@ -1580,7 +1718,13 @@ export function CrmOperationsBoard() {
             </div>
             <div className="field">
               <label htmlFor="crm-create-stage">Stage</label>
-              <input id="crm-create-stage" value={createCustomerForm.customerStage} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, customerStage: event.target.value }))} />
+              <select id="crm-create-stage" value={createCustomerForm.customerStage} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, customerStage: event.target.value }))}>
+                {stageOptions.map((stage) => (
+                  <option key={`create-stage-${stage}`} value={stage}>
+                    {formatTaxonomyLabel(stage)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="crm-create-status">Status</label>
@@ -1596,7 +1740,13 @@ export function CrmOperationsBoard() {
             </div>
             <div className="field">
               <label htmlFor="crm-create-source">Source</label>
-              <input id="crm-create-source" value={createCustomerForm.source} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, source: event.target.value }))} />
+              <select id="crm-create-source" value={createCustomerForm.source} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, source: event.target.value }))}>
+                {sourceOptions.map((source) => (
+                  <option key={`create-source-${source}`} value={source}>
+                    {formatTaxonomyLabel(source)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="crm-create-owner">Owner Staff ID</label>
@@ -1607,8 +1757,20 @@ export function CrmOperationsBoard() {
               <input id="crm-create-consent" value={createCustomerForm.consentStatus} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, consentStatus: event.target.value }))} />
             </div>
             <div className="field">
-              <label htmlFor="crm-create-tags">Tags (comma)</label>
-              <input id="crm-create-tags" value={createCustomerForm.tags} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, tags: event.target.value }))} placeholder="vip, da_mua" />
+              <label htmlFor="crm-create-tags">Tags</label>
+              <select
+                id="crm-create-tags"
+                multiple
+                value={createCustomerForm.tags}
+                onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, tags: readSelectedOptions(event) }))}
+                size={Math.min(Math.max(customerTagOptions.length, 3), 8)}
+              >
+                {customerTagOptions.map((tag) => (
+                  <option key={`create-customer-tag-${tag}`} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="action-buttons">
               <button type="submit" className="btn btn-primary" disabled={!canMutate}>Tạo khách hàng</button>
@@ -1632,7 +1794,17 @@ export function CrmOperationsBoard() {
             </div>
             <div className="field">
               <label htmlFor="crm-update-stage">Stage</label>
-              <input id="crm-update-stage" value={updateCustomerForm.customerStage} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, customerStage: event.target.value }))} />
+              <select id="crm-update-stage" value={updateCustomerForm.customerStage} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, customerStage: event.target.value }))}>
+                <option value="">-- Không đổi --</option>
+                {updateCustomerForm.customerStage && !stageOptions.includes(updateCustomerForm.customerStage) ? (
+                  <option value={updateCustomerForm.customerStage}>{updateCustomerForm.customerStage}</option>
+                ) : null}
+                {stageOptions.map((stage) => (
+                  <option key={`update-stage-${stage}`} value={stage}>
+                    {formatTaxonomyLabel(stage)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="crm-update-status">Status</label>
@@ -1656,7 +1828,17 @@ export function CrmOperationsBoard() {
             </div>
             <div className="field">
               <label htmlFor="crm-update-source">Source</label>
-              <input id="crm-update-source" value={updateCustomerForm.source} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, source: event.target.value }))} />
+              <select id="crm-update-source" value={updateCustomerForm.source} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, source: event.target.value }))}>
+                <option value="">-- Không đổi --</option>
+                {updateCustomerForm.source && !sourceOptions.includes(updateCustomerForm.source) ? (
+                  <option value={updateCustomerForm.source}>{updateCustomerForm.source}</option>
+                ) : null}
+                {sourceOptions.map((source) => (
+                  <option key={`update-source-${source}`} value={source}>
+                    {formatTaxonomyLabel(source)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="crm-update-total-orders">Total orders</label>
@@ -1667,8 +1849,20 @@ export function CrmOperationsBoard() {
               <input id="crm-update-total-spent" type="number" min={0} step="0.01" value={updateCustomerForm.totalSpent} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, totalSpent: event.target.value }))} />
             </div>
             <div className="field">
-              <label htmlFor="crm-update-tags">Tags (comma)</label>
-              <input id="crm-update-tags" value={updateCustomerForm.tags} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, tags: event.target.value }))} />
+              <label htmlFor="crm-update-tags">Tags</label>
+              <select
+                id="crm-update-tags"
+                multiple
+                value={updateCustomerForm.tags}
+                onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, tags: readSelectedOptions(event) }))}
+                size={Math.min(Math.max(customerTagOptions.length, 3), 8)}
+              >
+                {customerTagOptions.map((tag) => (
+                  <option key={`update-customer-tag-${tag}`} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="action-buttons">
               <button type="submit" className="btn btn-primary" disabled={!canMutate || !selectedCustomer}>Cập nhật khách hàng</button>
@@ -1717,11 +1911,34 @@ export function CrmOperationsBoard() {
             </div>
             <div className="field">
               <label htmlFor="crm-interaction-result-tag">Result tag</label>
-              <input id="crm-interaction-result-tag" value={createInteractionForm.resultTag} onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, resultTag: event.target.value }))} placeholder="quan_tam / da_mua" />
+              <select
+                id="crm-interaction-result-tag"
+                value={createInteractionForm.resultTag}
+                onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, resultTag: event.target.value }))}
+              >
+                <option value="">-- Không gán resultTag --</option>
+                {interactionResultTagOptions.map((tag) => (
+                  <option key={`interaction-result-tag-${tag}`} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
-              <label htmlFor="crm-interaction-tags">Tags (comma)</label>
-              <input id="crm-interaction-tags" value={createInteractionForm.tags} onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, tags: event.target.value }))} />
+              <label htmlFor="crm-interaction-tags">Interaction tags</label>
+              <select
+                id="crm-interaction-tags"
+                multiple
+                value={createInteractionForm.tags}
+                onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, tags: readSelectedOptions(event) }))}
+                size={Math.min(Math.max(interactionTagOptions.length, 3), 8)}
+              >
+                {interactionTagOptions.map((tag) => (
+                  <option key={`interaction-tag-${tag}`} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="crm-interaction-staff-name">Staff name</label>
@@ -1741,7 +1958,18 @@ export function CrmOperationsBoard() {
             </div>
             <div className="field">
               <label htmlFor="crm-interaction-customer-stage">Update customer stage</label>
-              <input id="crm-interaction-customer-stage" value={createInteractionForm.customerStage} onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, customerStage: event.target.value }))} />
+              <select
+                id="crm-interaction-customer-stage"
+                value={createInteractionForm.customerStage}
+                onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, customerStage: event.target.value }))}
+              >
+                <option value="">-- Không cập nhật --</option>
+                {stageOptions.map((stage) => (
+                  <option key={`interaction-stage-${stage}`} value={stage}>
+                    {formatTaxonomyLabel(stage)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="crm-interaction-content">Content</label>

@@ -82,6 +82,25 @@ const DEFAULT_CONFIG: SystemConfig = {
 
 const SEARCH_REINDEX_LAST_RESULT_KEY = 'search_reindex_last_result';
 const SEARCH_REINDEX_ENTITIES: SearchReindexEntity[] = ['customers', 'orders', 'products', 'all'];
+const SALES_TAXONOMY_TYPES = ['stages', 'sources'] as const;
+const CRM_TAG_REGISTRY_TYPES = ['customerTags', 'interactionTags', 'interactionResultTags'] as const;
+
+type SalesTaxonomyType = (typeof SALES_TAXONOMY_TYPES)[number];
+type CrmTagRegistryType = (typeof CRM_TAG_REGISTRY_TYPES)[number];
+
+type SalesTaxonomyItem = {
+  id: string;
+  value: string;
+  usageCount: number;
+  canDelete: boolean;
+};
+
+type CrmTagRegistryItem = {
+  id: string;
+  value: string;
+  usageCount: number;
+  canDelete: boolean;
+};
 
 @Injectable()
 export class SettingsService {
@@ -370,6 +389,309 @@ export class SettingsService {
 
   async getRuntimeSettings() {
     return this.runtimeSettings.getWebRuntime();
+  }
+
+  async getSalesTaxonomyOverview() {
+    const taxonomy = await this.getSalesTaxonomyState();
+    const [stageUsage, sourceUsage] = await Promise.all([
+      this.getSalesTaxonomyUsageMap('stages'),
+      this.getSalesTaxonomyUsageMap('sources')
+    ]);
+
+    return {
+      stages: taxonomy.stages.map((value) => this.toSalesTaxonomyItem('stages', value, stageUsage.get(value) ?? 0)),
+      sources: taxonomy.sources.map((value) => this.toSalesTaxonomyItem('sources', value, sourceUsage.get(value) ?? 0))
+    };
+  }
+
+  async createSalesTaxonomyItem(typeRaw: string, payload: Record<string, unknown>) {
+    const type = this.assertSalesTaxonomyType(typeRaw);
+    const body = this.ensureRecord(payload);
+    const reason = this.composeReason(body, `Create sales taxonomy ${type}`);
+    const nextValue = this.normalizeSalesTaxonomyValue(body.value);
+    if (!nextValue) {
+      throw new BadRequestException('Giá trị taxonomy không được để trống.');
+    }
+
+    const taxonomy = await this.getSalesTaxonomyState();
+    const currentValues = taxonomy[type];
+    if (currentValues.includes(nextValue)) {
+      throw new BadRequestException(`Giá trị '${nextValue}' đã tồn tại trong taxonomy ${type}.`);
+    }
+
+    const nextValues = [...currentValues, nextValue];
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      customerTaxonomy: {
+        [type]: nextValues
+      }
+    }, {
+      reason
+    });
+
+    return {
+      message: 'Đã thêm taxonomy thành công.',
+      type,
+      value: nextValue,
+      taxonomy: await this.getSalesTaxonomyOverview()
+    };
+  }
+
+  async renameSalesTaxonomyItem(typeRaw: string, currentValueRaw: string, payload: Record<string, unknown>) {
+    const type = this.assertSalesTaxonomyType(typeRaw);
+    const currentValue = this.normalizeSalesTaxonomyValue(currentValueRaw);
+    if (!currentValue) {
+      throw new BadRequestException('Giá trị taxonomy hiện tại không hợp lệ.');
+    }
+
+    const body = this.ensureRecord(payload);
+    const nextValue = this.normalizeSalesTaxonomyValue(body.nextValue ?? body.value);
+    if (!nextValue) {
+      throw new BadRequestException('Giá trị taxonomy mới không được để trống.');
+    }
+
+    const reason = this.composeReason(body, `Rename sales taxonomy ${type}`);
+    const taxonomy = await this.getSalesTaxonomyState();
+    const currentValues = taxonomy[type];
+    if (!currentValues.includes(currentValue)) {
+      throw new BadRequestException(`Giá trị '${currentValue}' không tồn tại trong taxonomy ${type}.`);
+    }
+
+    if (currentValue === nextValue) {
+      return {
+        message: 'Không có thay đổi.',
+        type,
+        value: currentValue,
+        migratedCount: 0,
+        taxonomy: await this.getSalesTaxonomyOverview()
+      };
+    }
+
+    if (currentValues.includes(nextValue)) {
+      throw new BadRequestException(`Giá trị mới '${nextValue}' đã tồn tại trong taxonomy ${type}.`);
+    }
+
+    // Step 1: append value mới trước để luôn giữ taxonomy hợp lệ trong suốt quá trình đổi tên.
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      customerTaxonomy: {
+        [type]: [...currentValues, nextValue]
+      }
+    }, {
+      reason: `${reason} (prepare)`
+    });
+
+    const migratedCount = await this.migrateSalesTaxonomyValue(type, currentValue, nextValue);
+    const replacedValues = currentValues.map((value) => (value === currentValue ? nextValue : value));
+    const nextValues = Array.from(new Set(replacedValues));
+
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      customerTaxonomy: {
+        [type]: nextValues
+      }
+    }, {
+      reason
+    });
+
+    return {
+      message: 'Đã cập nhật taxonomy thành công.',
+      type,
+      value: nextValue,
+      migratedCount,
+      taxonomy: await this.getSalesTaxonomyOverview()
+    };
+  }
+
+  async deleteSalesTaxonomyItem(typeRaw: string, valueRaw: string, payload: Record<string, unknown>) {
+    const type = this.assertSalesTaxonomyType(typeRaw);
+    const value = this.normalizeSalesTaxonomyValue(valueRaw);
+    if (!value) {
+      throw new BadRequestException('Giá trị taxonomy không hợp lệ.');
+    }
+
+    const body = this.ensureRecord(payload);
+    const reason = this.composeReason(body, `Delete sales taxonomy ${type}`);
+    const taxonomy = await this.getSalesTaxonomyState();
+    const currentValues = taxonomy[type];
+    if (!currentValues.includes(value)) {
+      throw new BadRequestException(`Giá trị '${value}' không tồn tại trong taxonomy ${type}.`);
+    }
+
+    const usageCount = await this.getSalesTaxonomyUsageCount(type, value);
+    if (usageCount > 0) {
+      throw new BadRequestException(
+        `Không thể xóa '${value}' vì đang có ${usageCount} khách hàng sử dụng giá trị này.`
+      );
+    }
+
+    const nextValues = currentValues.filter((item) => item !== value);
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      customerTaxonomy: {
+        [type]: nextValues
+      }
+    }, {
+      reason
+    });
+
+    return {
+      message: 'Đã xóa taxonomy thành công.',
+      type,
+      value,
+      taxonomy: await this.getSalesTaxonomyOverview()
+    };
+  }
+
+  async getCrmTagRegistryOverview() {
+    const registry = await this.getCrmTagRegistryState();
+    const customerTagUsageTargets = Array.from(
+      new Set([
+        ...registry.customerTags,
+        ...registry.interactionTags,
+        ...registry.interactionResultTags
+      ])
+    );
+    const [customerTagUsage, interactionResultUsage] = await Promise.all([
+      this.getCustomerTagUsageMap(customerTagUsageTargets),
+      this.getInteractionResultTagUsageMap(registry.interactionResultTags)
+    ]);
+
+    return {
+      customerTags: registry.customerTags.map((value) => this.toCrmTagRegistryItem('customerTags', value, customerTagUsage.get(value) ?? 0)),
+      interactionTags: registry.interactionTags.map((value) => this.toCrmTagRegistryItem('interactionTags', value, customerTagUsage.get(value) ?? 0)),
+      interactionResultTags: registry.interactionResultTags.map((value) => this.toCrmTagRegistryItem('interactionResultTags', value, interactionResultUsage.get(value) ?? 0))
+    };
+  }
+
+  async createCrmTagRegistryItem(typeRaw: string, payload: Record<string, unknown>) {
+    const type = this.assertCrmTagRegistryType(typeRaw);
+    const body = this.ensureRecord(payload);
+    const reason = this.composeReason(body, `Create CRM tag ${type}`);
+    const nextValue = this.normalizeCrmTagValue(body.value);
+    if (!nextValue) {
+      throw new BadRequestException('Giá trị tag không được để trống.');
+    }
+
+    const registry = await this.getCrmTagRegistryState();
+    const currentValues = registry[type];
+    if (currentValues.includes(nextValue)) {
+      throw new BadRequestException(`Giá trị '${nextValue}' đã tồn tại trong registry ${type}.`);
+    }
+
+    const nextValues = [...currentValues, nextValue];
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      tagRegistry: {
+        [type]: nextValues
+      }
+    }, {
+      reason
+    });
+
+    return {
+      message: 'Đã thêm CRM tag thành công.',
+      type,
+      value: nextValue,
+      registry: await this.getCrmTagRegistryOverview()
+    };
+  }
+
+  async renameCrmTagRegistryItem(typeRaw: string, currentValueRaw: string, payload: Record<string, unknown>) {
+    const type = this.assertCrmTagRegistryType(typeRaw);
+    const currentValue = this.normalizeCrmTagValue(currentValueRaw);
+    if (!currentValue) {
+      throw new BadRequestException('Giá trị CRM tag hiện tại không hợp lệ.');
+    }
+
+    const body = this.ensureRecord(payload);
+    const nextValue = this.normalizeCrmTagValue(body.nextValue ?? body.value);
+    if (!nextValue) {
+      throw new BadRequestException('Giá trị CRM tag mới không được để trống.');
+    }
+
+    const reason = this.composeReason(body, `Rename CRM tag ${type}`);
+    const registry = await this.getCrmTagRegistryState();
+    const currentValues = registry[type];
+
+    if (!currentValues.includes(currentValue)) {
+      throw new BadRequestException(`Giá trị '${currentValue}' không tồn tại trong registry ${type}.`);
+    }
+
+    if (currentValue === nextValue) {
+      return {
+        message: 'Không có thay đổi.',
+        type,
+        value: currentValue,
+        migratedCount: 0,
+        registry: await this.getCrmTagRegistryOverview()
+      };
+    }
+
+    if (currentValues.includes(nextValue)) {
+      throw new BadRequestException(`Giá trị mới '${nextValue}' đã tồn tại trong registry ${type}.`);
+    }
+
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      tagRegistry: {
+        [type]: [...currentValues, nextValue]
+      }
+    }, {
+      reason: `${reason} (prepare)`
+    });
+
+    const migratedCount = await this.migrateCrmTagRegistryValue(type, currentValue, nextValue);
+    const nextValues = Array.from(new Set(currentValues.map((value) => (value === currentValue ? nextValue : value))));
+
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      tagRegistry: {
+        [type]: nextValues
+      }
+    }, {
+      reason
+    });
+
+    return {
+      message: 'Đã cập nhật CRM tag thành công.',
+      type,
+      value: nextValue,
+      migratedCount,
+      registry: await this.getCrmTagRegistryOverview()
+    };
+  }
+
+  async deleteCrmTagRegistryItem(typeRaw: string, valueRaw: string, payload: Record<string, unknown>) {
+    const type = this.assertCrmTagRegistryType(typeRaw);
+    const value = this.normalizeCrmTagValue(valueRaw);
+    if (!value) {
+      throw new BadRequestException('Giá trị CRM tag không hợp lệ.');
+    }
+
+    const body = this.ensureRecord(payload);
+    const reason = this.composeReason(body, `Delete CRM tag ${type}`);
+    const registry = await this.getCrmTagRegistryState();
+    const currentValues = registry[type];
+    if (!currentValues.includes(value)) {
+      throw new BadRequestException(`Giá trị '${value}' không tồn tại trong registry ${type}.`);
+    }
+
+    const usageCount = await this.getCrmTagRegistryUsageCount(type, value);
+    if (usageCount > 0) {
+      throw new BadRequestException(
+        `Không thể xóa '${value}' vì đang có ${usageCount} bản ghi sử dụng.`
+      );
+    }
+
+    const nextValues = currentValues.filter((item) => item !== value);
+    await this.settingsPolicy.updateDomain('sales_crm_policies', {
+      tagRegistry: {
+        [type]: nextValues
+      }
+    }, {
+      reason
+    });
+
+    return {
+      message: 'Đã xóa CRM tag thành công.',
+      type,
+      value,
+      registry: await this.getCrmTagRegistryOverview()
+    };
   }
 
   async runDataGovernanceMaintenance(payload: Record<string, unknown>) {
@@ -1136,6 +1458,296 @@ export class SettingsService {
         : 'Không thể mã hóa secret.';
       throw new BadRequestException(`${fieldPath}: ${message} (env: ${getSettingsSecretEncryptionEnvKey()})`);
     }
+  }
+
+  private assertSalesTaxonomyType(input: unknown): SalesTaxonomyType {
+    const normalized = this.cleanString(input).toLowerCase();
+    if ((SALES_TAXONOMY_TYPES as readonly string[]).includes(normalized)) {
+      return normalized as SalesTaxonomyType;
+    }
+    throw new BadRequestException(`Loại taxonomy không hợp lệ. Chỉ nhận: ${SALES_TAXONOMY_TYPES.join(', ')}.`);
+  }
+
+  private normalizeSalesTaxonomyValue(input: unknown) {
+    return this.cleanString(input);
+  }
+
+  private toStringArray(input: unknown) {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+    return input
+      .map((item) => this.cleanString(item))
+      .filter(Boolean)
+      .filter((item, index, list) => list.indexOf(item) === index);
+  }
+
+  private async getSalesTaxonomyState() {
+    const domain = await this.settingsPolicy.getDomain('sales_crm_policies');
+    const data = this.ensureRecord(domain.data);
+    const customerTaxonomy = this.ensureRecord(data.customerTaxonomy);
+    return {
+      stages: this.toStringArray(customerTaxonomy.stages),
+      sources: this.toStringArray(customerTaxonomy.sources)
+    };
+  }
+
+  private async getSalesTaxonomyUsageMap(type: SalesTaxonomyType) {
+    const usageMap = new Map<string, number>();
+    if (type === 'stages') {
+      const rows = await this.prisma.client.customer.groupBy({
+        by: ['customerStage'],
+        _count: {
+          _all: true
+        },
+        where: {
+          customerStage: {
+            not: null
+          }
+        }
+      });
+      for (const row of rows) {
+        const key = this.normalizeSalesTaxonomyValue(row.customerStage);
+        if (!key) {
+          continue;
+        }
+        usageMap.set(key, row._count._all);
+      }
+      return usageMap;
+    }
+
+    const rows = await this.prisma.client.customer.groupBy({
+      by: ['source'],
+      _count: {
+        _all: true
+      },
+      where: {
+        source: {
+          not: null
+        }
+      }
+    });
+    for (const row of rows) {
+      const key = this.normalizeSalesTaxonomyValue(row.source);
+      if (!key) {
+        continue;
+      }
+      usageMap.set(key, row._count._all);
+    }
+    return usageMap;
+  }
+
+  private async getSalesTaxonomyUsageCount(type: SalesTaxonomyType, value: string) {
+    if (type === 'stages') {
+      return this.prisma.client.customer.count({
+        where: {
+          customerStage: value
+        }
+      });
+    }
+    return this.prisma.client.customer.count({
+      where: {
+        source: value
+      }
+    });
+  }
+
+  private async migrateSalesTaxonomyValue(type: SalesTaxonomyType, currentValue: string, nextValue: string) {
+    if (type === 'stages') {
+      const result = await this.prisma.client.customer.updateMany({
+        where: {
+          customerStage: currentValue
+        },
+        data: {
+          customerStage: nextValue
+        }
+      });
+      return result.count;
+    }
+
+    const result = await this.prisma.client.customer.updateMany({
+      where: {
+        source: currentValue
+      },
+      data: {
+        source: nextValue
+      }
+    });
+    return result.count;
+  }
+
+  private toSalesTaxonomyItem(type: SalesTaxonomyType, value: string, usageCount: number): SalesTaxonomyItem {
+    return {
+      id: `${type}:${value}`,
+      value,
+      usageCount,
+      canDelete: usageCount === 0
+    };
+  }
+
+  private assertCrmTagRegistryType(input: unknown): CrmTagRegistryType {
+    const normalized = this.cleanString(input);
+    if ((CRM_TAG_REGISTRY_TYPES as readonly string[]).includes(normalized)) {
+      return normalized as CrmTagRegistryType;
+    }
+    throw new BadRequestException(`Loại CRM tag registry không hợp lệ. Chỉ nhận: ${CRM_TAG_REGISTRY_TYPES.join(', ')}.`);
+  }
+
+  private normalizeCrmTagValue(input: unknown) {
+    return this.cleanString(input).toLowerCase();
+  }
+
+  private toCrmTagArray(input: unknown) {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+    return input
+      .map((item) => this.normalizeCrmTagValue(item))
+      .filter(Boolean)
+      .filter((item, index, list) => list.indexOf(item) === index);
+  }
+
+  private async getCrmTagRegistryState() {
+    const domain = await this.settingsPolicy.getDomain('sales_crm_policies');
+    const data = this.ensureRecord(domain.data);
+    const tagRegistry = this.ensureRecord(data.tagRegistry);
+    return {
+      customerTags: this.toCrmTagArray(tagRegistry.customerTags),
+      interactionTags: this.toCrmTagArray(tagRegistry.interactionTags),
+      interactionResultTags: this.toCrmTagArray(tagRegistry.interactionResultTags)
+    };
+  }
+
+  private async getCustomerTagUsageMap(values: string[]) {
+    const usageCounts = await Promise.all(
+      values.map(async (tag) => {
+        const usageCount = await this.prisma.client.customer.count({
+          where: {
+            tags: {
+              has: tag
+            }
+          }
+        });
+        return [tag, usageCount] as const;
+      })
+    );
+
+    return new Map<string, number>(usageCounts);
+  }
+
+  private async getInteractionResultTagUsageMap(values: string[]) {
+    const usageCounts = await Promise.all(
+      values.map(async (tag) => {
+        const usageCount = await this.prisma.client.customerInteraction.count({
+          where: {
+            resultTag: tag
+          }
+        });
+        return [tag, usageCount] as const;
+      })
+    );
+
+    return new Map<string, number>(usageCounts);
+  }
+
+  private async getCrmTagRegistryUsageCount(type: CrmTagRegistryType, value: string) {
+    if (type === 'interactionResultTags') {
+      const [interactionUsageCount, customerTagUsageCount] = await Promise.all([
+        this.prisma.client.customerInteraction.count({
+          where: {
+            resultTag: value
+          }
+        }),
+        this.prisma.client.customer.count({
+          where: {
+            tags: {
+              has: value
+            }
+          }
+        })
+      ]);
+      return interactionUsageCount + customerTagUsageCount;
+    }
+
+    return this.prisma.client.customer.count({
+      where: {
+        tags: {
+          has: value
+        }
+      }
+    });
+  }
+
+  private async migrateCrmTagRegistryValue(type: CrmTagRegistryType, currentValue: string, nextValue: string) {
+    if (type === 'interactionResultTags') {
+      const [interactionResult, customerTagMigratedCount] = await Promise.all([
+        this.prisma.client.customerInteraction.updateMany({
+          where: {
+            resultTag: currentValue
+          },
+          data: {
+            resultTag: nextValue
+          }
+        }),
+        this.migrateCustomerTagValue(currentValue, nextValue)
+      ]);
+      return interactionResult.count + customerTagMigratedCount;
+    }
+
+    return this.migrateCustomerTagValue(currentValue, nextValue);
+  }
+
+  private async migrateCustomerTagValue(currentValue: string, nextValue: string) {
+    const rows = await this.prisma.client.customer.findMany({
+      where: {
+        tags: {
+          has: currentValue
+        }
+      },
+      select: {
+        id: true,
+        tags: true
+      }
+    });
+
+    let migratedCount = 0;
+    for (const row of rows) {
+      const nextTags = this.replaceCustomerTagValue(row.tags, currentValue, nextValue);
+      const currentTags = this.toCrmTagArray(row.tags);
+      if (JSON.stringify(currentTags) === JSON.stringify(nextTags)) {
+        continue;
+      }
+      await this.prisma.client.customer.updateMany({
+        where: {
+          id: row.id
+        },
+        data: {
+          tags: nextTags
+        }
+      });
+      migratedCount += 1;
+    }
+    return migratedCount;
+  }
+
+  private replaceCustomerTagValue(value: unknown, currentValue: string, nextValue: string) {
+    const next: string[] = [];
+    for (const item of this.toCrmTagArray(value)) {
+      const mappedValue = item === currentValue ? nextValue : item;
+      if (!next.includes(mappedValue)) {
+        next.push(mappedValue);
+      }
+    }
+    return next;
+  }
+
+  private toCrmTagRegistryItem(type: CrmTagRegistryType, value: string, usageCount: number): CrmTagRegistryItem {
+    return {
+      id: `${type}:${value}`,
+      value,
+      usageCount,
+      canDelete: usageCount === 0
+    };
   }
 
   private parseSearchReindexEntity(input: unknown): SearchReindexEntity {

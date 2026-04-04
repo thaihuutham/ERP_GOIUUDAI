@@ -15,7 +15,7 @@ import {
   History,
   Trash2,
 } from 'lucide-react';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import { canAccessModule } from '../lib/rbac';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
@@ -49,6 +49,11 @@ type CustomerTaxonomyPayload = {
     stages?: string[];
     sources?: string[];
   };
+  tagRegistry?: {
+    customerTags?: string[];
+    interactionTags?: string[];
+    interactionResultTags?: string[];
+  };
 };
 
 type CreateCustomerFormState = {
@@ -58,7 +63,7 @@ type CreateCustomerFormState = {
   customerStage: string;
   source: string;
   segment: string;
-  tags: string;
+  tags: string[];
 };
 
 type DetailCustomerFormState = {
@@ -69,7 +74,7 @@ type DetailCustomerFormState = {
   source: string;
   segment: string;
   status: string;
-  tags: string;
+  tags: string[];
 };
 
 const STATUS_OPTIONS: GenericStatus[] = ['ALL', 'ACTIVE', 'INACTIVE', 'DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'ARCHIVED'];
@@ -77,6 +82,7 @@ const CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.customer-table-sett
 const FETCH_LIMIT = 200;
 const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
 const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
+const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
 
 function toNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') {
@@ -115,6 +121,9 @@ function buildAuditObjectHref(entityType: string, entityId: string) {
 }
 
 function buildDetailForm(customer: Customer | null): DetailCustomerFormState {
+  const tags = Array.isArray(customer?.tags)
+    ? Array.from(new Set(customer!.tags!.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean)))
+    : [];
   return {
     fullName: customer?.fullName ?? '',
     phone: customer?.phone ?? '',
@@ -123,8 +132,14 @@ function buildDetailForm(customer: Customer | null): DetailCustomerFormState {
     source: customer?.source ?? '',
     segment: customer?.segment ?? '',
     status: customer?.status ?? 'ACTIVE',
-    tags: Array.isArray(customer?.tags) ? customer!.tags!.join(', ') : ''
+    tags
   };
+}
+
+function readSelectedTags(event: ChangeEvent<HTMLSelectElement>) {
+  return Array.from(event.target.selectedOptions)
+    .map((option) => option.value.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 export function CrmCustomersBoard() {
@@ -138,6 +153,7 @@ export function CrmCustomersBoard() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [stageOptions, setStageOptions] = useState<string[]>(DEFAULT_STAGE_OPTIONS);
   const [sourceOptions, setSourceOptions] = useState<string[]>(DEFAULT_SOURCE_OPTIONS);
+  const [customerTagOptions, setCustomerTagOptions] = useState<string[]>(DEFAULT_CUSTOMER_TAG_OPTIONS);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<GenericStatus>('ALL');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -155,7 +171,7 @@ export function CrmCustomersBoard() {
     customerStage: DEFAULT_STAGE_OPTIONS[0],
     source: DEFAULT_SOURCE_OPTIONS[0],
     segment: '',
-    tags: ''
+    tags: []
   });
 
   useEffect(() => {
@@ -194,17 +210,26 @@ export function CrmCustomersBoard() {
       const payload = await apiRequest<CustomerTaxonomyPayload>('/crm/taxonomy');
       const stages = payload.customerTaxonomy?.stages?.filter(Boolean) ?? [];
       const sources = payload.customerTaxonomy?.sources?.filter(Boolean) ?? [];
+      const customerTags = payload.tagRegistry?.customerTags?.filter(Boolean) ?? [];
       const nextStages = stages.length > 0 ? stages : DEFAULT_STAGE_OPTIONS;
       const nextSources = sources.length > 0 ? sources : DEFAULT_SOURCE_OPTIONS;
+      const nextCustomerTags = customerTags.length > 0 ? customerTags : DEFAULT_CUSTOMER_TAG_OPTIONS;
       setStageOptions(nextStages);
       setSourceOptions(nextSources);
+      setCustomerTagOptions(nextCustomerTags);
       setCreateForm((prev) => ({
         ...prev,
         customerStage: nextStages.includes(prev.customerStage) ? prev.customerStage : (nextStages[0] || ''),
-        source: nextSources.includes(prev.source) ? prev.source : (nextSources[0] || '')
+        source: nextSources.includes(prev.source) ? prev.source : (nextSources[0] || ''),
+        tags: prev.tags.filter((tag) => nextCustomerTags.includes(tag))
+      }));
+      setDetailForm((prev) => ({
+        ...prev,
+        tags: prev.tags.filter((tag) => nextCustomerTags.includes(tag))
       }));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải taxonomy CRM');
+      setCustomerTagOptions(DEFAULT_CUSTOMER_TAG_OPTIONS);
     }
   };
 
@@ -216,7 +241,7 @@ export function CrmCustomersBoard() {
       customerStage: stageOptions[0] ?? DEFAULT_STAGE_OPTIONS[0] ?? '',
       source: sourceOptions[0] ?? DEFAULT_SOURCE_OPTIONS[0] ?? '',
       segment: '',
-      tags: ''
+      tags: []
     });
   };
 
@@ -235,9 +260,6 @@ export function CrmCustomersBoard() {
           source: createForm.source || undefined,
           segment: createForm.segment || undefined,
           tags: createForm.tags
-            .split(/[;,]/)
-            .map((item) => item.trim())
-            .filter(Boolean)
         }
       });
       setResultMessage('Đã tạo khách hàng thành công.');
@@ -282,9 +304,6 @@ export function CrmCustomersBoard() {
           segment: detailForm.segment || undefined,
           status: detailForm.status || undefined,
           tags: detailForm.tags
-            .split(/[;,]/)
-            .map((item) => item.trim())
-            .filter(Boolean)
         }
       });
       setResultMessage(`Cập nhật hồ sơ ${detailForm.fullName || selectedCustomer.id} thành công.`);
@@ -335,6 +354,10 @@ export function CrmCustomersBoard() {
       })),
     [stageOptions]
   );
+  const customerTagSelectOptions = useMemo(() => {
+    const selectedTags = selectedCustomer?.tags?.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean) ?? [];
+    return Array.from(new Set([...customerTagOptions, ...selectedTags]));
+  }, [customerTagOptions, selectedCustomer]);
 
   const columns: ColumnDefinition<Customer>[] = [
     { key: 'code', label: 'Mã KH' },
@@ -671,11 +694,18 @@ export function CrmCustomersBoard() {
             <div className="field">
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}><Tag size={14} /> Thẻ (Tags)</label>
               {isDetailEditing ? (
-                <input
+                <select
+                  multiple
                   value={detailForm.tags}
-                  onChange={(event) => setDetailForm((prev) => ({ ...prev, tags: event.target.value }))}
-                  placeholder="ưu_tiên, khách_mới"
-                />
+                  onChange={(event) => setDetailForm((prev) => ({ ...prev, tags: readSelectedTags(event) }))}
+                  size={Math.min(Math.max(customerTagSelectOptions.length, 3), 8)}
+                >
+                  {customerTagSelectOptions.map((tag) => (
+                    <option key={`detail-tag-${tag}`} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                   {selectedCustomer.tags?.length ? selectedCustomer.tags.map((t) => (
@@ -820,11 +850,18 @@ export function CrmCustomersBoard() {
           </div>
           <div className="field">
             <label>Tags</label>
-            <input
+            <select
+              multiple
               value={createForm.tags}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, tags: event.target.value }))}
-              placeholder="ưu_tiên, khách_mới"
-            />
+              onChange={(event) => setCreateForm((prev) => ({ ...prev, tags: readSelectedTags(event) }))}
+              size={Math.min(Math.max(customerTagSelectOptions.length, 3), 8)}
+            >
+              {customerTagSelectOptions.map((tag) => (
+                <option key={`create-tag-${tag}`} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
             <button type="submit" className="btn btn-primary" disabled={isCreating} style={{ flex: 1 }}>

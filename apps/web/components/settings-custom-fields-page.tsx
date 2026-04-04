@@ -37,6 +37,13 @@ type EntityType = (typeof ENTITY_OPTIONS)[number]['value'];
 type FieldType = (typeof FIELD_TYPE_OPTIONS)[number];
 type FieldStatus = (typeof STATUS_OPTIONS)[number];
 
+type OptionRow = {
+  id: string;
+  key: string;
+  label: string;
+  order: number;
+};
+
 type DraftFieldRow = {
   id: string;
   persisted: boolean;
@@ -46,7 +53,7 @@ type DraftFieldRow = {
   fieldType: FieldType;
   required: boolean;
   defaultValueText: string;
-  optionsText: string;
+  options: OptionRow[];
   relationEntityType: EntityType | '';
   formulaExpression: string;
   filterable: boolean;
@@ -109,19 +116,64 @@ function normalizeFieldStatus(value: unknown): FieldStatus {
   return STATUS_OPTIONS.includes(text as FieldStatus) ? (text as FieldStatus) : 'DRAFT';
 }
 
-function parseOptionsToText(value: unknown) {
-  if (!Array.isArray(value)) return '';
-  const options = value
-    .map((item) => {
-      if (typeof item === 'string') return item.trim();
-      if (item && typeof item === 'object') {
-        const record = item as Record<string, unknown>;
-        return toText(record.value ?? record.key ?? record.id).trim();
+function createOptionId(seed = '') {
+  return `option_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${seed}`;
+}
+
+function normalizeOptionKey(value: unknown) {
+  return toText(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function toOptionRows(value: unknown): OptionRow[] {
+  if (!Array.isArray(value)) return [];
+  const optionMap = new Map<string, OptionRow>();
+  value.forEach((item, index) => {
+    if (typeof item === 'string') {
+      const label = item.trim();
+      const key = normalizeOptionKey(label);
+      if (!key || optionMap.has(key)) {
+        return;
       }
-      return '';
-    })
-    .filter(Boolean);
-  return options.join(', ');
+      optionMap.set(key, {
+        id: createOptionId(`${index}`),
+        key,
+        label: label || key,
+        order: index + 1
+      });
+      return;
+    }
+
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+
+    const record = item as Record<string, unknown>;
+    const keyRaw = toText(record.key ?? record.value ?? record.id).trim();
+    const labelRaw = toText(record.label ?? record.name ?? record.title ?? keyRaw).trim();
+    const key = normalizeOptionKey(keyRaw || labelRaw);
+    if (!key || optionMap.has(key)) {
+      return;
+    }
+    const orderRaw = Number(record.order ?? record.position ?? record.rank);
+    optionMap.set(key, {
+      id: createOptionId(`${index}`),
+      key,
+      label: labelRaw || key,
+      order: Number.isFinite(orderRaw) && orderRaw > 0 ? Math.trunc(orderRaw) : index + 1
+    });
+  });
+
+  return [...optionMap.values()].sort((left, right) => {
+    if (left.order !== right.order) {
+      return left.order - right.order;
+    }
+    return left.label.localeCompare(right.label);
+  });
 }
 
 function parseDefaultValueToText(value: unknown) {
@@ -148,7 +200,7 @@ function mapApiRowToDraftField(row: Record<string, unknown>, index: number): Dra
     fieldType: normalizeFieldType(row.fieldType),
     required: toBool(row.required, false),
     defaultValueText: parseDefaultValueToText(row.defaultValueJson),
-    optionsText: parseOptionsToText(row.optionsJson),
+    options: toOptionRows(row.optionsJson),
     relationEntityType: normalizeEntityType(row.relationEntityType),
     formulaExpression: toText(row.formulaExpression).trim(),
     filterable: toBool(row.filterable, false),
@@ -168,7 +220,7 @@ function createEmptyRow(): DraftFieldRow {
     fieldType: 'TEXT',
     required: false,
     defaultValueText: '',
-    optionsText: '',
+    options: [],
     relationEntityType: '',
     formulaExpression: '',
     filterable: true,
@@ -213,8 +265,23 @@ function validateRow(row: DraftFieldRow): string | null {
   if (!row.label.trim()) {
     return `Label của '${row.fieldKey}' là bắt buộc.`;
   }
-  if ((row.fieldType === 'SELECT' || row.fieldType === 'MULTISELECT') && parseCsvValues(row.optionsText).length === 0) {
-    return `Field '${row.fieldKey}' cần ít nhất 1 option.`;
+  if (row.fieldType === 'SELECT' || row.fieldType === 'MULTISELECT') {
+    const options = row.options
+      .map((item) => ({
+        key: normalizeOptionKey(item.key),
+        label: toText(item.label).trim(),
+        order: Number(item.order)
+      }))
+      .filter((item) => item.key);
+    if (options.length === 0) {
+      return `Field '${row.fieldKey}' cần ít nhất 1 option.`;
+    }
+    const duplicateKeys = options
+      .map((item) => item.key)
+      .filter((key, index, list) => list.indexOf(key) !== index);
+    if (duplicateKeys.length > 0) {
+      return `Field '${row.fieldKey}' có option key trùng: ${Array.from(new Set(duplicateKeys)).join(', ')}.`;
+    }
   }
   if (row.fieldType === 'RELATION' && !row.relationEntityType) {
     return `Field '${row.fieldKey}' kiểu RELATION cần relationEntityType.`;
@@ -275,6 +342,43 @@ export function SettingsCustomFieldsPage() {
     setRows((current) => current.map((row) => (row.id === rowId ? updater(row) : row)));
   };
 
+  const addOptionRow = (rowId: string) => {
+    updateRow(rowId, (current) => ({
+      ...current,
+      options: [
+        ...current.options,
+        {
+          id: createOptionId(rowId),
+          key: '',
+          label: '',
+          order: current.options.length + 1
+        }
+      ]
+    }));
+  };
+
+  const updateOptionRow = (rowId: string, optionId: string, updater: (current: OptionRow) => OptionRow) => {
+    updateRow(rowId, (current) => ({
+      ...current,
+      options: current.options.map((option) => (option.id === optionId ? updater(option) : option))
+    }));
+  };
+
+  const removeOptionRow = (rowId: string, optionId: string) => {
+    updateRow(rowId, (current) => {
+      const nextOptions = current.options
+        .filter((option) => option.id !== optionId)
+        .map((option, index) => ({
+          ...option,
+          order: option.order > 0 ? option.order : index + 1
+        }));
+      return {
+        ...current,
+        options: nextOptions
+      };
+    });
+  };
+
   const handleAddRow = () => {
     if (!isAdmin) return;
     setRows((current) => [...current, createEmptyRow()]);
@@ -312,7 +416,22 @@ export function SettingsCustomFieldsPage() {
       };
 
       if (row.fieldType === 'SELECT' || row.fieldType === 'MULTISELECT') {
-        definition.options = parseCsvValues(row.optionsText);
+        const options = row.options
+          .map((item, index) => {
+            const key = normalizeOptionKey(item.key || item.label);
+            if (!key) {
+              return null;
+            }
+            const label = toText(item.label).trim() || key;
+            const order = Number(item.order);
+            return {
+              key,
+              label,
+              order: Number.isFinite(order) && order > 0 ? Math.trunc(order) : index + 1
+            };
+          })
+          .filter((item): item is { key: string; label: string; order: number } => Boolean(item));
+        definition.options = options;
       }
 
       if (row.fieldType === 'RELATION') {
@@ -531,14 +650,96 @@ export function SettingsCustomFieldsPage() {
                       disabled={!isAdmin}
                     />
                   </div>
-                  <div className="field">
-                    <label>Options (csv)</label>
-                    <input
-                      value={row.optionsText}
-                      placeholder="gold, silver, bronze"
-                      onChange={(event) => updateRow(row.id, (current) => ({ ...current, optionsText: event.target.value }))}
-                      disabled={!isAdmin || (row.fieldType !== 'SELECT' && row.fieldType !== 'MULTISELECT')}
-                    />
+                  <div className="field" style={{ gridColumn: 'span 2' }}>
+                    <label>Options manager</label>
+                    {row.fieldType === 'SELECT' || row.fieldType === 'MULTISELECT' ? (
+                      <div style={{ display: 'grid', gap: '0.5rem' }}>
+                        {row.options.length === 0 ? (
+                          <p className="muted" style={{ margin: 0 }}>Chưa có option. Bấm "Thêm option".</p>
+                        ) : (
+                          <div style={{ overflowX: 'auto' }}>
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th style={{ minWidth: '150px' }}>Key</th>
+                                  <th style={{ minWidth: '180px' }}>Label</th>
+                                  <th style={{ width: '90px' }}>Order</th>
+                                  <th style={{ width: '120px' }}>Thao tác</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {row.options.map((option) => (
+                                  <tr key={option.id}>
+                                    <td>
+                                      <input
+                                        value={option.key}
+                                        onChange={(event) =>
+                                          updateOptionRow(row.id, option.id, (current) => ({
+                                            ...current,
+                                            key: normalizeOptionKey(event.target.value)
+                                          }))
+                                        }
+                                        placeholder="gold"
+                                        disabled={!isAdmin}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        value={option.label}
+                                        onChange={(event) =>
+                                          updateOptionRow(row.id, option.id, (current) => ({
+                                            ...current,
+                                            label: event.target.value
+                                          }))
+                                        }
+                                        placeholder="Gold"
+                                        disabled={!isAdmin}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={option.order}
+                                        onChange={(event) =>
+                                          updateOptionRow(row.id, option.id, (current) => ({
+                                            ...current,
+                                            order: Number(event.target.value) > 0 ? Math.trunc(Number(event.target.value)) : current.order
+                                          }))
+                                        }
+                                        disabled={!isAdmin}
+                                      />
+                                    </td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        onClick={() => removeOptionRow(row.id, option.id)}
+                                        disabled={!isAdmin}
+                                      >
+                                        Xóa
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                        <div>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => addOptionRow(row.id)}
+                            disabled={!isAdmin}
+                          >
+                            + Thêm option
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <input value="Không áp dụng cho fieldType hiện tại" readOnly />
+                    )}
                   </div>
 
                   <div className="field">

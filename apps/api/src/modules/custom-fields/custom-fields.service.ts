@@ -35,6 +35,12 @@ type DraftFieldInput = {
   status: CustomFieldLifecycleStatus;
 };
 
+type CustomFieldOptionRow = {
+  key: string;
+  label: string;
+  order: number;
+};
+
 type PublishedSchema = {
   version: number;
   definitions: DraftFieldInput[];
@@ -1119,14 +1125,13 @@ export class CustomFieldsService {
         throw new BadRequestException(`Field '${definition.fieldKey}' phải là mảng.`);
       }
       const values = rawValue.map((item) => this.readString(item)).filter(Boolean);
-      this.assertSelectOptions(definition, values);
-      return values;
+      return this.normalizeSelectOptionValues(definition, values);
     }
 
     if (definition.fieldType === CustomFieldType.SELECT) {
       const value = this.readString(rawValue);
-      this.assertSelectOptions(definition, [value]);
-      return value;
+      const normalizedValues = this.normalizeSelectOptionValues(definition, [value]);
+      return normalizedValues[0] ?? null;
     }
 
     if (definition.fieldType === CustomFieldType.RELATION) {
@@ -1193,8 +1198,10 @@ export class CustomFieldsService {
       if (!Array.isArray(rawValue)) {
         throw new BadRequestException(`Field '${definition.fieldKey}' phải là mảng.`);
       }
-      const values = rawValue.map((item) => this.readString(item)).filter(Boolean);
-      this.assertSelectOptions(definition, values);
+      const values = this.normalizeSelectOptionValues(
+        definition,
+        rawValue.map((item) => this.readString(item)).filter(Boolean)
+      );
       return {
         valueText: values.join(','),
         valueNumber: null,
@@ -1206,8 +1213,7 @@ export class CustomFieldsService {
     }
 
     if (definition.fieldType === CustomFieldType.SELECT) {
-      const value = this.readString(rawValue);
-      this.assertSelectOptions(definition, [value]);
+      const value = this.normalizeSelectOptionValues(definition, [this.readString(rawValue)])[0] ?? '';
       return {
         valueText: value,
         valueNumber: null,
@@ -1413,23 +1419,54 @@ export class CustomFieldsService {
     if (!Array.isArray(raw)) {
       return [];
     }
-    const output: string[] = [];
-    for (const entry of raw) {
+    const deduped = new Map<string, CustomFieldOptionRow>();
+
+    raw.forEach((entry, index) => {
       if (typeof entry === 'string') {
-        const normalized = entry.trim();
-        if (normalized) {
-          output.push(normalized);
+        const label = entry.trim();
+        const key = this.normalizeOptionKey(label);
+        if (!key) {
+          return;
         }
-        continue;
-      }
-      if (this.isPlainObject(entry)) {
-        const value = this.readString((entry as Record<string, unknown>).value || (entry as Record<string, unknown>).key || (entry as Record<string, unknown>).id);
-        if (value) {
-          output.push(value);
+        if (deduped.has(key)) {
+          return;
         }
+        deduped.set(key, {
+          key,
+          label: label || key,
+          order: index + 1
+        });
+        return;
       }
-    }
-    return Array.from(new Set(output));
+
+      if (!this.isPlainObject(entry)) {
+        return;
+      }
+
+      const record = this.toRecord(entry);
+      const keyCandidate = this.readString(record.key || record.value || record.id || record.code);
+      const labelCandidate = this.readString(record.label || record.name || record.title || keyCandidate);
+      const key = this.normalizeOptionKey(keyCandidate || labelCandidate);
+      if (!key) {
+        return;
+      }
+      if (deduped.has(key)) {
+        return;
+      }
+
+      deduped.set(key, {
+        key,
+        label: labelCandidate || key,
+        order: this.toInt(record.order ?? record.position ?? record.rank, index + 1, 1, 10_000)
+      });
+    });
+
+    return [...deduped.values()].sort((left, right) => {
+      if (left.order !== right.order) {
+        return left.order - right.order;
+      }
+      return left.label.localeCompare(right.label);
+    });
   }
 
   private isDefinitionChanged(current: {
@@ -1480,17 +1517,40 @@ export class CustomFieldsService {
     return `cf_idx_${compact}`;
   }
 
-  private assertSelectOptions(definition: DraftFieldInput, values: string[]) {
-    const optionValues = this.normalizeOptions(definition.optionsJson);
-    if (optionValues.length === 0 || values.length === 0) {
-      return;
+  private normalizeSelectOptionValues(definition: DraftFieldInput, values: string[]) {
+    const options = this.normalizeOptions(definition.optionsJson);
+    if (options.length === 0 || values.length === 0) {
+      return values.filter(Boolean);
     }
 
-    for (const value of values) {
-      if (!optionValues.includes(value)) {
+    const keyMap = new Map(options.map((item) => [item.key, item.key]));
+    const labelMap = new Map(options.map((item) => [item.label.toLowerCase(), item.key]));
+    const normalizedValues: string[] = [];
+
+    for (const rawValue of values) {
+      const value = this.readString(rawValue);
+      if (!value) {
+        continue;
+      }
+      const matchedKey = keyMap.get(value) ?? labelMap.get(value.toLowerCase());
+      if (!matchedKey) {
         throw new BadRequestException(`Giá trị '${value}' không nằm trong options của '${definition.fieldKey}'.`);
       }
+      if (!normalizedValues.includes(matchedKey)) {
+        normalizedValues.push(matchedKey);
+      }
     }
+
+    return normalizedValues;
+  }
+
+  private normalizeOptionKey(raw: unknown) {
+    const normalized = this.readString(raw)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return normalized;
   }
 
   private resolveActorId() {

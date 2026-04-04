@@ -53,7 +53,7 @@ export function GroupedSidebar<TDomain extends string>({
                     onClick={() => onSelectDomain(domain)}
                     className={`btn btn-ghost settings-sidebar-domain-btn${selectedDomain === domain ? ' settings-sidebar-domain-btn-active' : ''}`}
                   >
-                    <span>{labels[domain]}</span>
+                    <span className="settings-sidebar-domain-label">{labels[domain]}</span>
                     <span className="settings-sidebar-domain-meta">
                       <span className={`settings-sidebar-state ${state?.ok ? 'is-ok' : 'is-warn'}`}>
                         {state?.ok ? 'ỔN' : 'CẢNH BÁO'}

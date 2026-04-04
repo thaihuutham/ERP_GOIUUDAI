@@ -41,6 +41,9 @@ const ASSISTANT_MODULE_KEY = 'assistant';
 const HR_APPENDIX_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] as const;
 const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as const;
 const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
+const SETTINGS_USER_ID_PATTERN = /^[A-Za-z0-9._-]{2,80}$/;
+const SETTINGS_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SETTINGS_FINANCE_PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 type HrAppendixFieldType = (typeof HR_APPENDIX_FIELD_TYPES)[number];
 type HrAppendixFieldAggregator = (typeof HR_APPENDIX_AGGREGATORS)[number];
@@ -212,6 +215,10 @@ export class SettingsPolicyService {
 
     if (!validation.ok) {
       throw new BadRequestException(`Domain ${domain} không hợp lệ: ${validation.errors.join('; ')}`);
+    }
+
+    if (domain === 'sales_crm_policies') {
+      await this.assertSalesTaxonomyRemovalAllowed(currentValue, nextValue);
     }
 
     if (changedPaths.length === 0) {
@@ -973,6 +980,26 @@ export class SettingsPolicyService {
     return '';
   }
 
+  private normalizeHrAppendixOptions(value: unknown) {
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+
+    for (const raw of this.toStringArray(value)) {
+      const option = raw.replace(/\s+/g, ' ').trim();
+      if (!option) {
+        continue;
+      }
+      const dedupeKey = option.toLowerCase();
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      normalized.push(option);
+    }
+
+    return normalized;
+  }
+
   private normalizeHrAppendixFieldCatalog(value: unknown, defaults?: unknown) {
     const inputCatalog = this.ensureRecord(value);
     const defaultCatalog = this.ensureRecord(defaults);
@@ -991,6 +1018,7 @@ export class SettingsPolicyService {
         continue;
       }
       const type = this.normalizeHrAppendixFieldType(merged.type, this.normalizeHrAppendixFieldType(defaultItem.type, 'text'));
+      const options = type === 'select' ? this.normalizeHrAppendixOptions(merged.options) : [];
       const analyticsEnabled = this.toBool(merged.analyticsEnabled, this.toBool(defaultItem.analyticsEnabled, false));
       const aggregator = this.normalizeHrAppendixAggregator(
         merged.aggregator,
@@ -1026,7 +1054,7 @@ export class SettingsPolicyService {
         label: this.cleanString(merged.label) || key,
         description: this.cleanString(merged.description),
         type,
-        options: this.toStringArray(merged.options),
+        options,
         validation: normalizedValidation,
         analyticsEnabled,
         aggregator: analyticsEnabled ? aggregator : 'none',
@@ -1056,9 +1084,6 @@ export class SettingsPolicyService {
       }
 
       if (!fieldKey) {
-        continue;
-      }
-      if (!fieldCatalog[fieldKey] && !fieldKey.startsWith(`${code.toLowerCase()}_`)) {
         continue;
       }
       if (seen.has(fieldKey)) {
@@ -1319,6 +1344,30 @@ export class SettingsPolicyService {
       };
     }
 
+    if (domain === 'sales_crm_policies') {
+      const sales = this.ensureRecord(merged);
+      const orderSettings = this.ensureRecord(sales.orderSettings);
+      const customerTaxonomy = this.ensureRecord(sales.customerTaxonomy);
+      const tagRegistry = this.ensureRecord(sales.tagRegistry);
+      return {
+        ...sales,
+        orderSettings: {
+          allowIncreaseWithoutApproval: this.toBool(orderSettings.allowIncreaseWithoutApproval, true),
+          requireApprovalForDecrease: this.toBool(orderSettings.requireApprovalForDecrease, true),
+          approverId: this.cleanString(orderSettings.approverId)
+        },
+        customerTaxonomy: {
+          stages: this.normalizeSalesTaxonomyValues(customerTaxonomy.stages),
+          sources: this.normalizeSalesTaxonomyValues(customerTaxonomy.sources)
+        },
+        tagRegistry: {
+          customerTags: this.normalizeSalesTagRegistryValues(tagRegistry.customerTags),
+          interactionTags: this.normalizeSalesTagRegistryValues(tagRegistry.interactionTags),
+          interactionResultTags: this.normalizeSalesTagRegistryValues(tagRegistry.interactionResultTags)
+        }
+      };
+    }
+
     if (domain === 'hr_policies') {
       const hr = this.ensureRecord(merged);
       const leave = this.ensureRecord(hr.leave);
@@ -1371,12 +1420,12 @@ export class SettingsPolicyService {
       return {
         ...security,
         sessionTimeoutMinutes: this.toInt(security.sessionTimeoutMinutes, 480, 5, 1440),
-        superAdminIds: this.toStringArray(security.superAdminIds),
+        superAdminIds: this.normalizeUserIdList(security.superAdminIds),
         permissionPolicy: {
           enabled: this.toBool(permissionPolicy.enabled, false),
           conflictPolicy,
-          superAdminIds: this.toStringArray(permissionPolicy.superAdminIds),
-          superAdminEmails: this.toStringArray(permissionPolicy.superAdminEmails).map((item) => item.toLowerCase())
+          superAdminIds: this.normalizeUserIdList(permissionPolicy.superAdminIds),
+          superAdminEmails: this.normalizeEmailList(permissionPolicy.superAdminEmails)
         },
         passwordPolicy: {
           ...passwordPolicy,
@@ -1504,6 +1553,18 @@ export class SettingsPolicyService {
       if (conflictPolicy && conflictPolicy !== 'DENY_OVERRIDES' && conflictPolicy !== 'ALLOW_OVERRIDES') {
         errors.push('permissionPolicy.conflictPolicy chỉ nhận DENY_OVERRIDES hoặc ALLOW_OVERRIDES.');
       }
+      const invalidLegacySuperAdminIds = this.collectInvalidUserIds(value.superAdminIds);
+      if (invalidLegacySuperAdminIds.length > 0) {
+        errors.push(`superAdminIds chứa ID không hợp lệ: ${invalidLegacySuperAdminIds.join(', ')}.`);
+      }
+      const invalidPolicySuperAdminIds = this.collectInvalidUserIds(permissionPolicy.superAdminIds);
+      if (invalidPolicySuperAdminIds.length > 0) {
+        errors.push(`permissionPolicy.superAdminIds chứa ID không hợp lệ: ${invalidPolicySuperAdminIds.join(', ')}.`);
+      }
+      const invalidPolicySuperAdminEmails = this.collectInvalidEmails(permissionPolicy.superAdminEmails);
+      if (invalidPolicySuperAdminEmails.length > 0) {
+        errors.push(`permissionPolicy.superAdminEmails chứa email không hợp lệ: ${invalidPolicySuperAdminEmails.join(', ')}.`);
+      }
       const password = this.ensureRecord(value.passwordPolicy);
       if (this.toInt(password.minLength, 8, 6, 64) < 6) {
         errors.push('passwordPolicy.minLength phải >= 6.');
@@ -1580,8 +1641,17 @@ export class SettingsPolicyService {
       if (!Array.isArray(postingPeriods.lockedPeriods)) {
         warnings.push('postingPeriods.lockedPeriods nên là mảng.');
       }
-      if (periods.length !== this.toStringArray(postingPeriods.lockedPeriods).length) {
-        errors.push('Có kỳ khóa không đúng định dạng YYYY-MM.');
+      const invalidPeriods = this.collectInvalidLockedPeriods(postingPeriods.lockedPeriods);
+      if (invalidPeriods.length > 0) {
+        errors.push(`postingPeriods.lockedPeriods có kỳ không đúng định dạng YYYY-MM: ${invalidPeriods.join(', ')}.`);
+      }
+      const rawPeriods = this.toStringArray(postingPeriods.lockedPeriods).map((item) => this.normalizePeriodToken(item));
+      const dedupedPeriodCount = new Set(rawPeriods).size;
+      if (rawPeriods.length > dedupedPeriodCount) {
+        warnings.push('postingPeriods.lockedPeriods có giá trị trùng lặp; hệ thống sẽ tự gộp.');
+      }
+      if (Array.isArray(postingPeriods.lockedPeriods) && periods.length === 0 && rawPeriods.length > 0) {
+        warnings.push('postingPeriods.lockedPeriods hiện chưa có kỳ hợp lệ sau chuẩn hóa.');
       }
     }
 
@@ -1592,6 +1662,21 @@ export class SettingsPolicyService {
       }
       if (typeof orderSettings.requireApprovalForDecrease !== 'boolean') {
         errors.push('orderSettings.requireApprovalForDecrease phải là boolean.');
+      }
+
+      const tagRegistry = this.ensureRecord(value.tagRegistry);
+      const customerTags = this.normalizeSalesTagRegistryValues(tagRegistry.customerTags);
+      const interactionTags = this.normalizeSalesTagRegistryValues(tagRegistry.interactionTags);
+      const interactionResultTags = this.normalizeSalesTagRegistryValues(tagRegistry.interactionResultTags);
+
+      if (customerTags.length === 0) {
+        warnings.push('sales_crm_policies.tagRegistry.customerTags đang rỗng.');
+      }
+      if (interactionTags.length === 0) {
+        warnings.push('sales_crm_policies.tagRegistry.interactionTags đang rỗng.');
+      }
+      if (interactionResultTags.length === 0) {
+        warnings.push('sales_crm_policies.tagRegistry.interactionResultTags đang rỗng.');
       }
     }
 
@@ -1620,6 +1705,11 @@ export class SettingsPolicyService {
         if (aggregator && !(HR_APPENDIX_AGGREGATORS as readonly string[]).includes(aggregator)) {
           errors.push(`appendixFieldCatalog.${fieldKeyRaw}.aggregator không hợp lệ.`);
         }
+
+        const options = this.normalizeHrAppendixOptions(field.options);
+        if (type === 'select' && options.length === 0) {
+          warnings.push(`appendixFieldCatalog.${fieldKeyRaw}.options đang rỗng cho field type=select.`);
+        }
       }
 
       const appendixTemplates = this.ensureRecord(value.appendixTemplates);
@@ -1644,15 +1734,26 @@ export class SettingsPolicyService {
         if (fieldRows.length === 0) {
           warnings.push(`appendixTemplates.${codeRaw}.fields đang rỗng.`);
         }
+        const seenTemplateFieldKeys = new Set<string>();
         for (let index = 0; index < fieldRows.length; index += 1) {
           const row = fieldRows[index];
-          const fieldKey = typeof row === 'string'
-            ? this.cleanString(row)
-            : this.cleanString(this.ensureRecord(row).fieldKey ?? this.ensureRecord(row).key);
+          const rawFieldKey = typeof row === 'string'
+            ? row
+            : this.ensureRecord(row).fieldKey ?? this.ensureRecord(row).key ?? this.ensureRecord(row).fieldId;
+          const resolvedFieldKey = this.resolveFieldKeyFromCatalog(rawFieldKey, appendixFieldCatalog);
+          const fieldKey = resolvedFieldKey || this.cleanString(rawFieldKey);
           if (!fieldKey) {
             errors.push(`appendixTemplates.${codeRaw}.fields.${index}.fieldKey là bắt buộc.`);
             continue;
           }
+
+          const dedupeKey = fieldKey.toLowerCase();
+          if (seenTemplateFieldKeys.has(dedupeKey)) {
+            warnings.push(`appendixTemplates.${codeRaw}.fields có field trùng lặp: ${fieldKey}.`);
+            continue;
+          }
+          seenTemplateFieldKeys.add(dedupeKey);
+
           const existsInCatalog = Boolean(appendixFieldCatalog[fieldKey]);
           if (!existsInCatalog && !fieldKey.toLowerCase().startsWith(`${code.toLowerCase()}_`)) {
             errors.push(`appendixTemplates.${codeRaw}.fields.${index}.fieldKey (${fieldKey}) không tồn tại trong appendixFieldCatalog hoặc không đúng namespace ${code}_*.`);
@@ -1865,18 +1966,22 @@ export class SettingsPolicyService {
     }
 
     return input
-      .map((item) => this.cleanString(item))
-      .filter((period) => /^\d{4}-(0[1-9]|1[0-2])$/.test(period))
+      .map((item) => this.normalizePeriodToken(this.cleanString(item)))
+      .filter((period) => SETTINGS_FINANCE_PERIOD_PATTERN.test(period))
       .filter((period, index, arr) => arr.indexOf(period) === index)
       .sort();
   }
 
   private normalizePeriod(rawPeriod: string) {
-    const period = this.cleanString(rawPeriod).replace('/', '-');
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    const period = this.normalizePeriodToken(rawPeriod);
+    if (!SETTINGS_FINANCE_PERIOD_PATTERN.test(period)) {
       throw new BadRequestException(`Kỳ không hợp lệ: ${rawPeriod}. Định dạng đúng: YYYY-MM.`);
     }
     return period;
+  }
+
+  private normalizePeriodToken(rawPeriod: unknown) {
+    return this.cleanString(rawPeriod).replace('/', '-');
   }
 
   private ensureRecord(value: unknown): Record<string, unknown> {
@@ -1944,6 +2049,229 @@ export class SettingsPolicyService {
       return [];
     }
     return value.map((item) => this.cleanString(item)).filter(Boolean);
+  }
+
+  private normalizeUserIdList(value: unknown) {
+    const result: string[] = [];
+    for (const item of this.toStringArray(value)) {
+      if (!result.includes(item)) {
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  private normalizeEmailList(value: unknown) {
+    const result: string[] = [];
+    for (const item of this.toStringArray(value).map((entry) => entry.toLowerCase())) {
+      if (!result.includes(item)) {
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  private collectInvalidUserIds(value: unknown) {
+    return this.normalizeUserIdList(value).filter((item) => !SETTINGS_USER_ID_PATTERN.test(item));
+  }
+
+  private collectInvalidEmails(value: unknown) {
+    return this.normalizeEmailList(value).filter((item) => !SETTINGS_EMAIL_PATTERN.test(item));
+  }
+
+  private collectInvalidLockedPeriods(value: unknown) {
+    return this.toStringArray(value)
+      .map((item) => this.normalizePeriodToken(item))
+      .filter((item) => !SETTINGS_FINANCE_PERIOD_PATTERN.test(item));
+  }
+
+  private normalizeSalesTaxonomyValues(value: unknown) {
+    return Array.from(
+      new Set(
+        this.toStringArray(value)
+          .map((item) => this.cleanString(item))
+          .filter(Boolean)
+      )
+    );
+  }
+
+  private normalizeSalesTagRegistryValues(value: unknown) {
+    return Array.from(
+      new Set(
+        this.toStringArray(value)
+          .map((item) => this.cleanString(item).toLowerCase())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  private async assertSalesTaxonomyRemovalAllowed(
+    currentValueRaw: Record<string, unknown>,
+    nextValueRaw: Record<string, unknown>
+  ) {
+    const currentTaxonomy = this.ensureRecord(currentValueRaw.customerTaxonomy);
+    const nextTaxonomy = this.ensureRecord(nextValueRaw.customerTaxonomy);
+    const currentTagRegistry = this.ensureRecord(currentValueRaw.tagRegistry);
+    const nextTagRegistry = this.ensureRecord(nextValueRaw.tagRegistry);
+
+    const currentStages = this.normalizeSalesTaxonomyValues(currentTaxonomy.stages);
+    const nextStages = this.normalizeSalesTaxonomyValues(nextTaxonomy.stages);
+    const removedStages = currentStages.filter((value) => !nextStages.includes(value));
+
+    const currentSources = this.normalizeSalesTaxonomyValues(currentTaxonomy.sources);
+    const nextSources = this.normalizeSalesTaxonomyValues(nextTaxonomy.sources);
+    const removedSources = currentSources.filter((value) => !nextSources.includes(value));
+
+    const currentCustomerTags = this.normalizeSalesTagRegistryValues(currentTagRegistry.customerTags);
+    const nextCustomerTags = this.normalizeSalesTagRegistryValues(nextTagRegistry.customerTags);
+    const removedCustomerTags = currentCustomerTags.filter((value) => !nextCustomerTags.includes(value));
+
+    const currentInteractionTags = this.normalizeSalesTagRegistryValues(currentTagRegistry.interactionTags);
+    const nextInteractionTags = this.normalizeSalesTagRegistryValues(nextTagRegistry.interactionTags);
+    const removedInteractionTags = currentInteractionTags.filter((value) => !nextInteractionTags.includes(value));
+
+    const currentInteractionResultTags = this.normalizeSalesTagRegistryValues(currentTagRegistry.interactionResultTags);
+    const nextInteractionResultTags = this.normalizeSalesTagRegistryValues(nextTagRegistry.interactionResultTags);
+    const removedInteractionResultTags = currentInteractionResultTags.filter((value) => !nextInteractionResultTags.includes(value));
+
+    if (
+      removedStages.length === 0
+      && removedSources.length === 0
+      && removedCustomerTags.length === 0
+      && removedInteractionTags.length === 0
+      && removedInteractionResultTags.length === 0
+    ) {
+      return;
+    }
+
+    const blockedMessages: string[] = [];
+
+    if (removedStages.length > 0) {
+      const stageUsageRows = await this.prisma.client.customer.groupBy({
+        by: ['customerStage'],
+        where: {
+          customerStage: {
+            in: removedStages
+          }
+        },
+        _count: {
+          _all: true
+        }
+      });
+
+      const usedStages = stageUsageRows
+        .map((row) => ({
+          value: this.cleanString(row.customerStage),
+          count: Number(row._count?._all ?? 0)
+        }))
+        .filter((row) => row.value && row.count > 0);
+
+      if (usedStages.length > 0) {
+        blockedMessages.push(`stages: ${usedStages.map((row) => `${row.value}(${row.count})`).join(', ')}`);
+      }
+    }
+
+    if (removedSources.length > 0) {
+      const sourceUsageRows = await this.prisma.client.customer.groupBy({
+        by: ['source'],
+        where: {
+          source: {
+            in: removedSources
+          }
+        },
+        _count: {
+          _all: true
+        }
+      });
+
+      const usedSources = sourceUsageRows
+        .map((row) => ({
+          value: this.cleanString(row.source),
+          count: Number(row._count?._all ?? 0)
+        }))
+        .filter((row) => row.value && row.count > 0);
+
+      if (usedSources.length > 0) {
+        blockedMessages.push(`sources: ${usedSources.map((row) => `${row.value}(${row.count})`).join(', ')}`);
+      }
+    }
+
+    if (removedCustomerTags.length > 0) {
+      const usedCustomerTags: Array<{ value: string; count: number }> = [];
+      for (const tag of removedCustomerTags) {
+        const usageCount = await this.prisma.client.customer.count({
+          where: {
+            tags: {
+              has: tag
+            }
+          }
+        });
+        if (usageCount > 0) {
+          usedCustomerTags.push({ value: tag, count: usageCount });
+        }
+      }
+      if (usedCustomerTags.length > 0) {
+        blockedMessages.push(`customerTags: ${usedCustomerTags.map((row) => `${row.value}(${row.count})`).join(', ')}`);
+      }
+    }
+
+    if (removedInteractionTags.length > 0) {
+      const usedInteractionTags: Array<{ value: string; count: number }> = [];
+      for (const tag of removedInteractionTags) {
+        const usageCount = await this.prisma.client.customer.count({
+          where: {
+            tags: {
+              has: tag
+            }
+          }
+        });
+        if (usageCount > 0) {
+          usedInteractionTags.push({ value: tag, count: usageCount });
+        }
+      }
+      if (usedInteractionTags.length > 0) {
+        blockedMessages.push(`interactionTags: ${usedInteractionTags.map((row) => `${row.value}(${row.count})`).join(', ')}`);
+      }
+    }
+
+    if (removedInteractionResultTags.length > 0) {
+      const usedResultTags: Array<{ value: string; interactionCount: number; customerTagCount: number }> = [];
+      for (const tag of removedInteractionResultTags) {
+        const [interactionCount, customerTagCount] = await Promise.all([
+          this.prisma.client.customerInteraction.count({
+            where: {
+              resultTag: tag
+            }
+          }),
+          this.prisma.client.customer.count({
+            where: {
+              tags: {
+                has: tag
+              }
+            }
+          })
+        ]);
+
+        if (interactionCount > 0 || customerTagCount > 0) {
+          usedResultTags.push({
+            value: tag,
+            interactionCount,
+            customerTagCount
+          });
+        }
+      }
+      if (usedResultTags.length > 0) {
+        blockedMessages.push(
+          `interactionResultTags: ${usedResultTags.map((row) => `${row.value}(interaction:${row.interactionCount}, customerTag:${row.customerTagCount})`).join(', ')}`
+        );
+      }
+    }
+
+    if (blockedMessages.length > 0) {
+      throw new BadRequestException(
+        `Không thể xóa taxonomy/tag đang được sử dụng (${blockedMessages.join(' | ')}).`
+      );
+    }
   }
 
   private normalizeEnabledModules(

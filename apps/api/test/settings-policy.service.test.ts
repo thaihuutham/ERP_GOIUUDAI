@@ -42,6 +42,9 @@ function makePrismaMock() {
   return {
     getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
     client: {
+      customer: {
+        groupBy: vi.fn(async () => [])
+      },
       setting: {
         findFirst: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
           const list = findByWhere(args?.where);
@@ -227,6 +230,66 @@ describe('SettingsPolicyService', () => {
     expect(createdRow).toBeUndefined();
   });
 
+  it('normalizes sales taxonomy values with trim + dedupe without forcing uppercase', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('sales_crm_policies', {
+      customerTaxonomy: {
+        stages: ['moi', 'moi', 'dang_cham_soc'],
+        sources: ['online', 'online', 'referral']
+      }
+    }, {
+      reason: 'normalize sales taxonomy'
+    });
+
+    const sales = result.data as Record<string, unknown>;
+    const taxonomy = (sales.customerTaxonomy ?? {}) as Record<string, unknown>;
+
+    expect(taxonomy.stages).toEqual(['moi', 'dang_cham_soc']);
+    expect(taxonomy.sources).toEqual(['online', 'referral']);
+  });
+
+  it('blocks removing in-use sales taxonomy values via direct domain update', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    await service.updateDomain('sales_crm_policies', {
+      customerTaxonomy: {
+        stages: ['MOI', 'DANG_CHAM_SOC'],
+        sources: ['ONLINE', 'REFERRAL']
+      }
+    }, {
+      reason: 'seed taxonomy values'
+    });
+
+    prisma.client.customer.groupBy.mockImplementation(async (args: { by?: string[] }) => {
+      if (Array.isArray(args.by) && args.by.includes('customerStage')) {
+        return [
+          { customerStage: 'MOI', _count: { _all: 4 } }
+        ];
+      }
+      return [];
+    });
+
+    await expect(
+      service.updateDomain('sales_crm_policies', {
+        customerTaxonomy: {
+          stages: ['DANG_CHAM_SOC'],
+          sources: ['ONLINE', 'REFERRAL']
+        }
+      }, {
+        reason: 'remove in-use stage'
+      })
+    ).rejects.toThrow('Không thể xóa taxonomy/tag đang được sử dụng');
+  });
+
   it('normalizes org_profile.enabledModules to valid runtime modules only', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();
@@ -314,6 +377,122 @@ describe('SettingsPolicyService', () => {
     expect(roleScopeDefaults.MANAGER).toBe('department');
     expect(roleScopeDefaults.STAFF).toBe('self');
     expect(assistantPolicy.allowedModules).toEqual(['sales', 'finance']);
+  });
+
+  it('normalizes managed lists for access_security and finance_controls', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const accessResult = await service.updateDomain('access_security', {
+      superAdminIds: ['admin_01', 'admin_01', 'OPS.ADMIN'],
+      permissionPolicy: {
+        superAdminIds: ['ops_admin', 'ops_admin'],
+        superAdminEmails: ['ADMIN@ERP.VN', 'admin@erp.vn', 'ops@erp.vn']
+      }
+    }, {
+      reason: 'normalize managed security lists'
+    });
+
+    const access = accessResult.data as Record<string, unknown>;
+    const permissionPolicy = (access.permissionPolicy ?? {}) as Record<string, unknown>;
+    expect(access.superAdminIds).toEqual(['admin_01', 'OPS.ADMIN']);
+    expect(permissionPolicy.superAdminIds).toEqual(['ops_admin']);
+    expect(permissionPolicy.superAdminEmails).toEqual(['admin@erp.vn', 'ops@erp.vn']);
+
+    const financeResult = await service.updateDomain('finance_controls', {
+      postingPeriods: {
+        lockedPeriods: ['2026-02', '2026/01', '2026-02', '2026-03']
+      }
+    }, {
+      reason: 'normalize managed locked periods'
+    });
+
+    const finance = financeResult.data as Record<string, unknown>;
+    const postingPeriods = (finance.postingPeriods ?? {}) as Record<string, unknown>;
+    expect(postingPeriods.lockedPeriods).toEqual(['2026-01', '2026-02', '2026-03']);
+  });
+
+  it('rejects invalid super admin emails in access_security permissionPolicy', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    await expect(
+      service.updateDomain('access_security', {
+        permissionPolicy: {
+          superAdminEmails: ['invalid-email']
+        }
+      }, {
+        reason: 'invalid super admin email'
+      })
+    ).rejects.toThrow('permissionPolicy.superAdminEmails chứa email không hợp lệ');
+  });
+
+  it('normalizes hr appendix options and template field list from managed-list payload', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('hr_policies', {
+      appendixFieldCatalog: {
+        custom_1: {
+          key: 'PL05_customerFeedback',
+          label: 'Phan hoi khach hang',
+          type: 'select',
+          options: [' Rat tot ', 'RAT TOT', 'Can cai thien']
+        }
+      },
+      appendixTemplates: {
+        PL05: {
+          name: 'PL05 test',
+          fields: ['summary', 'Ket qua', 'pl05_customerfeedback', 'summary']
+        }
+      }
+    }, {
+      reason: 'normalize hr appendix managed list payload'
+    });
+
+    const hr = result.data as Record<string, unknown>;
+    const fieldCatalog = (hr.appendixFieldCatalog ?? {}) as Record<string, unknown>;
+    const customField = (fieldCatalog.pl05_customerfeedback ?? {}) as Record<string, unknown>;
+    expect(customField.options).toEqual(['Rat tot', 'Can cai thien']);
+
+    const templates = (hr.appendixTemplates ?? {}) as Record<string, unknown>;
+    const pl05 = (templates.PL05 ?? {}) as Record<string, unknown>;
+    const fieldRows = Array.isArray(pl05.fields) ? pl05.fields : [];
+    const fieldKeys = fieldRows.map((row) => String((row as Record<string, unknown>).fieldKey ?? ''));
+    expect(fieldKeys).toEqual(['summary', 'result', 'pl05_customerfeedback']);
+
+    const legacyCatalog = (hr.appendixCatalog ?? {}) as Record<string, unknown>;
+    const legacyPl05 = (legacyCatalog.PL05 ?? {}) as Record<string, unknown>;
+    expect(legacyPl05.fields).toEqual(['summary', 'result', 'pl05_customerfeedback']);
+  });
+
+  it('rejects invalid hr appendix template fieldKey outside catalog and namespace', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    await expect(
+      service.updateDomain('hr_policies', {
+        appendixTemplates: {
+          PL01: {
+            fields: ['invalid_field']
+          }
+        }
+      }, {
+        reason: 'invalid hr template field'
+      })
+    ).rejects.toThrow('appendixTemplates.PL01.fields.0.fieldKey');
   });
 
   it('creates audit entries and can restore snapshot by domain', async () => {

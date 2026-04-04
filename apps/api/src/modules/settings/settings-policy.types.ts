@@ -186,6 +186,11 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     customerTaxonomy: {
       stages: ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'],
       sources: ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL']
+    },
+    tagRegistry: {
+      customerTags: ['vip', 'khach_moi', 'da_mua'],
+      interactionTags: ['quan_tam', 'can_cham_soc', 'da_dat_lich'],
+      interactionResultTags: ['quan_tam', 'da_mua', 'khong_phan_hoi']
     }
   },
   catalog_scm_policies: {

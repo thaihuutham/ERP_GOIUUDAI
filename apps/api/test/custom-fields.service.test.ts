@@ -175,6 +175,46 @@ describe('CustomFieldsService', () => {
     );
   });
 
+  it('normalizes structured option rows and keeps key/label/order in draft', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const service = new CustomFieldsService(prisma as any, cls as any);
+
+    prisma.client.customFieldDefinition.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    prisma.client.customFieldSchemaVersion.findFirst.mockResolvedValueOnce(null);
+
+    await service.saveDraft('customer', {
+      definitions: [
+        {
+          fieldKey: 'crm__segment',
+          fieldType: 'SELECT',
+          label: 'Segment',
+          options: [
+            { key: 'vip', label: 'VIP', order: 2 },
+            { key: 'new-customer', label: 'Khách mới', order: 1 },
+            { value: 'vip', label: 'VIP duplicate', order: 5 }
+          ],
+          filterable: true
+        }
+      ]
+    });
+
+    expect(prisma.client.customFieldDefinition.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          fieldKey: 'crm__segment',
+          optionsJson: [
+            { key: 'new_customer', label: 'Khách mới', order: 1 },
+            { key: 'vip', label: 'VIP', order: 2 }
+          ]
+        })
+      })
+    );
+  });
+
   it('resolves entity ids by cf.* query with intersection', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();
@@ -263,6 +303,55 @@ describe('CustomFieldsService', () => {
         unifiedContract: true
       })
     ).rejects.toThrow("Giá trị 'C' không nằm trong options của 'crm__segment'.");
+  });
+
+  it('accepts select value by label and persists canonical option key', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const service = new CustomFieldsService(prisma as any, cls as any);
+
+    prisma.client.customFieldSchemaVersion.findFirst.mockResolvedValue({
+      id: 'schema_1',
+      entityType: CustomFieldEntityType.CUSTOMER,
+      version: 1,
+      definitionSnapshotJson: {
+        definitions: [
+          {
+            fieldKey: 'crm__segment',
+            fieldType: CustomFieldType.SELECT,
+            options: [
+              { key: 'vip', label: 'VIP', order: 1 },
+              { key: 'new_customer', label: 'Khách mới', order: 2 }
+            ],
+            filterable: true,
+            searchable: false,
+            reportable: true
+          }
+        ]
+      }
+    });
+    prisma.client.customer.findFirst.mockResolvedValue({ id: 'cust_1' });
+    prisma.client.customFieldValue.findMany.mockResolvedValue([]);
+    prisma.client.customFieldValue.upsert.mockResolvedValue(undefined);
+    prisma.client.customer.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.applyEntityMutation(CustomFieldEntityType.CUSTOMER, 'cust_1', {
+      base: {},
+      customFields: { crm__segment: 'Khách mới' },
+      schemaVersion: null,
+      unifiedContract: true
+    });
+
+    expect(prisma.client.customFieldValue.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          valueText: 'new_customer'
+        }),
+        create: expect.objectContaining({
+          valueText: 'new_customer'
+        })
+      })
+    );
   });
 
   it('persists formula field automatically when applying mutation', async () => {
