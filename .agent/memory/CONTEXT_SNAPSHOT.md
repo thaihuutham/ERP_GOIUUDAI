@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-04 21:05 +07
+- Time: 2026-04-04 21:45 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-04_2105_codex.md`
+- Session Log: `.agent/sessions/2026-04-04_2145_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,35 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-04 21:45 (Position detail mở trang riêng)
+- User phản hồi UX: click tên vị trí trong `Ma trận quyền hạn` nhưng vẫn phải cuộn màn hình dài để xem chi tiết.
+- Đã chuyển hành vi sang route chi tiết riêng:
+  - `/modules/settings/positions/[positionId]`.
+- Trang detail mới:
+  - `Chi tiết quyền`: matrix module/action + lưu rule theo vị trí.
+  - `Danh sách nhân viên`: danh sách nhân sự của vị trí.
+  - nút quay lại Settings Center.
+- `settings-center`:
+  - cột tên vị trí đổi sang link điều hướng,
+  - bỏ block chi tiết inline để tránh thao tác cuộn.
+- Files chính:
+  - `apps/web/app/modules/settings/positions/[positionId]/page.tsx`
+  - `apps/web/components/settings-position-detail-page.tsx`
+  - `apps/web/components/settings-center.tsx`
+  - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+- ADR mới:
+  - `docs/decisions/ADR-043-POSITION-DETAIL-DEDICATED-PAGE-NAVIGATION.md`
+- Verify gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`6 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4300 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`9 passed`)
 
 ## Update 2026-04-04 21:05 (Access Security UX simplification + role-first flow)
 - User yêu cầu redesign trang `Bảo mật truy cập` vì quá dài, khó thao tác/quan sát; đồng thời đơn giản luồng dùng theo vai trò `ADMIN / MANAGER / STAFF`.

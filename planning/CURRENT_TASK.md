@@ -2,9 +2,37 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-04 21:05 +07
+- Last updated: 2026-04-04 21:45 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-04 21:45 +07 (Position detail dedicated page)
+- User phản hồi UX: click tên vị trí vẫn phải cuộn dài mới xem được chi tiết, yêu cầu mở tab/trang mới cho vị trí đã chọn.
+- Đã triển khai:
+  - tạo trang chi tiết vị trí riêng:
+    - route: `/modules/settings/positions/[positionId]`
+    - component: `apps/web/components/settings-position-detail-page.tsx`
+    - gồm 2 tab:
+      - `Chi tiết quyền`
+      - `Danh sách nhân viên`.
+  - cập nhật `settings-center`:
+    - click tên vị trí trong bảng chuyển sang trang chi tiết riêng (link điều hướng),
+    - bỏ khối chi tiết inline trong màn hình dài,
+    - giữ khối override theo user và CRUD vị trí tại trung tâm.
+  - e2e bổ sung case:
+    - xác nhận click tên vị trí mở đúng URL chi tiết mới.
+- ADR mới:
+  - `docs/decisions/ADR-043-POSITION-DETAIL-DEDICATED-PAGE-NAVIGATION.md`
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`6 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4300 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`9 passed`)
 
 ## Session Update 2026-04-04 21:05 +07 (Access Security UX simplification + role-first flow)
 - User yêu cầu:

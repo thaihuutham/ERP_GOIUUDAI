@@ -209,15 +209,6 @@ type PositionSummaryItem = {
   permissionRuleCount: number;
 };
 
-type PositionEmployeeItem = {
-  id: string;
-  code: string;
-  fullName: string;
-  email: string;
-  department: string;
-  status: string;
-};
-
 const DOMAIN_LABEL: Record<DomainKey, string> = {
   org_profile: 'Tổ chức',
   locale_calendar: 'Ngôn ngữ & lịch',
@@ -1389,21 +1380,6 @@ function normalizePositionRows(payload: Record<string, unknown>) {
     .filter((item) => item.id && item.title);
 }
 
-function normalizePositionEmployees(payload: Record<string, unknown>) {
-  return normalizeListPayload(payload)
-    .map((item) => {
-      return {
-        id: String(item.id ?? '').trim(),
-        code: String(item.code ?? '').trim(),
-        fullName: String(item.fullName ?? '').trim(),
-        email: String(item.email ?? '').trim(),
-        department: String(item.department ?? '').trim(),
-        status: String(item.status ?? '').trim().toUpperCase() || 'ACTIVE'
-      } as PositionEmployeeItem;
-    })
-    .filter((item) => item.id && item.fullName);
-}
-
 function createEmptyPermissionMatrix(): PermissionMatrix {
   const matrix: PermissionMatrix = {};
   for (const moduleKey of PERMISSION_MODULE_KEYS) {
@@ -1720,8 +1696,6 @@ export function SettingsCenter() {
   const [orgItems, setOrgItems] = useState<Record<string, unknown>[]>([]);
   const [orgTree, setOrgTree] = useState<Record<string, unknown>[]>([]);
   const [positions, setPositions] = useState<PositionSummaryItem[]>([]);
-  const [selectedPositionId, setSelectedPositionId] = useState('');
-  const [positionDetailTab, setPositionDetailTab] = useState<'permissions' | 'employees'>('permissions');
   const [positionSearch, setPositionSearch] = useState('');
   const [showPositionForm, setShowPositionForm] = useState(false);
   const [positionFormMode, setPositionFormMode] = useState<'create' | 'edit'>('create');
@@ -1729,13 +1703,10 @@ export function SettingsCenter() {
     id: '',
     title: '',
     code: '',
-    level: '',
-    status: 'ACTIVE'
-  });
-  const [positionEmployees, setPositionEmployees] = useState<PositionEmployeeItem[]>([]);
-  const [positionEmployeesBusy, setPositionEmployeesBusy] = useState(false);
+      level: '',
+      status: 'ACTIVE'
+    });
   const [selectedOverrideUserId, setSelectedOverrideUserId] = useState('');
-  const [positionMatrix, setPositionMatrix] = useState<PermissionMatrix>(() => createEmptyPermissionMatrix());
   const [overrideMatrix, setOverrideMatrix] = useState<PermissionMatrix>(() => createEmptyPermissionMatrix());
   const [accountForm, setAccountForm] = useState({
     fullName: '',
@@ -1819,10 +1790,6 @@ export function SettingsCenter() {
     [selectedDomain, validationErrors]
   );
   const canManagePositionCatalog = normalizedRole === 'ADMIN';
-  const selectedPosition = useMemo(
-    () => positions.find((item) => item.id === selectedPositionId) ?? null,
-    [positions, selectedPositionId]
-  );
   const filteredPositions = useMemo(() => {
     const keyword = positionSearch.trim().toLowerCase();
     if (!keyword) {
@@ -1957,12 +1924,6 @@ export function SettingsCenter() {
     setOrgItems(orgRows);
     setOrgTree(orgRoots);
     setPositions(positionItems);
-    setSelectedPositionId((current) => {
-      if (current && positionItems.some((item) => item.id === current)) {
-        return current;
-      }
-      return positionItems[0]?.id ?? '';
-    });
     setSelectedOverrideUserId((current) => {
       if (current && iamItems.some((item) => String(item.id ?? '').trim() === current)) {
         return current;
@@ -2033,69 +1994,6 @@ export function SettingsCenter() {
     const visibleIdSet = new Set(iamUsers.slice(0, 40).map((item) => String(item.id ?? '')));
     setSelectedIamUserIds((prev) => prev.filter((id) => visibleIdSet.has(String(id))));
   }, [iamUsers]);
-
-  useEffect(() => {
-    if (!selectedPositionId) {
-      setPositionMatrix(createEmptyPermissionMatrix());
-      return;
-    }
-
-    let mounted = true;
-    const load = async () => {
-      try {
-        const payload = await apiRequest<Record<string, unknown>>(`/settings/permissions/positions/${selectedPositionId}`);
-        const rules = Array.isArray(payload.rules) ? (payload.rules as PermissionRuleRow[]) : [];
-        if (mounted) {
-          setPositionMatrix(mapRulesToMatrix(rules));
-        }
-      } catch {
-        if (mounted) {
-          setPositionMatrix(createEmptyPermissionMatrix());
-        }
-      }
-    };
-
-    void load();
-    return () => {
-      mounted = false;
-    };
-  }, [selectedPositionId]);
-
-  useEffect(() => {
-    if (!selectedPositionId) {
-      setPositionEmployees([]);
-      setPositionEmployeesBusy(false);
-      return;
-    }
-
-    let mounted = true;
-    setPositionEmployeesBusy(true);
-    const load = async () => {
-      try {
-        const payload = await apiRequest<Record<string, unknown>>(`/settings/positions/${selectedPositionId}/employees`, {
-          query: {
-            limit: 300
-          }
-        });
-        if (mounted) {
-          setPositionEmployees(normalizePositionEmployees(payload));
-        }
-      } catch {
-        if (mounted) {
-          setPositionEmployees([]);
-        }
-      } finally {
-        if (mounted) {
-          setPositionEmployeesBusy(false);
-        }
-      }
-    };
-
-    void load();
-    return () => {
-      mounted = false;
-    };
-  }, [selectedPositionId]);
 
   useEffect(() => {
     if (!selectedOverrideUserId) {
@@ -2656,16 +2554,11 @@ export function SettingsCenter() {
           status: positionForm.status
         }
       });
-      const createdOrUpdated = toRecord(payload.position);
-      const nextId = String(createdOrUpdated.id ?? '').trim();
 
       setMessage(positionFormMode === 'create' ? 'Đã thêm vị trí công việc.' : 'Đã cập nhật vị trí công việc.');
       setShowPositionForm(false);
       resetPositionForm();
       await loadEnterpriseData();
-      if (nextId) {
-        setSelectedPositionId(nextId);
-      }
     } catch (positionError) {
       setError(
         toSettingsFriendlyError(
@@ -2691,38 +2584,9 @@ export function SettingsCenter() {
         method: 'DELETE'
       });
       setMessage('Đã xóa vị trí công việc.');
-      if (selectedPositionId === item.id) {
-        setSelectedPositionId('');
-        setPositionDetailTab('permissions');
-      }
       await loadEnterpriseData();
     } catch (deleteError) {
       setError(toSettingsFriendlyError(deleteError, 'Xóa vị trí thất bại.'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSavePositionPermissions = async () => {
-    if (!selectedPositionId) {
-      setError('Vui lòng chọn vị trí cần cấu hình quyền.');
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    try {
-      await apiRequest(`/settings/permissions/positions/${selectedPositionId}`, {
-        method: 'PUT',
-        body: {
-          reason: reasonTemplate,
-          rules: mapMatrixToRules(positionMatrix)
-        }
-      });
-      setMessage('Đã lưu ma trận quyền theo vị trí.');
-      await loadEnterpriseData();
-    } catch (permissionError) {
-      setError(toSettingsFriendlyError(permissionError, 'Lưu ma trận quyền thất bại.'));
     } finally {
       setBusy(false);
     }
@@ -3634,19 +3498,15 @@ export function SettingsCenter() {
                           </tr>
                         ) : (
                           filteredPositions.map((item) => (
-                            <tr key={`position-row-${item.id}`} style={item.id === selectedPositionId ? { background: '#f5fbf7' } : undefined}>
+                            <tr key={`position-row-${item.id}`}>
                               <td>
-                                <button
-                                  type="button"
+                                <Link
+                                  href={`/modules/settings/positions/${item.id}`}
                                   className="btn btn-ghost"
-                                  onClick={() => {
-                                    setSelectedPositionId(item.id);
-                                    setPositionDetailTab('permissions');
-                                  }}
                                   style={{ padding: 0, minHeight: 'unset' }}
                                 >
                                   {item.title}
-                                </button>
+                                </Link>
                               </td>
                               <td>{item.code || '--'}</td>
                               <td>{item.level || '--'}</td>
@@ -3684,130 +3544,17 @@ export function SettingsCenter() {
                 </div>
 
                 <div style={{ border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <strong style={{ fontSize: '0.82rem' }}>
-                      {selectedPosition ? `Chi tiết vị trí: ${selectedPosition.title}` : 'Chi tiết vị trí'}
-                    </strong>
-                    {selectedPosition && (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                        Nhân sự: {selectedPosition.employeeCount.toLocaleString('vi-VN')} • Rules: {selectedPosition.permissionRuleCount.toLocaleString('vi-VN')}
-                      </span>
-                    )}
-                  </div>
-
-                  {!selectedPosition ? (
-                    <p style={{ marginTop: '0.45rem', color: 'var(--muted)', fontSize: '0.82rem' }}>
-                      Chọn một vị trí trong danh sách để mở trang chi tiết quyền và danh sách nhân viên.
-                    </p>
-                  ) : (
-                    <>
-                      <div style={{ marginTop: '0.45rem', display: 'inline-flex', gap: '0.45rem' }}>
-                        <button
-                          type="button"
-                          className={positionDetailTab === 'permissions' ? 'btn btn-primary' : 'btn btn-ghost'}
-                          onClick={() => setPositionDetailTab('permissions')}
-                        >
-                          Chi tiết quyền
-                        </button>
-                        <button
-                          type="button"
-                          className={positionDetailTab === 'employees' ? 'btn btn-primary' : 'btn btn-ghost'}
-                          onClick={() => setPositionDetailTab('employees')}
-                        >
-                          Danh sách nhân viên
-                        </button>
-                      </div>
-
-                      {positionDetailTab === 'permissions' ? (
-                        <>
-                          <p style={{ marginTop: '0.45rem', marginBottom: 0, fontSize: '0.8rem', color: 'var(--muted)' }}>
-                            Engine ưu tiên DENY theo policy. Mỗi ô có thể chọn: Không cấu hình, ALLOW, hoặc DENY.
-                          </p>
-                          <div className="table-wrap" style={{ marginTop: '0.45rem' }}>
-                            <table className="data-table">
-                              <thead>
-                                <tr>
-                                  <th>Module</th>
-                                  {PERMISSION_ACTIONS.map((action) => (
-                                    <th key={`position-action-${action}`}>{action}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {PERMISSION_MODULE_KEYS.map((moduleKey) => (
-                                  <tr key={`position-module-${moduleKey}`}>
-                                    <td>{moduleKey}</td>
-                                    {PERMISSION_ACTIONS.map((action) => (
-                                      <td key={`position-${moduleKey}-${action}`}>
-                                        <select
-                                          value={positionMatrix[moduleKey]?.[action] ?? ''}
-                                          onChange={(event) =>
-                                            updateMatrixCell(setPositionMatrix, moduleKey, action, event.target.value as PermissionEffectValue)
-                                          }
-                                        >
-                                          <option value="">--</option>
-                                          <option value="ALLOW">ALLOW</option>
-                                          <option value="DENY">DENY</option>
-                                        </select>
-                                      </td>
-                                    ))}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            style={{ marginTop: '0.55rem' }}
-                            onClick={handleSavePositionPermissions}
-                            disabled={busy || !selectedPositionId}
-                          >
-                            Lưu quyền theo vị trí
-                          </button>
-                        </>
-                      ) : (
-                        <div className="table-wrap" style={{ marginTop: '0.45rem' }}>
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Mã NV</th>
-                                <th>Họ tên</th>
-                                <th>Email</th>
-                                <th>Bộ phận</th>
-                                <th>Trạng thái</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {positionEmployeesBusy ? (
-                                <tr>
-                                  <td colSpan={5} style={{ color: 'var(--muted)' }}>
-                                    Đang tải danh sách nhân viên...
-                                  </td>
-                                </tr>
-                              ) : positionEmployees.length === 0 ? (
-                                <tr>
-                                  <td colSpan={5} style={{ color: 'var(--muted)' }}>
-                                    Chưa có nhân viên thuộc vị trí này.
-                                  </td>
-                                </tr>
-                              ) : (
-                                positionEmployees.map((employee) => (
-                                  <tr key={`position-employee-${employee.id}`}>
-                                    <td>{employee.code || '--'}</td>
-                                    <td>{employee.fullName}</td>
-                                    <td>{employee.email || '--'}</td>
-                                    <td>{employee.department || '--'}</td>
-                                    <td>{employee.status}</td>
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </>
-                  )}
+                  <strong style={{ fontSize: '0.82rem' }}>Chi tiết vị trí mở trên trang riêng</strong>
+                  <p style={{ marginTop: '0.45rem', color: 'var(--muted)', fontSize: '0.82rem' }}>
+                    Bấm vào tên vị trí để mở trang chi tiết riêng với 2 tab:
+                    {' '}
+                    <strong>Chi tiết quyền</strong>
+                    {' '}
+                    và
+                    {' '}
+                    <strong>Danh sách nhân viên</strong>
+                    . Cách này giúp không cần kéo xuống trong màn hình dài.
+                  </p>
                 </div>
 
                 <div style={{ border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}>
