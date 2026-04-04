@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 23:33 +07
+- Time: 2026-04-04 08:16 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_2333_codex.md`
+- Session Log: `.agent/sessions/2026-04-04_0816_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -66,6 +66,28 @@
   - không còn lỗi lint `.next/types` trong lần chạy mới (đã pass ổn định).
   - hành vi fallback khi thiếu `/settings/layout` vẫn được giữ (đã có e2e check).
   - không phát sinh ADR mới trong session này.
+
+## Update 2026-04-04 08:16 (Phase 3 sidebar grouped navigation)
+- Đã triển khai Phase 3 theo `docs/design/IMPLEMENTATION_PLAN.md`:
+  - thêm config sidebar mới `apps/web/lib/sidebar-config.ts` (`SIDEBAR_GROUPS`).
+  - refactor `apps/web/components/app-shell.tsx` sang render metadata-driven groups.
+  - giữ nguyên RBAC + enabledModules filtering; không đổi contract backend.
+  - HR hiển thị inline submenu (không wrapper expand/collapse), Assistant giữ expand/collapse.
+  - thêm tooltip behavior cho collapsed sidebar + active accent bar ở `apps/web/app/styles/layout.css`.
+  - chỉnh `--sidebar-w-collapsed` thành `64px` ở `apps/web/app/styles/tokens.css`.
+- Test mới:
+  - `apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts` xác thực grouped section và role-based nav cho STAFF/MANAGER/ADMIN.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (sau build để tránh race `.next/types`)
+  - `CI=1 PLAYWRIGHT_PORT=4268 npx playwright test apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`7 passed`)
+- Ghi chú vận hành:
+  - lint web có thể fail TS6053 nếu chạy trước khi `.next/types` được build; sequence ổn định: build -> lint.
 
 ## Update 2026-04-03 23:18 (UI/UX standards uplift with ui-ux-pro-max)
 - Đã áp dụng skill `ui-ux-pro-max` để chuẩn hóa thiết kế Settings Center và các pattern UI cũ dùng chung.

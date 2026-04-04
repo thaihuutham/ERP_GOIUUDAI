@@ -35,6 +35,7 @@ import { HR_SECTION_DEFINITIONS, HR_SECTION_MAP, type HrSectionKey } from '../li
 import { apiRequest } from '../lib/api-client';
 import { getVisibleModuleCards, moduleCards } from '../lib/modules';
 import { canAccessModule, USER_ROLES } from '../lib/rbac';
+import { SIDEBAR_GROUPS, type SidebarNavItemConfig } from '../lib/sidebar-config';
 import { setRuntimeLocale } from '../lib/runtime-format';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { Breadcrumb } from './ui/breadcrumb';
@@ -48,6 +49,8 @@ function isActive(pathname: string, href: string) {
 }
 
 const ICON_MAP: Record<string, any> = {
+  dashboard: LayoutDashboard,
+  conversations: Bot,
   crm: Users,
   sales: ShoppingCart,
   catalog: Package,
@@ -131,7 +134,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [menuCollapsed, setMenuCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [hrExpanded, setHrExpanded] = useState(false);
   const [assistantExpanded, setAssistantExpanded] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
   const {
@@ -176,6 +178,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       getVisibleModuleCards(role).filter((item) => item.key === 'settings' || enabledModuleSet.has(item.key)),
     [role, enabledModuleSet]
   );
+  const visibleModulesByKey = useMemo(
+    () => new Map(visibleModules.map((item) => [item.key, item])),
+    [visibleModules]
+  );
   const showZaloAutomation = useMemo(
     () => canAccessModule(role, 'crm') && enabledModuleSet.has('crm'),
     [role, enabledModuleSet]
@@ -200,12 +206,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     return isActive(pathname, `/modules/${moduleKey}`);
   };
 
-  const handleHrParentClick = () => {
-    setHrExpanded((prev) => !prev);
-    setMobileOpen(false);
-    router.push('/modules/hr');
-  };
-
   const handleAssistantParentClick = () => {
     setAssistantExpanded((prev) => !prev);
     setMobileOpen(false);
@@ -214,25 +214,24 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const renderModuleLink = (item: (typeof visibleModules)[number]) => {
     const Icon = ICON_MAP[item.key] || LayoutDashboard;
+    const tooltip = menuCollapsed ? item.title : undefined;
 
     if (item.key === 'hr') {
       return (
-        <div key={item.key} className={`side-tree ${hrExpanded ? 'side-tree-open' : ''}`}>
-          <button
-            type="button"
+        <div key={item.key} className="side-tree side-tree-static">
+          <Link
+            href="/modules/hr"
             className={`side-link side-link-parent ${isHrPath ? 'active' : ''}`}
-            onClick={handleHrParentClick}
+            onClick={() => setMobileOpen(false)}
+            title={tooltip}
           >
             <span className="side-link-main">
               <Icon size={18} />
               <span className="link-text">{item.title}</span>
             </span>
-            {!menuCollapsed && (
-              <ChevronDown size={14} className={`side-link-caret ${hrExpanded ? 'side-link-caret-open' : ''}`} />
-            )}
-          </button>
+          </Link>
 
-          {!menuCollapsed && hrExpanded && (
+          {!menuCollapsed && (
             <div className="side-submenu">
               {HR_SECTION_DEFINITIONS.map((section) => {
                 const active = pathname === section.href || pathname.startsWith(`${section.href}/`);
@@ -261,6 +260,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             type="button"
             className={`side-link side-link-parent ${isAssistantPath ? 'active' : ''}`}
             onClick={handleAssistantParentClick}
+            title={tooltip}
           >
             <span className="side-link-main">
               <Icon size={18} />
@@ -306,6 +306,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         href={href}
         className={`side-link ${isModuleLinkActive(item.key) ? 'active' : ''}`}
         onClick={() => setMobileOpen(false)}
+        title={tooltip}
       >
         <Icon size={18} />
         <span className="link-text">{item.title}</span>
@@ -314,16 +315,45 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (isHrPath) {
-      setHrExpanded(true);
-    }
-  }, [isHrPath]);
-
-  useEffect(() => {
     if (isAssistantPath) {
       setAssistantExpanded(true);
     }
   }, [isAssistantPath]);
+
+  const shouldRenderSidebarItem = (item: SidebarNavItemConfig) => {
+    if (item.type === 'module') {
+      return visibleModulesByKey.has(item.moduleKey);
+    }
+    if (item.type === 'custom' && item.requiresFlag === 'zaloAutomation') {
+      return showZaloAutomation;
+    }
+    return true;
+  };
+
+  const renderSidebarItem = (item: SidebarNavItemConfig) => {
+    if (item.type === 'module') {
+      const moduleItem = visibleModulesByKey.get(item.moduleKey);
+      if (!moduleItem) return null;
+      return renderModuleLink(moduleItem);
+    }
+
+    const Icon = ICON_MAP[item.iconKey] || LayoutDashboard;
+    const tooltip = menuCollapsed ? item.title : undefined;
+    const active = isActive(pathname, item.href);
+
+    return (
+      <Link
+        key={item.key}
+        href={item.href}
+        className={`side-link ${active ? 'active' : ''}`}
+        onClick={() => setMobileOpen(false)}
+        title={tooltip}
+      >
+        <Icon size={18} />
+        <span className="link-text">{item.title}</span>
+      </Link>
+    );
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -600,65 +630,25 @@ export function AppShell({ children }: { children: ReactNode }) {
         )}
 
         <nav className="side-nav">
-          {/* Dashboard */}
-          <div className="side-nav-group">
-            <Link
-              href="/"
-              className={`side-link ${isActive(pathname, '/') && pathname === '/' ? 'active' : ''}`}
-              onClick={() => setMobileOpen(false)}
-            >
-              <LayoutDashboard size={18} />
-              <span className="link-text">Tổng quan</span>
-            </Link>
-          </div>
+          {SIDEBAR_GROUPS.map((group) => {
+            const items = group.items.filter(shouldRenderSidebarItem);
+            if (items.length === 0) {
+              return null;
+            }
 
-          {/* ─── Kinh doanh ─── */}
-          {!menuCollapsed && <p className="side-section-title">Kinh doanh</p>}
-          <div className="side-nav-group">
-            {visibleModules
-              .filter((m) => ['crm', 'sales', 'catalog'].includes(m.key))
-              .map((item) => renderModuleLink(item))}
-          </div>
+            const groupTitleStyle = group.accentToken ? { color: `var(${group.accentToken})` } : undefined;
 
-          {showZaloAutomation && (
-            <>
-              {!menuCollapsed && <p className="side-section-title side-section-title-accent">Hội thoại</p>}
-              <div className="side-nav-group">
-                <Link
-                  href="/modules/crm/conversations"
-                  className={`side-link ${isActive(pathname, '/modules/crm/conversations') ? 'active' : ''}`}
-                  onClick={() => setMobileOpen(false)}
-                >
-                  <Bot size={18} />
-                  <span className="link-text">Inbox hội thoại</span>
-                </Link>
+            return (
+              <div key={group.key}>
+                {group.title && !menuCollapsed && (
+                  <p className="side-section-title" style={groupTitleStyle}>
+                    {group.title}
+                  </p>
+                )}
+                <div className="side-nav-group">{items.map((item) => renderSidebarItem(item))}</div>
               </div>
-            </>
-          )}
-
-          {/* ─── Nhân sự ─── */}
-          {!menuCollapsed && <p className="side-section-title">Nhân sự</p>}
-          <div className="side-nav-group">
-            {visibleModules
-              .filter((m) => ['hr'].includes(m.key))
-              .map((item) => renderModuleLink(item))}
-          </div>
-
-          {/* ─── Tài chính & Vận hành ─── */}
-          {!menuCollapsed && <p className="side-section-title">Tài chính & Vận hành</p>}
-          <div className="side-nav-group">
-            {visibleModules
-              .filter((m) => ['finance', 'scm', 'assets', 'projects'].includes(m.key))
-              .map((item) => renderModuleLink(item))}
-          </div>
-
-          {/* ─── Hệ thống ─── */}
-          {!menuCollapsed && <p className="side-section-title">Hệ thống</p>}
-          <div className="side-nav-group">
-            {visibleModules
-              .filter((m) => ['workflows', 'reports', 'assistant', 'audit', 'notifications', 'settings'].includes(m.key))
-              .map((item) => renderModuleLink(item))}
-          </div>
+            );
+          })}
         </nav>
 
         <div className="side-footer">

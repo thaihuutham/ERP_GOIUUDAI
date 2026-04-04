@@ -126,7 +126,7 @@
 
   /* ── Sidebar Dimensions ──────────────────────────── */
   --sidebar-w:           220px;
-  --sidebar-w-collapsed: 72px;
+  --sidebar-w-collapsed: 64px;
 
   /* ── Transitions ─────────────────────────────────── */
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);

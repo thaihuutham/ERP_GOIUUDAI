@@ -2,9 +2,37 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-03 23:33 +07
+- Last updated: 2026-04-04 08:16 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-04 08:16 (Settings redesign V2 - Phase 3: grouped sidebar)
+- User yêu cầu thực thi Phase 3.
+- Đã triển khai sidebar grouped navigation theo config trung tâm:
+  - thêm file mới `apps/web/lib/sidebar-config.ts` (`SIDEBAR_GROUPS` theo 5 khối: overview/business/hr/finance/system).
+  - refactor `apps/web/components/app-shell.tsx` để render sidebar theo metadata config thay vì hardcode từng nhóm.
+- Cập nhật hành vi điều hướng:
+  - giữ RBAC + enabled module filters như cũ.
+  - HR chuyển sang hiển thị inline section links (không expand/collapse wrapper ngoài).
+  - Assistant vẫn giữ expand/collapse subtree.
+  - link custom `Inbox hội thoại` vẫn theo flag runtime (`showZaloAutomation`).
+- Cập nhật UI/UX cho sidebar:
+  - `apps/web/app/styles/layout.css`: active accent bar, collapsed tooltip cho icon-only mode.
+  - `apps/web/app/styles/tokens.css`: chuẩn hóa collapsed sidebar width `64px` theo phase spec.
+- Thêm e2e mới:
+  - `apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts`
+  - verify grouping title + role-based nav visibility (STAFF/MANAGER/ADMIN) + collapsed mode title tooltip hook.
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (chạy sau build để tránh race `.next/types`)
+  - `CI=1 PLAYWRIGHT_PORT=4268 npx playwright test apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`7 passed`)
+- Không thay đổi business logic ERP runtime, không đổi contract backend settings.
+- Không phát sinh quyết định kiến trúc mới cần ADR trong session này.
 
 ## Session Update 2026-04-03 23:33 (Phase 2 gate closure + handoff completion)
 - Tiếp tục từ option 2 (backend compatibility + frontend metadata consume) và chốt verify cuối phiên.
