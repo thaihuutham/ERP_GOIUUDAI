@@ -2,9 +2,41 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-04 08:16 +07
+- Last updated: 2026-04-04 09:13 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-04 09:13 (Home dashboard Phase 4 - hybrid polling + widget resilience)
+- User xác nhận triển khai tiếp Phase 4 theo design đã chốt.
+- Đã refactor `HomeDashboard` sang kiến trúc widget độc lập (overview / sales / quick tasks / activity):
+  - `apps/web/components/home-dashboard.tsx`
+  - mỗi widget có lifecycle riêng: `loading | ready | stale | error | disabled`.
+  - giữ pre-check runtime để đảm bảo **không gọi `/reports/overview` khi module `reports` tắt**.
+  - bổ sung polling theo Option A:
+    - overview: 120s
+    - sales insight: 120s
+    - quick tasks: 60s
+    - activity: 45s
+    - tự giảm tần suất khi tab ẩn.
+- Đã thêm hook polling dùng chung:
+  - `apps/web/lib/use-smart-polling.ts`
+- Đã nâng cấp UI/UX dashboard theo chuẩn data-dense + graceful degradation:
+  - `apps/web/app/styles/modules/dashboard.css`
+  - thêm trạng thái widget badge, skeleton, stale/error note, responsive breakpoints, reduced-motion.
+- Đã mở rộng e2e:
+  - `apps/web/e2e/tests/dashboard-reports-availability.spec.ts`
+  - thêm case widget quick tasks lỗi nhưng KPI/reports vẫn hiển thị (partial failure tolerance).
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4272 npx playwright test apps/web/e2e/tests/dashboard-reports-availability.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
+- Không thay đổi business logic ERP backend, không đổi API contract hiện hữu.
+- Không phát sinh quyết định kiến trúc mới cần ADR trong session này.
 
 ## Session Update 2026-04-04 08:16 (Settings redesign V2 - Phase 3: grouped sidebar)
 - User yêu cầu thực thi Phase 3.

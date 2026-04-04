@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-04 08:16 +07
+- Time: 2026-04-04 09:13 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-04_0816_codex.md`
+- Session Log: `.agent/sessions/2026-04-04_0913_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,35 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-04 09:13 (Home dashboard Phase 4 - hybrid polling + graceful widget fallback)
+- Đã refactor dashboard theo model widget độc lập:
+  - `apps/web/components/home-dashboard.tsx`
+  - widget states: `loading | ready | stale | error | disabled`.
+  - pre-check `settings/runtime` vẫn giữ để không gọi `reports/overview` khi module reports tắt.
+- Đã thêm hook polling tái sử dụng:
+  - `apps/web/lib/use-smart-polling.ts`
+  - polling chạy ngay lần đầu, tự giảm tần suất khi tab hidden, refresh ngay khi tab visible.
+- Đã thay dữ liệu mock dashboard bằng dữ liệu API thực theo phạm vi:
+  - KPI: `/reports/overview`
+  - Chart: `/reports/module?name=sales`
+  - Quick tasks: `/workflows/inbox`
+  - Activity feed: `/audit/logs` (MANAGER/ADMIN), STAFF hiển thị thông báo giới hạn truy cập.
+- Đã tăng độ ổn định UI dashboard:
+  - `apps/web/app/styles/modules/dashboard.css`
+  - status pills, skeletons, stale/error notes, responsive layout và `prefers-reduced-motion`.
+- Đã mở rộng e2e:
+  - `apps/web/e2e/tests/dashboard-reports-availability.spec.ts`
+  - thêm case: quick tasks endpoint fail nhưng KPI/reports vẫn hoạt động.
+- Verify gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4272 npx playwright test apps/web/e2e/tests/dashboard-reports-availability.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
 
 ## Update 2026-04-03 23:25 (Backend compatibility layer: /settings/layout)
 - Đã thêm endpoint metadata layout cho Settings Center:

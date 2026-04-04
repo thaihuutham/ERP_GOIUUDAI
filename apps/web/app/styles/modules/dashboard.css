@@ -7,6 +7,11 @@
   gap: 0.9rem;
 }
 
+.dashboard-refresh-meta {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 /* ── Hero Panel ────────────────────────────────── */
 
 .hero-panel {
@@ -81,6 +86,58 @@
   gap: 0.4rem;
 }
 
+.dashboard-widget-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.dashboard-widget-status {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  line-height: 1;
+  padding: 0.25rem 0.55rem;
+  white-space: nowrap;
+}
+
+.dashboard-widget-status.is-loading {
+  background: #f2f5f8;
+  color: #4f5b66;
+}
+
+.dashboard-widget-status.is-stale {
+  background: #fff8ec;
+  color: #915d11;
+  border-color: #f0ddb9;
+}
+
+.dashboard-widget-status.is-error,
+.dashboard-widget-status.is-disabled {
+  background: #fff2f2;
+  color: #a33a3a;
+  border-color: #f2c9c9;
+}
+
+.dashboard-widget-note {
+  margin: 0.2rem 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.dashboard-widget-note.is-error {
+  color: var(--danger);
+}
+
+.dashboard-widget-note.is-stale {
+  color: #915d11;
+}
+
+.dashboard-widget-placeholder {
+  padding-top: 0.2rem;
+}
+
 /* ── Quick Tasks Panel ─────────────────────────── */
 
 .quick-tasks-panel {
@@ -104,16 +161,18 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  min-height: 44px;
   padding: 0.5rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-light);
   background: var(--gray-25);
   font-size: var(--text-sm);
-  transition: background var(--duration-fast);
+  transition: background var(--duration-fast), border-color var(--duration-fast);
 }
 
 .quick-task-item:hover {
   background: var(--primary-soft);
+  border-color: var(--surface-border);
 }
 
 /* ── Activity Feed ─────────────────────────────── */
@@ -159,4 +218,32 @@
   color: var(--text-muted);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-charts-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .hero-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-task-item,
+  .dashboard-widget-status {
+    transition: none;
+  }
 }
