@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { GenericStatus, PermissionAction, PermissionEffect, UserRole } from '@prisma/client';
+import { GenericStatus, PermissionAction, PermissionEffect, Prisma, UserRole } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { generateTemporaryPassword, hashPassword } from '../../common/auth/password.util';
@@ -465,6 +465,181 @@ export class SettingsEnterpriseService {
     };
   }
 
+  async listPositions(query: Record<string, unknown>) {
+    const q = this.cleanString(query.q);
+    const take = this.toInt(query.limit, 200, 1, 500);
+    const statusFilter = this.parseStatusFilter(query.status);
+
+    const where: Prisma.PositionWhereInput = {
+      ...(q
+        ? {
+            OR: [
+              { code: { contains: q, mode: 'insensitive' } },
+              { title: { contains: q, mode: 'insensitive' } },
+              { level: { contains: q, mode: 'insensitive' } }
+            ]
+          }
+        : {}),
+      ...(statusFilter ? { status: statusFilter } : {})
+    };
+
+    const rows = await this.prisma.client.position.findMany({
+      where,
+      orderBy: [{ status: 'asc' }, { title: 'asc' }],
+      take
+    });
+
+    return {
+      items: await this.enrichPositionRows(rows),
+      total: rows.length
+    };
+  }
+
+  async createPosition(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    const title = this.cleanString(body.title ?? body.name);
+    if (!title) {
+      throw new BadRequestException('Thiếu tên vị trí công việc.');
+    }
+
+    const created = await this.prisma.client.position.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        code: this.toNullableString(body.code),
+        title,
+        departmentId: this.toNullableString(body.departmentId),
+        level: this.toNullableString(body.level),
+        description: this.toNullableString(body.description),
+        status: this.parseStatus(body.status)
+      }
+    });
+
+    const [position] = await this.enrichPositionRows([created]);
+    return {
+      message: 'Đã thêm vị trí công việc.',
+      position
+    };
+  }
+
+  async updatePosition(positionIdRaw: string, payload: Record<string, unknown>) {
+    const positionId = this.cleanString(positionIdRaw);
+    if (!positionId) {
+      throw new BadRequestException('Thiếu positionId.');
+    }
+
+    await this.ensurePositionExists(positionId);
+    const body = this.ensureRecord(payload);
+    const nextTitle = this.cleanString(body.title ?? body.name);
+
+    await this.prisma.client.position.updateMany({
+      where: { id: positionId },
+      data: {
+        code: this.toNullableString(body.code),
+        title: nextTitle || undefined,
+        departmentId: this.toNullableString(body.departmentId),
+        level: this.toNullableString(body.level),
+        description: this.toNullableString(body.description),
+        status: body.status ? this.parseStatus(body.status) : undefined
+      }
+    });
+
+    const updated = await this.ensurePositionExists(positionId);
+    const [position] = await this.enrichPositionRows([updated]);
+    return {
+      message: 'Đã cập nhật vị trí công việc.',
+      position
+    };
+  }
+
+  async deletePosition(positionIdRaw: string) {
+    const positionId = this.cleanString(positionIdRaw);
+    if (!positionId) {
+      throw new BadRequestException('Thiếu positionId.');
+    }
+
+    await this.ensurePositionExists(positionId);
+    const employeeCount = await this.prisma.client.employee.count({
+      where: {
+        positionId,
+        status: {
+          not: GenericStatus.ARCHIVED
+        }
+      }
+    });
+    if (employeeCount > 0) {
+      throw new BadRequestException(`Không thể xóa vị trí vì còn ${employeeCount} nhân viên đang sử dụng.`);
+    }
+
+    await this.prisma.client.$transaction(async (tx) => {
+      await tx.positionPermissionRule.deleteMany({
+        where: { positionId }
+      });
+      await tx.position.deleteMany({
+        where: { id: positionId }
+      });
+    });
+
+    return {
+      message: 'Đã xóa vị trí công việc.',
+      positionId
+    };
+  }
+
+  async listPositionEmployees(positionIdRaw: string, query: Record<string, unknown>) {
+    const positionId = this.cleanString(positionIdRaw);
+    if (!positionId) {
+      throw new BadRequestException('Thiếu positionId.');
+    }
+    const position = await this.ensurePositionExists(positionId);
+
+    const q = this.cleanString(query.q);
+    const take = this.toInt(query.limit, 200, 1, 500);
+    const where: Prisma.EmployeeWhereInput = {
+      positionId,
+      status: {
+        not: GenericStatus.ARCHIVED
+      },
+      ...(q
+        ? {
+            OR: [
+              { code: { contains: q, mode: 'insensitive' } },
+              { fullName: { contains: q, mode: 'insensitive' } },
+              { email: { contains: q, mode: 'insensitive' } },
+              { department: { contains: q, mode: 'insensitive' } }
+            ]
+          }
+        : {})
+    };
+
+    const rows = await this.prisma.client.employee.findMany({
+      where,
+      orderBy: [{ fullName: 'asc' }, { createdAt: 'desc' }],
+      take,
+      select: {
+        id: true,
+        code: true,
+        fullName: true,
+        email: true,
+        department: true,
+        departmentId: true,
+        orgUnitId: true,
+        position: true,
+        positionId: true,
+        status: true,
+        joinDate: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    return {
+      positionId,
+      positionTitle: position.title,
+      total: rows.length,
+      items: rows
+    };
+  }
+
   async getPositionPermissions(positionIdRaw: string) {
     const positionId = this.cleanString(positionIdRaw);
     if (!positionId) {
@@ -703,6 +878,106 @@ export class SettingsEnterpriseService {
       throw new BadRequestException(`positionId không tồn tại: ${positionId}`);
     }
     return row;
+  }
+
+  private async enrichPositionRows(
+    rows: Array<{
+      id: string;
+      code: string | null;
+      title: string;
+      departmentId: string | null;
+      level: string | null;
+      description: string | null;
+      status: GenericStatus;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  ) {
+    if (rows.length === 0) {
+      return [] as Array<Record<string, unknown>>;
+    }
+
+    const positionIds = rows.map((row) => row.id);
+    const departmentIds = [...new Set(rows.map((row) => this.cleanString(row.departmentId)).filter(Boolean))];
+
+    const [employeesByPosition, permissionsByPosition, departments] = await Promise.all([
+      this.prisma.client.employee.groupBy({
+        by: ['positionId'],
+        where: {
+          positionId: {
+            in: positionIds
+          },
+          status: {
+            not: GenericStatus.ARCHIVED
+          }
+        },
+        _count: {
+          _all: true
+        }
+      }),
+      this.prisma.client.positionPermissionRule.groupBy({
+        by: ['positionId'],
+        where: {
+          positionId: {
+            in: positionIds
+          }
+        },
+        _count: {
+          _all: true
+        }
+      }),
+      departmentIds.length > 0
+        ? this.prisma.client.department.findMany({
+            where: {
+              id: {
+                in: departmentIds
+              }
+            },
+            select: {
+              id: true,
+              name: true
+            }
+          })
+        : Promise.resolve([])
+    ]);
+
+    const employeeCountByPositionId = new Map(
+      employeesByPosition.map((row) => [this.cleanString(row.positionId), row._count._all])
+    );
+    const permissionCountByPositionId = new Map(
+      permissionsByPosition.map((row) => [this.cleanString(row.positionId), row._count._all])
+    );
+    const departmentNameById = new Map(departments.map((row) => [row.id, row.name]));
+
+    return rows.map((row) => {
+      const departmentId = this.cleanString(row.departmentId);
+      return {
+        id: row.id,
+        code: row.code,
+        title: row.title,
+        name: row.title,
+        departmentId: row.departmentId,
+        departmentName: departmentId ? departmentNameById.get(departmentId) ?? null : null,
+        level: row.level,
+        description: row.description,
+        status: row.status,
+        employeeCount: employeeCountByPositionId.get(row.id) ?? 0,
+        permissionRuleCount: permissionCountByPositionId.get(row.id) ?? 0,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt
+      };
+    });
+  }
+
+  private parseStatusFilter(value: unknown) {
+    const normalized = this.cleanString(value).toUpperCase();
+    if (!normalized) {
+      return null;
+    }
+    if ((Object.values(GenericStatus) as string[]).includes(normalized)) {
+      return normalized as GenericStatus;
+    }
+    return null;
   }
 
   private parseUserRole(value: unknown): UserRole {

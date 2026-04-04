@@ -32,6 +32,49 @@ const DOMAIN_STATES = [
 }));
 
 function buildDomainPayload(domain: string) {
+  if (domain === 'hr_policies') {
+    return {
+      domain,
+      data: {
+        shiftDefault: 'HC',
+        leave: {
+          annualDefaultDays: 12,
+          maxCarryOverDays: 5
+        },
+        payroll: {
+          cycle: 'monthly',
+          cutoffDay: 25
+        },
+        approverChain: {
+          leaveApproverRole: 'MANAGER',
+          payrollApproverRole: 'ADMIN'
+        },
+        appendixFieldCatalog: {
+          summary: { key: 'summary', label: 'Summary', type: 'text', options: [], analyticsEnabled: false, aggregator: 'none' },
+          result: { key: 'result', label: 'Result', type: 'text', options: [], analyticsEnabled: false, aggregator: 'none' },
+          taskCount: { key: 'taskCount', label: 'Task count', type: 'number', options: [], analyticsEnabled: true, aggregator: 'sum' },
+          custom_1: { key: 'PL05_customerFeedback', label: 'Feedback', type: 'select', options: ['Tot', 'Can cai thien'], analyticsEnabled: false, aggregator: 'none' },
+          custom_2: { key: 'PL06_qualityTag', label: 'Quality tag', type: 'select', options: ['A', 'B'], analyticsEnabled: false, aggregator: 'none' },
+          custom_3: { key: 'PL10_recoveryRisk', label: 'Recovery risk', type: 'select', options: ['Low', 'Medium', 'High'], analyticsEnabled: false, aggregator: 'none' }
+        },
+        appendixTemplates: {
+          PL01: {
+            name: 'PL01',
+            description: 'Daily log',
+            fields: [{ fieldKey: 'summary' }, { fieldKey: 'result' }, { fieldKey: 'taskCount' }]
+          },
+          PL02: { name: 'PL02', description: '', fields: [{ fieldKey: 'summary' }, { fieldKey: 'result' }] },
+          PL03: { name: 'PL03', description: '', fields: [{ fieldKey: 'summary' }, { fieldKey: 'result' }] },
+          PL04: { name: 'PL04', description: '', fields: [{ fieldKey: 'summary' }, { fieldKey: 'result' }] },
+          PL05: { name: 'PL05', description: '', fields: [{ fieldKey: 'summary' }, { fieldKey: 'pl05_customerfeedback' }] },
+          PL06: { name: 'PL06', description: '', fields: [{ fieldKey: 'summary' }, { fieldKey: 'pl06_qualitytag' }] },
+          PL10: { name: 'PL10', description: '', fields: [{ fieldKey: 'summary' }, { fieldKey: 'pl10_recoveryrisk' }] }
+        }
+      },
+      validation: { ok: true, errors: [], warnings: [] }
+    };
+  }
+
   if (domain === 'approval_matrix') {
     return {
       domain,
@@ -82,6 +125,152 @@ function buildDomainPayload(domain: string) {
 }
 
 test.describe('Settings Center reports alignment', () => {
+  test('renders phase-2 managed list fields for security and finance domains', async ({ page }) => {
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method();
+
+      if (method === 'GET' && path === '/api/v1/settings/center') {
+        return json(route, {
+          summary: {
+            totalDomains: DOMAIN_STATES.length,
+            validDomains: DOMAIN_STATES.length,
+            invalidDomains: 0
+          },
+          checklist: {
+            org: true,
+            security: true,
+            financeControls: true,
+            integrations: true,
+            modulePolicies: true
+          },
+          domainStates: DOMAIN_STATES,
+          recentAudit: [],
+          recentSnapshots: []
+        });
+      }
+
+      if (method === 'GET' && path.startsWith('/api/v1/settings/domains/')) {
+        const domain = path.replace('/api/v1/settings/domains/', '');
+        return json(route, buildDomainPayload(domain));
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/iam/users') {
+        return json(route, {
+          items: [{ id: 'user_1', fullName: 'Admin ERP', email: 'admin@erp.vn' }]
+        });
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/organization/tree') {
+        return json(route, {
+          items: [{ id: 'org_1', name: 'ERP Demo', type: 'COMPANY' }],
+          tree: [{ id: 'org_1', name: 'ERP Demo', type: 'COMPANY', children: [] }]
+        });
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
+        return json(route, {
+          items: [{ id: 'position_1', name: 'Manager' }]
+        });
+      }
+
+      if (method === 'GET' && path.startsWith('/api/v1/settings/permissions/positions/')) {
+        return json(route, { rules: [] });
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/permissions/effective') {
+        return json(route, { overrides: [] });
+      }
+
+      return json(route, { ok: true });
+    });
+
+    await page.goto('/modules/settings');
+
+    await page.getByRole('button', { name: 'Bảo mật truy cập' }).click();
+    await expect(page.locator('[data-testid="list-manager-security-super-admin-legacy"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-security-perm-super-admin-emails"]')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Kiểm soát tài chính' }).click();
+    await expect(page.locator('[data-testid="list-manager-finance-locked-periods"]')).toBeVisible();
+  });
+
+  test('renders phase-3 HR appendix managed list fields for options and template pickers', async ({ page }) => {
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method();
+
+      if (method === 'GET' && path === '/api/v1/settings/center') {
+        return json(route, {
+          summary: {
+            totalDomains: DOMAIN_STATES.length,
+            validDomains: DOMAIN_STATES.length,
+            invalidDomains: 0
+          },
+          checklist: {
+            org: true,
+            security: true,
+            financeControls: true,
+            integrations: true,
+            modulePolicies: true
+          },
+          domainStates: DOMAIN_STATES,
+          recentAudit: [],
+          recentSnapshots: []
+        });
+      }
+
+      if (method === 'GET' && path.startsWith('/api/v1/settings/domains/')) {
+        const domain = path.replace('/api/v1/settings/domains/', '');
+        return json(route, buildDomainPayload(domain));
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/iam/users') {
+        return json(route, {
+          items: [{ id: 'user_1', fullName: 'Admin ERP', email: 'admin@erp.vn' }]
+        });
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/organization/tree') {
+        return json(route, {
+          items: [{ id: 'org_1', name: 'ERP Demo', type: 'COMPANY' }],
+          tree: [{ id: 'org_1', name: 'ERP Demo', type: 'COMPANY', children: [] }]
+        });
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
+        return json(route, {
+          items: [{ id: 'position_1', name: 'Manager' }]
+        });
+      }
+
+      if (method === 'GET' && path.startsWith('/api/v1/settings/permissions/positions/')) {
+        return json(route, { rules: [] });
+      }
+
+      if (method === 'GET' && path === '/api/v1/settings/permissions/effective') {
+        return json(route, { overrides: [] });
+      }
+
+      return json(route, { ok: true });
+    });
+
+    await page.goto('/modules/settings');
+
+    await page.getByRole('button', { name: /Chính sách.*nhân sự/i }).click();
+    await page.getByRole('tab', { name: 'Phụ lục hợp đồng' }).click();
+
+    await expect(page.locator('[data-testid="list-manager-hr-field-custom1-options"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-hr-field-custom2-options"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-hr-field-custom3-options"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-hr-pl01-fields"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-hr-pl05-fields"]')).toBeVisible();
+  });
+
   test('shows reports module in Organization and removes preset UI', async ({ page }) => {
     await page.route('**/api/v1/**', async (route) => {
       const request = route.request();
@@ -127,7 +316,7 @@ test.describe('Settings Center reports alignment', () => {
         });
       }
 
-      if (method === 'GET' && path === '/api/v1/hr/positions') {
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
         return json(route, {
           items: [{ id: 'position_1', name: 'Manager' }]
         });
@@ -232,7 +421,7 @@ test.describe('Settings Center reports alignment', () => {
         });
       }
 
-      if (method === 'GET' && path === '/api/v1/hr/positions') {
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
         return json(route, {
           items: [{ id: 'position_1', name: 'Manager' }]
         });
@@ -309,7 +498,7 @@ test.describe('Settings Center reports alignment', () => {
         });
       }
 
-      if (method === 'GET' && path === '/api/v1/hr/positions') {
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
         return json(route, {
           items: [{ id: 'position_1', name: 'Manager' }]
         });
@@ -384,7 +573,7 @@ test.describe('Settings Center reports alignment', () => {
         });
       }
 
-      if (method === 'GET' && path === '/api/v1/hr/positions') {
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
         return json(route, {
           items: [{ id: 'position_1', name: 'Manager' }]
         });
@@ -532,7 +721,7 @@ test.describe('Settings Center reports alignment', () => {
         });
       }
 
-      if (method === 'GET' && path === '/api/v1/hr/positions') {
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
         return json(route, {
           items: [{ id: 'position_1', name: 'Manager' }]
         });

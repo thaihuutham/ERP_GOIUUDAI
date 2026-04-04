@@ -2,9 +2,225 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-04 09:13 +07
+- Last updated: 2026-04-04 17:35 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-04 17:35 +07 (Settings Center - Position & Permission Hub)
+- User yêu cầu:
+  - đưa toàn bộ cấu hình vị trí + quyền theo vị trí vào Trung tâm cấu hình hệ thống,
+  - có CRUD vị trí,
+  - danh sách vị trí kèm số người ở mỗi vị trí,
+  - click tên vị trí mở trang chi tiết 2 tab (`Chi tiết quyền`, `Danh sách nhân viên`).
+- Đã triển khai backend:
+  - `apps/api/src/modules/settings/settings-enterprise.service.ts`
+    - thêm:
+      - `listPositions`,
+      - `createPosition`,
+      - `updatePosition`,
+      - `deletePosition`,
+      - `listPositionEmployees`.
+    - enrich list positions với:
+      - `employeeCount`,
+      - `permissionRuleCount`,
+      - `departmentName`.
+    - guard xóa vị trí khi còn nhân sự đang sử dụng.
+  - `apps/api/src/modules/settings/settings.controller.ts`
+    - thêm routes:
+      - `GET /settings/positions`
+      - `POST /settings/positions`
+      - `PATCH /settings/positions/:positionId`
+      - `DELETE /settings/positions/:positionId`
+      - `GET /settings/positions/:positionId/employees`
+- Đã triển khai frontend:
+  - `apps/web/components/settings-center.tsx`
+    - load positions từ `/settings/positions` thay cho `/hr/positions`,
+    - tab access-security matrix được nâng cấp thành hub quản trị vị trí:
+      - danh sách vị trí + headcount + số permission rule,
+      - form thêm/sửa vị trí (ADMIN),
+      - nút xóa vị trí (chặn khi còn nhân sự),
+      - click tên vị trí mở detail panel 2 tab:
+        - `Chi tiết quyền` (matrix view/create/update/delete/approve),
+        - `Danh sách nhân viên` (load từ `/settings/positions/:positionId/employees`).
+    - giữ nguyên khối `Override theo user`.
+- Test/E2E cập nhật:
+  - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+  - `apps/web/e2e/tests/settings-center-audit-scope.spec.ts`
+  - đổi mock endpoint positions sang `/api/v1/settings/positions`.
+- ADR mới:
+  - `docs/decisions/ADR-041-SETTINGS-POSITION-PERMISSION-CENTER.md`
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts` ✅ (`2 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4292 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
+
+## Session Update 2026-04-04 17:10 +07 (CRM taxonomy - bỏ chuẩn hóa UPPERCASE)
+- User yêu cầu: bỏ chức năng chuẩn hóa UPPERCASE cho CRM taxonomy values.
+- Đã triển khai:
+  - Frontend:
+    - `apps/web/components/settings-center/taxonomy-manager-field.tsx`:
+      - đổi default normalization từ `upper` sang `none`,
+      - đổi helper text sang giữ nguyên case người dùng nhập.
+    - `apps/web/components/settings-center.tsx`:
+      - bỏ `normalization=\"upper\"` cho Sales taxonomy manager.
+  - Backend settings runtime/policy/service:
+    - `apps/api/src/common/settings/runtime-settings.service.ts`:
+      - không còn upper-case hóa `customerTaxonomy.stages/sources` ở runtime read.
+    - `apps/api/src/modules/settings/settings.service.ts`:
+      - bỏ upper-case hóa trong normalize/read taxonomy state.
+    - `apps/api/src/modules/settings/settings-policy.service.ts`:
+      - `normalizeSalesTaxonomyValues` giữ nguyên case (trim + dedupe),
+      - usage message không ép hiển thị uppercase.
+  - Backend CRM:
+    - `apps/api/src/modules/crm/crm.service.ts`:
+      - bỏ mọi `.toUpperCase()` cho `customerStage/source` trong create/update/list interaction flow,
+      - thêm resolver taxonomy case-insensitive để map input về canonical value theo taxonomy đã cấu hình.
+  - Tests:
+    - cập nhật `apps/api/test/settings-policy.service.test.ts` cho hành vi mới (không ép uppercase).
+- ADR mới:
+  - `docs/decisions/ADR-040-CRM-TAXONOMY-PRESERVE-CASE-NO-UPPERCASE-NORMALIZATION.md`
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/settings-taxonomy.service.test.ts test/custom-fields.service.test.ts test/crm.api-flow.test.ts` ✅ (`31 passed`)
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4288 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`10 passed`)
+
+## Session Update 2026-04-04 16:59 +07 (Phase 4/5 - CRM free tags + custom-fields options manager)
+- User yêu cầu: vào luôn phase tiếp theo trong rollout plan để đồng bộ CRM free tags/custom fields theo cùng chuẩn.
+- Đã chốt phase implementation theo trạng thái code hiện tại:
+  - CRM tag registry:
+    - backend CRUD + usage guard cho `customerTags`, `interactionTags`, `interactionResultTags` qua settings service/controller.
+    - CRM service enforce tag hợp lệ theo registry khi create/update customer và create interaction.
+    - taxonomy payload trả thêm `tagRegistry` để UI nghiệp vụ dùng controlled inputs.
+  - Settings Center:
+    - thêm manager section cho `sales_crm_policies.tagRegistry.*` dùng chung `taxonomy-manager-field`.
+    - taxonomy manager hỗ trợ mode chuẩn hóa `upper/lower` để tái sử dụng cho taxonomy cũ + tag registry mới.
+  - CRM boards:
+    - thay free-text tags/resultTag bằng controlled select/multi-select từ taxonomy/tag registry.
+  - Custom fields:
+    - backend normalize options theo cấu trúc `{ key, label, order }`, vẫn tương thích đọc dữ liệu cũ dạng string.
+    - frontend custom-fields page chuyển từ CSV input sang option-row editor (`key/label/order`).
+- Đã bổ sung/duy trì test phase:
+  - `apps/api/test/settings-taxonomy.service.test.ts` (sales taxonomy + CRM tag registry flows).
+  - `apps/api/test/custom-fields.service.test.ts` (structured option rows + canonical select value).
+  - `apps/api/test/settings-policy.service.test.ts` (điều chỉnh assertion message guard theo contract hiện tại).
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-taxonomy.service.test.ts test/custom-fields.service.test.ts test/settings-policy.service.test.ts` ✅ (`28 passed`)
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4286 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`10 passed`)
+
+## Session Update 2026-04-04 16:20 +07 (Phase 3 - HR appendix options/templates manager)
+- User yêu cầu: vào ngay Phase 3 theo pattern Phase 2, chuẩn hóa nhóm HR appendix `options/templates manager`.
+- Đã triển khai frontend:
+  - mở rộng `apps/web/components/settings-center/settings-list-manager-field.tsx`:
+    - thêm `ManagedListType` mới: `freeText`, `fieldKey`,
+    - hỗ trợ `pickerOptions` cho `fieldKey` (select controlled),
+    - giữ UX table + modal add/edit/delete theo pattern phase 2.
+  - cập nhật `apps/web/components/settings-center.tsx`:
+    - remap HR fields sang managed list:
+      - `appendixFieldCatalog.custom_1.options`, `custom_2.options`, `custom_3.options` -> `managedList/freeText`
+      - `appendixTemplates.PL01..PL10.fields` -> `managedList/fieldKey`
+    - thêm parser tương thích cho template field rows dạng object (`fieldKey`) và builder picker options từ `appendixFieldCatalog`.
+- Đã triển khai backend enforce:
+  - `apps/api/src/modules/settings/settings-policy.service.ts`:
+    - thêm normalize options HR (`trim + dedupe`) cho field type `select`,
+    - không silently drop template field key lạ trước validation,
+    - validate chặt `appendixTemplates.*.fields` theo catalog/namespace và cảnh báo field trùng.
+- Đã bổ sung test:
+  - `apps/api/test/settings-policy.service.test.ts`:
+    - normalize HR options/template field list,
+    - reject template `fieldKey` không hợp lệ.
+  - `apps/web/e2e/tests/settings-center-reports.spec.ts`:
+    - thêm test verify manager UI Phase 3 cho HR appendix fields.
+- ADR mới:
+  - `docs/decisions/ADR-038-HR-APPENDIX-MANAGED-LIST-OPTIONS-TEMPLATE-FIELDS.md`
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/settings-taxonomy.service.test.ts` ✅ (`19 passed`)
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4282 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
+
+## Session Update 2026-04-04 16:01 +07 (Phase 2 - managed list cho security/finance)
+- User yêu cầu: triển khai ngay Phase 2 cho nhóm `superAdminIds`, `superAdminEmails`, `lockedPeriods` và đồng bộ UI theo chuẩn `ui-ux-pro-max`.
+- Đã triển khai frontend:
+  - thêm component manager list typed: `apps/web/components/settings-center/settings-list-manager-field.tsx`.
+  - map các field mục tiêu trong `apps/web/components/settings-center.tsx` sang `type: managedList` với `managedListType`:
+    - `userId`: `access_security.superAdminIds`, `access_security.permissionPolicy.superAdminIds`
+    - `email`: `access_security.permissionPolicy.superAdminEmails`
+    - `period`: `finance_controls.postingPeriods.lockedPeriods`
+  - cập nhật style đồng bộ settings module tại `apps/web/app/styles/modules/workbench.css`.
+- Đã triển khai backend enforce:
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+    - normalize typed list (dedupe/canonical),
+    - validate format cho userId/email/period trước khi lưu.
+- Đã bổ sung test:
+  - `apps/api/test/settings-policy.service.test.ts` (normalize + reject invalid email).
+  - e2e bổ sung verify manager UI:
+    - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+    - `apps/web/e2e/tests/settings-center-audit-scope.spec.ts`
+- ADR mới:
+  - `docs/decisions/ADR-037-SETTINGS-TYPED-LIST-MANAGER-FOR-SECURITY-FINANCE-TAGS.md`
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/settings-taxonomy.service.test.ts` ✅ (`17 passed`)
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (chạy sau build do known issue `.next/types`)
+  - `CI=1 PLAYWRIGHT_PORT=4278 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`9 passed`)
+
+## Session Update 2026-04-04 15:43 +07 (rollout plan mở rộng toàn bộ field tags tự do)
+- User xác nhận tiếp tục phase taxonomy hiện tại và yêu cầu cập nhật kế hoạch đồng bộ cho toàn bộ field kiểu nhập nhiều tags/comma-list tự do trên hệ thống.
+- Đã cập nhật `docs/design/TAXONOMY-TAG-FIELD-ROLLOUT-PLAN.md` theo inventory + phase matrix:
+  - Inventory đầy đủ theo nhóm:
+    - CRM taxonomy chuẩn (`stages/sources`),
+    - Settings Center `type: 'tags'`,
+    - HR appendix lists,
+    - CRM free tags (customer/interactions/resultTag),
+    - custom-fields options CSV.
+  - Gắn rõ file UI/API parser/enforce cho từng nhóm để theo dõi rollout không sót.
+  - Bổ sung phase hardening đóng legacy parser sau migration.
+- Không mở rộng scope implementation ở session này (chỉ cập nhật kế hoạch rollout đồng bộ theo yêu cầu user).
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/settings-taxonomy.service.test.ts` ✅ (`15 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4278 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
 
 ## Session Update 2026-04-04 09:13 (Home dashboard Phase 4 - hybrid polling + widget resilience)
 - User xác nhận triển khai tiếp Phase 4 theo design đã chốt.

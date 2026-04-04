@@ -182,7 +182,7 @@ test.describe('Settings Center audit scope matrix', () => {
         });
       }
 
-      if (method === 'GET' && path === '/api/v1/hr/positions') {
+      if (method === 'GET' && path === '/api/v1/settings/positions') {
         return json(route, {
           items: [{ id: 'position_1', name: 'Manager' }]
         });
@@ -201,6 +201,10 @@ test.describe('Settings Center audit scope matrix', () => {
 
     await page.goto('/modules/settings');
     await page.getByRole('button', { name: 'Bảo mật truy cập' }).click();
+
+    await expect(page.locator('[data-testid="list-manager-security-super-admin-legacy"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-security-perm-super-admin-ids"]')).toBeVisible();
+    await expect(page.locator('[data-testid="list-manager-security-perm-super-admin-emails"]')).toBeVisible();
 
     await expect(page.getByText('Phân quyền nhật ký hệ thống theo cấp quản lý')).toBeVisible();
     await expect(page.getByLabel('Giám đốc: xem toàn công ty')).toBeChecked();

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Put, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Put, Post, Query } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { AuditAction, AuditRead } from '../../common/audit/audit.decorators';
@@ -84,6 +84,78 @@ export class SettingsController {
   @AuditRead({ action: 'READ_SETTINGS_LAYOUT', entityType: 'SettingsLayout' })
   getSettingsLayout() {
     return this.settingsService.getSettingsLayout();
+  }
+
+  @Get('sales-taxonomy')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditRead({ action: 'READ_SALES_TAXONOMY', entityType: 'SalesTaxonomy' })
+  getSalesTaxonomy() {
+    return this.settingsService.getSalesTaxonomyOverview();
+  }
+
+  @Post('sales-taxonomy/:type')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CREATE_SALES_TAXONOMY_VALUE', entityType: 'SalesTaxonomy', entityIdParam: 'type' })
+  createSalesTaxonomyItem(@Param('type') type: string, @Body() body: Record<string, unknown>) {
+    return this.settingsService.createSalesTaxonomyItem(type, body);
+  }
+
+  @Patch('sales-taxonomy/:type/:value')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_SALES_TAXONOMY_VALUE', entityType: 'SalesTaxonomy', entityIdParam: 'value' })
+  renameSalesTaxonomyItem(
+    @Param('type') type: string,
+    @Param('value') value: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.settingsService.renameSalesTaxonomyItem(type, value, body);
+  }
+
+  @Delete('sales-taxonomy/:type/:value')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'DELETE_SALES_TAXONOMY_VALUE', entityType: 'SalesTaxonomy', entityIdParam: 'value' })
+  deleteSalesTaxonomyItem(
+    @Param('type') type: string,
+    @Param('value') value: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.settingsService.deleteSalesTaxonomyItem(type, value, body);
+  }
+
+  @Get('crm-tags')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditRead({ action: 'READ_CRM_TAG_REGISTRY', entityType: 'CrmTagRegistry' })
+  getCrmTagRegistry() {
+    return this.settingsService.getCrmTagRegistryOverview();
+  }
+
+  @Post('crm-tags/:type')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'CREATE_CRM_TAG_VALUE', entityType: 'CrmTagRegistry', entityIdParam: 'type' })
+  createCrmTagRegistryItem(@Param('type') type: string, @Body() body: Record<string, unknown>) {
+    return this.settingsService.createCrmTagRegistryItem(type, body);
+  }
+
+  @Patch('crm-tags/:type/:value')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_CRM_TAG_VALUE', entityType: 'CrmTagRegistry', entityIdParam: 'value' })
+  renameCrmTagRegistryItem(
+    @Param('type') type: string,
+    @Param('value') value: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.settingsService.renameCrmTagRegistryItem(type, value, body);
+  }
+
+  @Delete('crm-tags/:type/:value')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'DELETE_CRM_TAG_VALUE', entityType: 'CrmTagRegistry', entityIdParam: 'value' })
+  deleteCrmTagRegistryItem(
+    @Param('type') type: string,
+    @Param('value') value: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.settingsService.deleteCrmTagRegistryItem(type, value, body);
   }
 
   @Get('runtime')
@@ -210,6 +282,36 @@ export class SettingsController {
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
   moveOrganizationUnit(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.settingsEnterpriseService.moveOrganizationUnit(id, body);
+  }
+
+  @Get('positions')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  listPositions(@Query() query: Record<string, unknown>) {
+    return this.settingsEnterpriseService.listPositions(query);
+  }
+
+  @Post('positions')
+  @Roles(UserRole.ADMIN)
+  createPosition(@Body() body: Record<string, unknown>) {
+    return this.settingsEnterpriseService.createPosition(body);
+  }
+
+  @Patch('positions/:positionId')
+  @Roles(UserRole.ADMIN)
+  updatePosition(@Param('positionId') positionId: string, @Body() body: Record<string, unknown>) {
+    return this.settingsEnterpriseService.updatePosition(positionId, body);
+  }
+
+  @Delete('positions/:positionId')
+  @Roles(UserRole.ADMIN)
+  deletePosition(@Param('positionId') positionId: string) {
+    return this.settingsEnterpriseService.deletePosition(positionId);
+  }
+
+  @Get('positions/:positionId/employees')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  listPositionEmployees(@Param('positionId') positionId: string, @Query() query: Record<string, unknown>) {
+    return this.settingsEnterpriseService.listPositionEmployees(positionId, query);
   }
 
   @Get('permissions/positions/:positionId')

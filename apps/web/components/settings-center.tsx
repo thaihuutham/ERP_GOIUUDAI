@@ -11,6 +11,12 @@ import { ERP_MODULES } from '@erp/shared';
 import { GroupedSidebar } from './settings-center/grouped-sidebar';
 import { DomainTabs } from './settings-center/domain-tabs';
 import { AdvancedToggle } from './settings-center/advanced-toggle';
+import { TaxonomyManagerField, type SalesTaxonomyItem } from './settings-center/taxonomy-manager-field';
+import {
+  SettingsListManagerField,
+  type ManagedListPickerOption,
+  type ManagedListType
+} from './settings-center/settings-list-manager-field';
 import {
   filterSectionsForTabAndMode,
   resolveActiveTab,
@@ -113,7 +119,45 @@ type FieldOption = {
   label: string;
 };
 
-type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'switch' | 'tags' | 'multiSelect' | 'userDomainMap' | 'secret' | 'color';
+type FieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'select'
+  | 'switch'
+  | 'tags'
+  | 'managedList'
+  | 'multiSelect'
+  | 'userDomainMap'
+  | 'secret'
+  | 'color'
+  | 'taxonomyManager';
+
+type SalesTaxonomyType = 'stages' | 'sources';
+type CrmTagRegistryType = 'customerTags' | 'interactionTags' | 'interactionResultTags';
+type TaxonomyManagerType = SalesTaxonomyType | CrmTagRegistryType;
+
+type SalesTaxonomyPayload = {
+  stages: SalesTaxonomyItem[];
+  sources: SalesTaxonomyItem[];
+};
+
+type CrmTagRegistryPayload = {
+  customerTags: SalesTaxonomyItem[];
+  interactionTags: SalesTaxonomyItem[];
+  interactionResultTags: SalesTaxonomyItem[];
+};
+
+const EMPTY_SALES_TAXONOMY: SalesTaxonomyPayload = {
+  stages: [],
+  sources: []
+};
+
+const EMPTY_CRM_TAG_REGISTRY: CrmTagRegistryPayload = {
+  customerTags: [],
+  interactionTags: [],
+  interactionResultTags: []
+};
 
 type FieldConfig = {
   id: string;
@@ -128,6 +172,8 @@ type FieldConfig = {
   step?: number;
   options?: FieldOption[];
   isAdvanced?: boolean;
+  taxonomyType?: TaxonomyManagerType;
+  managedListType?: ManagedListType;
 };
 
 type SectionConfig = {
@@ -149,6 +195,26 @@ type FieldChange = {
   label: string;
   before: string;
   after: string;
+};
+
+type PositionSummaryItem = {
+  id: string;
+  code: string;
+  title: string;
+  level: string;
+  status: string;
+  departmentName: string;
+  employeeCount: number;
+  permissionRuleCount: number;
+};
+
+type PositionEmployeeItem = {
+  id: string;
+  code: string;
+  fullName: string;
+  email: string;
+  department: string;
+  status: string;
 };
 
 const DOMAIN_LABEL: Record<DomainKey, string> = {
@@ -268,6 +334,12 @@ const PAYROLL_CYCLE_OPTIONS: FieldOption[] = [
   { value: 'monthly', label: 'Theo tháng' },
   { value: 'biweekly', label: '2 tuần/lần' },
   { value: 'weekly', label: 'Theo tuần' }
+];
+
+const POSITION_STATUS_OPTIONS: FieldOption[] = [
+  { value: 'ACTIVE', label: 'ACTIVE' },
+  { value: 'INACTIVE', label: 'INACTIVE' },
+  { value: 'DRAFT', label: 'DRAFT' }
 ];
 
 const REASON_TEMPLATES = [
@@ -466,11 +538,32 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         id: 'security-permission-engine',
         title: 'Động cơ phân quyền theo hành động',
         fields: [
-          { id: 'security-super-admin-legacy', path: 'superAdminIds', label: 'Super admin khẩn cấp (legacy)', type: 'tags', placeholder: 'user_id_1, user_id_2' },
+          {
+            id: 'security-super-admin-legacy',
+            path: 'superAdminIds',
+            label: 'Super admin khẩn cấp (legacy)',
+            helper: 'Danh sách user ID được phép override khẩn cấp.',
+            type: 'managedList',
+            managedListType: 'userId'
+          },
           { id: 'security-perm-enabled', path: 'permissionPolicy.enabled', label: 'Bật phân quyền chi tiết', type: 'switch' },
           { id: 'security-perm-conflict', path: 'permissionPolicy.conflictPolicy', label: 'Chính sách xung đột quyền', type: 'select', options: CONFLICT_POLICY_OPTIONS },
-          { id: 'security-perm-super-admin-ids', path: 'permissionPolicy.superAdminIds', label: 'Danh sách Super admin (ID)', type: 'tags', placeholder: 'user_id_1, user_id_2' },
-          { id: 'security-perm-super-admin-emails', path: 'permissionPolicy.superAdminEmails', label: 'Danh sách Super admin (Email)', type: 'tags', placeholder: 'admin@company.vn, ops@company.vn' }
+          {
+            id: 'security-perm-super-admin-ids',
+            path: 'permissionPolicy.superAdminIds',
+            label: 'Danh sách Super admin (ID)',
+            helper: 'ID được dùng cho chính sách phân quyền chi tiết.',
+            type: 'managedList',
+            managedListType: 'userId'
+          },
+          {
+            id: 'security-perm-super-admin-emails',
+            path: 'permissionPolicy.superAdminEmails',
+            label: 'Danh sách Super admin (Email)',
+            helper: 'Email được chuẩn hóa chữ thường khi lưu.',
+            type: 'managedList',
+            managedListType: 'email'
+          }
         ]
       },
       {
@@ -570,8 +663,9 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
             id: 'finance-locked-periods',
             path: 'postingPeriods.lockedPeriods',
             label: 'Danh sách kỳ đã khóa',
-            helper: 'Nhập dạng YYYY-MM, phân tách bằng dấu phẩy. Ví dụ: 2026-01, 2026-02',
-            type: 'tags'
+            helper: 'Quản lý theo từng kỳ, định dạng YYYY-MM.',
+            type: 'managedList',
+            managedListType: 'period'
           },
           { id: 'finance-backdate', path: 'postingPeriods.allowBackdateDays', label: 'Cho phép hạch toán lùi tối đa', type: 'number', unit: 'ngày', min: 0, max: 31 },
           { id: 'finance-cutoff', path: 'transactionCutoffHour', label: 'Giờ cut-off giao dịch', type: 'number', unit: 'giờ', min: 0, max: 23 }
@@ -618,16 +712,48 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           {
             id: 'sales-stages',
             path: 'customerTaxonomy.stages',
-            label: 'Các stage khách hàng',
-            helper: 'Nhập stage, phân tách bằng dấu phẩy.',
-            type: 'tags'
+            label: 'Giai đoạn khách hàng',
+            helper: 'Quản lý giai đoạn bằng bảng chi tiết và thống kê dữ liệu áp dụng.',
+            type: 'taxonomyManager',
+            taxonomyType: 'stages'
           },
           {
             id: 'sales-sources',
             path: 'customerTaxonomy.sources',
             label: 'Nguồn khách hàng',
-            helper: 'Ví dụ: ONLINE, OFFLINE, REFERRAL',
-            type: 'tags'
+            helper: 'Quản lý nguồn bằng bảng chi tiết và thống kê dữ liệu áp dụng.',
+            type: 'taxonomyManager',
+            taxonomyType: 'sources'
+          }
+        ]
+      },
+      {
+        id: 'sales-tag-registry',
+        title: 'CRM Tag Registry',
+        fields: [
+          {
+            id: 'sales-customer-tags-registry',
+            path: 'tagRegistry.customerTags',
+            label: 'Customer tags',
+            helper: 'Danh sách tag dùng cho hồ sơ khách hàng.',
+            type: 'taxonomyManager',
+            taxonomyType: 'customerTags'
+          },
+          {
+            id: 'sales-interaction-tags-registry',
+            path: 'tagRegistry.interactionTags',
+            label: 'Interaction tags',
+            helper: 'Danh sách tag bổ sung khi ghi nhận interaction.',
+            type: 'taxonomyManager',
+            taxonomyType: 'interactionTags'
+          },
+          {
+            id: 'sales-interaction-result-tags-registry',
+            path: 'tagRegistry.interactionResultTags',
+            label: 'Interaction result tags',
+            helper: 'Danh sách resultTag hợp lệ cho interaction.',
+            type: 'taxonomyManager',
+            taxonomyType: 'interactionResultTags'
           }
         ]
       }
@@ -703,21 +829,42 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'hr-field-custom1-key', path: 'appendixFieldCatalog.custom_1.key', label: 'custom_1 - Ma field', type: 'text', placeholder: 'PL05_customerFeedback' },
           { id: 'hr-field-custom1-label', path: 'appendixFieldCatalog.custom_1.label', label: 'custom_1 - Ten hien thi', type: 'text' },
           { id: 'hr-field-custom1-type', path: 'appendixFieldCatalog.custom_1.type', label: 'custom_1 - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
-          { id: 'hr-field-custom1-options', path: 'appendixFieldCatalog.custom_1.options', label: 'custom_1 - Lua chon (neu la select)', type: 'tags' },
+          {
+            id: 'hr-field-custom1-options',
+            path: 'appendixFieldCatalog.custom_1.options',
+            label: 'custom_1 - Lua chon (neu la select)',
+            helper: 'Quan ly option bang bang du lieu thay cho comma-input.',
+            type: 'managedList',
+            managedListType: 'freeText'
+          },
           { id: 'hr-field-custom1-analytics', path: 'appendixFieldCatalog.custom_1.analyticsEnabled', label: 'custom_1 - Dua vao KPI', type: 'switch' },
           { id: 'hr-field-custom1-aggregator', path: 'appendixFieldCatalog.custom_1.aggregator', label: 'custom_1 - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
 
           { id: 'hr-field-custom2-key', path: 'appendixFieldCatalog.custom_2.key', label: 'custom_2 - Ma field', type: 'text', placeholder: 'PL06_qualityTag' },
           { id: 'hr-field-custom2-label', path: 'appendixFieldCatalog.custom_2.label', label: 'custom_2 - Ten hien thi', type: 'text' },
           { id: 'hr-field-custom2-type', path: 'appendixFieldCatalog.custom_2.type', label: 'custom_2 - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
-          { id: 'hr-field-custom2-options', path: 'appendixFieldCatalog.custom_2.options', label: 'custom_2 - Lua chon (neu la select)', type: 'tags' },
+          {
+            id: 'hr-field-custom2-options',
+            path: 'appendixFieldCatalog.custom_2.options',
+            label: 'custom_2 - Lua chon (neu la select)',
+            helper: 'Quan ly option bang bang du lieu thay cho comma-input.',
+            type: 'managedList',
+            managedListType: 'freeText'
+          },
           { id: 'hr-field-custom2-analytics', path: 'appendixFieldCatalog.custom_2.analyticsEnabled', label: 'custom_2 - Dua vao KPI', type: 'switch' },
           { id: 'hr-field-custom2-aggregator', path: 'appendixFieldCatalog.custom_2.aggregator', label: 'custom_2 - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] },
 
           { id: 'hr-field-custom3-key', path: 'appendixFieldCatalog.custom_3.key', label: 'custom_3 - Ma field', type: 'text', placeholder: 'PL10_recoveryRisk' },
           { id: 'hr-field-custom3-label', path: 'appendixFieldCatalog.custom_3.label', label: 'custom_3 - Ten hien thi', type: 'text' },
           { id: 'hr-field-custom3-type', path: 'appendixFieldCatalog.custom_3.type', label: 'custom_3 - Kieu du lieu', type: 'select', options: [{ value: 'text', label: 'Text' }, { value: 'number', label: 'Number' }, { value: 'date', label: 'Date' }, { value: 'select', label: 'Select' }, { value: 'boolean', label: 'Boolean' }] },
-          { id: 'hr-field-custom3-options', path: 'appendixFieldCatalog.custom_3.options', label: 'custom_3 - Lua chon (neu la select)', type: 'tags' },
+          {
+            id: 'hr-field-custom3-options',
+            path: 'appendixFieldCatalog.custom_3.options',
+            label: 'custom_3 - Lua chon (neu la select)',
+            helper: 'Quan ly option bang bang du lieu thay cho comma-input.',
+            type: 'managedList',
+            managedListType: 'freeText'
+          },
           { id: 'hr-field-custom3-analytics', path: 'appendixFieldCatalog.custom_3.analyticsEnabled', label: 'custom_3 - Dua vao KPI', type: 'switch' },
           { id: 'hr-field-custom3-aggregator', path: 'appendixFieldCatalog.custom_3.aggregator', label: 'custom_3 - Kieu tong hop', type: 'select', options: [{ value: 'none', label: 'Khong tong hop' }, { value: 'count', label: 'Dem' }, { value: 'sum', label: 'Tong' }, { value: 'avg', label: 'Trung binh' }, { value: 'min', label: 'Min' }, { value: 'max', label: 'Max' }] }
         ]
@@ -725,35 +872,42 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       {
         id: 'hr-appendix-template-design',
         title: 'Thiet ke form theo phu luc',
-        description: 'Nhap danh sach field cho tung phu luc. Co the dung key hoac nhap ten field (he thong tu map).',
+        description: 'Chon field theo danh muc appendixFieldCatalog de dam bao payload luon hop le.',
         fields: [
           { id: 'hr-pl01-name', path: 'appendixTemplates.PL01.name', label: 'PL01 - Ten phu luc', type: 'text' },
           { id: 'hr-pl01-description', path: 'appendixTemplates.PL01.description', label: 'PL01 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl01-fields', path: 'appendixTemplates.PL01.fields', label: 'PL01 - Danh sach field', type: 'tags', helper: 'Vi du: summary, result, taskCount, complianceNote, note' },
+          {
+            id: 'hr-pl01-fields',
+            path: 'appendixTemplates.PL01.fields',
+            label: 'PL01 - Danh sach field',
+            helper: 'Picker theo Field library. Khong cho nhap tay key tu do.',
+            type: 'managedList',
+            managedListType: 'fieldKey'
+          },
 
           { id: 'hr-pl02-name', path: 'appendixTemplates.PL02.name', label: 'PL02 - Ten phu luc', type: 'text' },
           { id: 'hr-pl02-description', path: 'appendixTemplates.PL02.description', label: 'PL02 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl02-fields', path: 'appendixTemplates.PL02.fields', label: 'PL02 - Danh sach field', type: 'tags' },
+          { id: 'hr-pl02-fields', path: 'appendixTemplates.PL02.fields', label: 'PL02 - Danh sach field', type: 'managedList', managedListType: 'fieldKey' },
 
           { id: 'hr-pl03-name', path: 'appendixTemplates.PL03.name', label: 'PL03 - Ten phu luc', type: 'text' },
           { id: 'hr-pl03-description', path: 'appendixTemplates.PL03.description', label: 'PL03 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl03-fields', path: 'appendixTemplates.PL03.fields', label: 'PL03 - Danh sach field', type: 'tags' },
+          { id: 'hr-pl03-fields', path: 'appendixTemplates.PL03.fields', label: 'PL03 - Danh sach field', type: 'managedList', managedListType: 'fieldKey' },
 
           { id: 'hr-pl04-name', path: 'appendixTemplates.PL04.name', label: 'PL04 - Ten phu luc', type: 'text' },
           { id: 'hr-pl04-description', path: 'appendixTemplates.PL04.description', label: 'PL04 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl04-fields', path: 'appendixTemplates.PL04.fields', label: 'PL04 - Danh sach field', type: 'tags' },
+          { id: 'hr-pl04-fields', path: 'appendixTemplates.PL04.fields', label: 'PL04 - Danh sach field', type: 'managedList', managedListType: 'fieldKey' },
 
           { id: 'hr-pl05-name', path: 'appendixTemplates.PL05.name', label: 'PL05 - Ten phu luc', type: 'text' },
           { id: 'hr-pl05-description', path: 'appendixTemplates.PL05.description', label: 'PL05 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl05-fields', path: 'appendixTemplates.PL05.fields', label: 'PL05 - Danh sach field', type: 'tags' },
+          { id: 'hr-pl05-fields', path: 'appendixTemplates.PL05.fields', label: 'PL05 - Danh sach field', type: 'managedList', managedListType: 'fieldKey' },
 
           { id: 'hr-pl06-name', path: 'appendixTemplates.PL06.name', label: 'PL06 - Ten phu luc', type: 'text' },
           { id: 'hr-pl06-description', path: 'appendixTemplates.PL06.description', label: 'PL06 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl06-fields', path: 'appendixTemplates.PL06.fields', label: 'PL06 - Danh sach field', type: 'tags' },
+          { id: 'hr-pl06-fields', path: 'appendixTemplates.PL06.fields', label: 'PL06 - Danh sach field', type: 'managedList', managedListType: 'fieldKey' },
 
           { id: 'hr-pl10-name', path: 'appendixTemplates.PL10.name', label: 'PL10 - Ten phu luc', type: 'text' },
           { id: 'hr-pl10-description', path: 'appendixTemplates.PL10.description', label: 'PL10 - Mo ta', type: 'textarea' },
-          { id: 'hr-pl10-fields', path: 'appendixTemplates.PL10.fields', label: 'PL10 - Danh sach field', type: 'tags' }
+          { id: 'hr-pl10-fields', path: 'appendixTemplates.PL10.fields', label: 'PL10 - Danh sach field', type: 'managedList', managedListType: 'fieldKey' }
         ]
       }
     ]
@@ -1061,6 +1215,73 @@ function parseTagsInput(value: string) {
     .filter((item, index, array) => array.indexOf(item) === index);
 }
 
+function parseTemplateFieldKeyList(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+
+  const values: string[] = [];
+  for (const item of value) {
+    let fieldKey = '';
+    if (typeof item === 'string') {
+      fieldKey = item.trim();
+    } else if (item && typeof item === 'object') {
+      const row = item as Record<string, unknown>;
+      fieldKey = String(row.fieldKey ?? row.key ?? row.fieldId ?? '').trim();
+    }
+
+    if (!fieldKey) {
+      continue;
+    }
+
+    const normalized = fieldKey.toLowerCase();
+    if (!values.some((entry) => entry.toLowerCase() === normalized)) {
+      values.push(fieldKey);
+    }
+  }
+
+  return values;
+}
+
+function toManagedListItems(field: FieldConfig, value: unknown) {
+  if (field.managedListType === 'fieldKey') {
+    return parseTemplateFieldKeyList(value);
+  }
+  return toStringArray(value);
+}
+
+function buildHrAppendixFieldPickerOptions(data: Record<string, unknown>) {
+  const catalog = toRecord(getByPath(data, 'appendixFieldCatalog'));
+  const seen = new Set<string>();
+  const options: ManagedListPickerOption[] = [];
+
+  for (const [rawKey, rawField] of Object.entries(catalog)) {
+    const field = toRecord(rawField);
+    const value = String(field.key ?? rawKey ?? '').trim();
+    if (!value) {
+      continue;
+    }
+
+    const dedupeKey = value.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    const label = String(field.label ?? '').trim();
+    const type = String(field.type ?? '').trim().toLowerCase();
+    const baseLabel = label || value;
+
+    options.push({
+      value,
+      label: baseLabel === value ? value : `${baseLabel} (${value})`,
+      description: type ? `Kieu: ${type}` : undefined
+    });
+  }
+
+  return options.sort((left, right) => left.label.localeCompare(right.label, 'vi'));
+}
+
 function formatUserDomainMap(value: unknown) {
   const map = toRecord(value);
   return Object.keys(map)
@@ -1103,6 +1324,47 @@ function parseUserDomainMap(text: string) {
   }
 
   return result;
+}
+
+function toNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.trunc(parsed);
+}
+
+function normalizePositionRows(payload: Record<string, unknown>) {
+  return normalizeListPayload(payload)
+    .map((item) => {
+      const title = String(item.title ?? item.name ?? '').trim();
+      return {
+        id: String(item.id ?? '').trim(),
+        code: String(item.code ?? '').trim(),
+        title,
+        level: String(item.level ?? '').trim(),
+        status: String(item.status ?? '').trim().toUpperCase() || 'ACTIVE',
+        departmentName: String(item.departmentName ?? '').trim(),
+        employeeCount: toNumber(item.employeeCount),
+        permissionRuleCount: toNumber(item.permissionRuleCount)
+      } as PositionSummaryItem;
+    })
+    .filter((item) => item.id && item.title);
+}
+
+function normalizePositionEmployees(payload: Record<string, unknown>) {
+  return normalizeListPayload(payload)
+    .map((item) => {
+      return {
+        id: String(item.id ?? '').trim(),
+        code: String(item.code ?? '').trim(),
+        fullName: String(item.fullName ?? '').trim(),
+        email: String(item.email ?? '').trim(),
+        department: String(item.department ?? '').trim(),
+        status: String(item.status ?? '').trim().toUpperCase() || 'ACTIVE'
+      } as PositionEmployeeItem;
+    })
+    .filter((item) => item.id && item.fullName);
 }
 
 function createEmptyPermissionMatrix(): PermissionMatrix {
@@ -1165,7 +1427,11 @@ function getFieldValue(field: FieldConfig, data: Record<string, unknown>) {
     return raw === true;
   }
 
-  if (field.type === 'tags' || field.type === 'multiSelect') {
+  if (field.type === 'managedList') {
+    return toManagedListItems(field, raw);
+  }
+
+  if (field.type === 'tags' || field.type === 'multiSelect' || field.type === 'taxonomyManager') {
     return toStringArray(raw);
   }
 
@@ -1196,6 +1462,14 @@ function setFieldValue(field: FieldConfig, data: Record<string, unknown>, input:
     return setByPath(data, field.path, parseTagsInput(String(input ?? '')));
   }
 
+  if (field.type === 'managedList') {
+    return setByPath(data, field.path, toStringArray(input));
+  }
+
+  if (field.type === 'taxonomyManager') {
+    return setByPath(data, field.path, toStringArray(input));
+  }
+
   if (field.type === 'multiSelect') {
     return setByPath(data, field.path, toStringArray(input));
   }
@@ -1217,7 +1491,11 @@ function setFieldValue(field: FieldConfig, data: Record<string, unknown>, input:
 }
 
 function normalizeForComparison(field: FieldConfig, value: unknown) {
-  if (field.type === 'tags' || field.type === 'multiSelect') {
+  if (field.type === 'managedList') {
+    return toManagedListItems(field, value).sort();
+  }
+
+  if (field.type === 'tags' || field.type === 'multiSelect' || field.type === 'taxonomyManager') {
     return toStringArray(value).sort();
   }
 
@@ -1247,7 +1525,12 @@ function formatFieldValue(field: FieldConfig, value: unknown) {
     return value === true ? 'Bật' : 'Tắt';
   }
 
-  if (field.type === 'tags' || field.type === 'multiSelect') {
+  if (field.type === 'managedList') {
+    const list = toManagedListItems(field, value);
+    return list.length > 0 ? list.join(', ') : 'Chưa chọn';
+  }
+
+  if (field.type === 'tags' || field.type === 'multiSelect' || field.type === 'taxonomyManager') {
     const list = toStringArray(value);
     return list.length > 0 ? list.join(', ') : 'Chưa chọn';
   }
@@ -1385,6 +1668,10 @@ export function SettingsCenter() {
   const [reasonTemplate, setReasonTemplate] = useState<string>(REASON_TEMPLATES[0]);
   const [reasonNote, setReasonNote] = useState('');
   const [selectedSnapshotId, setSelectedSnapshotId] = useState('');
+  const [salesTaxonomy, setSalesTaxonomy] = useState<SalesTaxonomyPayload>(EMPTY_SALES_TAXONOMY);
+  const [salesTaxonomyBusy, setSalesTaxonomyBusy] = useState(false);
+  const [crmTagRegistry, setCrmTagRegistry] = useState<CrmTagRegistryPayload>(EMPTY_CRM_TAG_REGISTRY);
+  const [crmTagRegistryBusy, setCrmTagRegistryBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -1394,8 +1681,21 @@ export function SettingsCenter() {
   const [selectedIamUserIds, setSelectedIamUserIds] = useState<BulkRowId[]>([]);
   const [orgItems, setOrgItems] = useState<Record<string, unknown>[]>([]);
   const [orgTree, setOrgTree] = useState<Record<string, unknown>[]>([]);
-  const [positions, setPositions] = useState<Record<string, unknown>[]>([]);
+  const [positions, setPositions] = useState<PositionSummaryItem[]>([]);
   const [selectedPositionId, setSelectedPositionId] = useState('');
+  const [positionDetailTab, setPositionDetailTab] = useState<'permissions' | 'employees'>('permissions');
+  const [positionSearch, setPositionSearch] = useState('');
+  const [showPositionForm, setShowPositionForm] = useState(false);
+  const [positionFormMode, setPositionFormMode] = useState<'create' | 'edit'>('create');
+  const [positionForm, setPositionForm] = useState({
+    id: '',
+    title: '',
+    code: '',
+    level: '',
+    status: 'ACTIVE'
+  });
+  const [positionEmployees, setPositionEmployees] = useState<PositionEmployeeItem[]>([]);
+  const [positionEmployeesBusy, setPositionEmployeesBusy] = useState(false);
   const [selectedOverrideUserId, setSelectedOverrideUserId] = useState('');
   const [positionMatrix, setPositionMatrix] = useState<PermissionMatrix>(() => createEmptyPermissionMatrix());
   const [overrideMatrix, setOverrideMatrix] = useState<PermissionMatrix>(() => createEmptyPermissionMatrix());
@@ -1440,6 +1740,10 @@ export function SettingsCenter() {
     [domainConfig.sections, domainTabs, resolvedActiveDomainTab, advancedMode]
   );
   const originalData = useMemo(() => toRecord(domainResponse?.data), [domainResponse]);
+  const hrAppendixFieldPickerOptions = useMemo(
+    () => buildHrAppendixFieldPickerOptions(draftData),
+    [draftData]
+  );
 
   const submissionData = useMemo(
     () => buildSubmissionData(selectedDomain, originalData, draftData),
@@ -1465,11 +1769,30 @@ export function SettingsCenter() {
     () => mapFieldErrors(getDomainFields(selectedDomain), validationErrors),
     [selectedDomain, validationErrors]
   );
+  const canManagePositionCatalog = String(role ?? '').trim().toUpperCase() === 'ADMIN';
+  const selectedPosition = useMemo(
+    () => positions.find((item) => item.id === selectedPositionId) ?? null,
+    [positions, selectedPositionId]
+  );
+  const filteredPositions = useMemo(() => {
+    const keyword = positionSearch.trim().toLowerCase();
+    if (!keyword) {
+      return positions;
+    }
+    return positions.filter((item) => {
+      return (
+        item.title.toLowerCase().includes(keyword) ||
+        item.code.toLowerCase().includes(keyword) ||
+        item.level.toLowerCase().includes(keyword) ||
+        item.departmentName.toLowerCase().includes(keyword)
+      );
+    });
+  }, [positionSearch, positions]);
   const positionOptions = useMemo(() => {
     return positions
       .map((item) => ({
-        id: String(item.id ?? '').trim(),
-        name: String(item.name ?? '').trim()
+        id: item.id,
+        name: item.title
       }))
       .filter((item) => item.id && item.name);
   }, [positions]);
@@ -1527,40 +1850,55 @@ export function SettingsCenter() {
     setTestResult(null);
   };
 
+  const loadSalesTaxonomy = async () => {
+    const payload = await apiRequest<Partial<SalesTaxonomyPayload>>('/settings/sales-taxonomy');
+    setSalesTaxonomy({
+      stages: Array.isArray(payload.stages) ? payload.stages : [],
+      sources: Array.isArray(payload.sources) ? payload.sources : []
+    });
+  };
+
+  const loadCrmTagRegistry = async () => {
+    const payload = await apiRequest<Partial<CrmTagRegistryPayload>>('/settings/crm-tags');
+    setCrmTagRegistry({
+      customerTags: Array.isArray(payload.customerTags) ? payload.customerTags : [],
+      interactionTags: Array.isArray(payload.interactionTags) ? payload.interactionTags : [],
+      interactionResultTags: Array.isArray(payload.interactionResultTags) ? payload.interactionResultTags : []
+    });
+  };
+
   const loadEnterpriseData = async () => {
     const [iamPayload, orgPayload, positionPayload] = await Promise.all([
       apiRequest<Record<string, unknown>>('/settings/iam/users', {
         query: { limit: 120 }
       }),
       apiRequest<Record<string, unknown>>('/settings/organization/tree'),
-      apiRequest<Record<string, unknown>>('/hr/positions', {
-        query: { limit: 200 }
+      apiRequest<Record<string, unknown>>('/settings/positions', {
+        query: { limit: 300 }
       })
     ]);
 
     const iamItems = normalizeListPayload(iamPayload);
     const orgRows = Array.isArray(orgPayload.items) ? (orgPayload.items as Record<string, unknown>[]) : [];
     const orgRoots = Array.isArray(orgPayload.tree) ? (orgPayload.tree as Record<string, unknown>[]) : [];
-    const positionItems = normalizeListPayload(positionPayload);
+    const positionItems = normalizePositionRows(positionPayload);
 
     setIamUsers(iamItems);
     setOrgItems(orgRows);
     setOrgTree(orgRoots);
     setPositions(positionItems);
-
-    if (!selectedPositionId) {
-      const firstPositionId = String(positionItems[0]?.id ?? '').trim();
-      if (firstPositionId) {
-        setSelectedPositionId(firstPositionId);
+    setSelectedPositionId((current) => {
+      if (current && positionItems.some((item) => item.id === current)) {
+        return current;
       }
-    }
-
-    if (!selectedOverrideUserId) {
-      const firstUserId = String(iamItems[0]?.id ?? '').trim();
-      if (firstUserId) {
-        setSelectedOverrideUserId(firstUserId);
+      return positionItems[0]?.id ?? '';
+    });
+    setSelectedOverrideUserId((current) => {
+      if (current && iamItems.some((item) => String(item.id ?? '').trim() === current)) {
+        return current;
       }
-    }
+      return String(iamItems[0]?.id ?? '').trim();
+    });
   };
 
   const reloadAll = async (domain = selectedDomain) => {
@@ -1568,11 +1906,13 @@ export function SettingsCenter() {
     setError(null);
     const failures: string[] = [];
 
-    const [centerResult, domainResult, enterpriseResult] = await Promise.allSettled([
+    const [centerResult, domainResult, enterpriseResult, layoutResult, salesTaxonomyResult, crmTagRegistryResult] = await Promise.allSettled([
       loadCenter(),
       loadDomain(domain),
       loadEnterpriseData(),
-      loadLayout()
+      loadLayout(),
+      loadSalesTaxonomy(),
+      loadCrmTagRegistry()
     ]);
 
     if (centerResult.status === 'rejected') {
@@ -1583,6 +1923,15 @@ export function SettingsCenter() {
     }
     if (enterpriseResult.status === 'rejected') {
       failures.push(toSettingsFriendlyError(enterpriseResult.reason, 'Không tải được dữ liệu tổ chức/IAM.'));
+    }
+    if (layoutResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(layoutResult.reason, 'Không tải được metadata layout settings.'));
+    }
+    if (salesTaxonomyResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(salesTaxonomyResult.reason, 'Không tải được taxonomy CRM.'));
+    }
+    if (crmTagRegistryResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(crmTagRegistryResult.reason, 'Không tải được CRM tag registry.'));
     }
 
     if (failures.length > 0) {
@@ -1632,6 +1981,42 @@ export function SettingsCenter() {
       } catch {
         if (mounted) {
           setPositionMatrix(createEmptyPermissionMatrix());
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      mounted = false;
+    };
+  }, [selectedPositionId]);
+
+  useEffect(() => {
+    if (!selectedPositionId) {
+      setPositionEmployees([]);
+      setPositionEmployeesBusy(false);
+      return;
+    }
+
+    let mounted = true;
+    setPositionEmployeesBusy(true);
+    const load = async () => {
+      try {
+        const payload = await apiRequest<Record<string, unknown>>(`/settings/positions/${selectedPositionId}/employees`, {
+          query: {
+            limit: 300
+          }
+        });
+        if (mounted) {
+          setPositionEmployees(normalizePositionEmployees(payload));
+        }
+      } catch {
+        if (mounted) {
+          setPositionEmployees([]);
+        }
+      } finally {
+        if (mounted) {
+          setPositionEmployeesBusy(false);
         }
       }
     };
@@ -1767,6 +2152,144 @@ export function SettingsCenter() {
       setError(toSettingsFriendlyError(snapshotError, 'Tạo snapshot thất bại.'));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const isSalesTaxonomyType = (type: TaxonomyManagerType): type is SalesTaxonomyType => (
+    type === 'stages' || type === 'sources'
+  );
+
+  const isCrmTagRegistryType = (type: TaxonomyManagerType): type is CrmTagRegistryType => (
+    type === 'customerTags' || type === 'interactionTags' || type === 'interactionResultTags'
+  );
+
+  const handleCreateSalesTaxonomy = async (type: SalesTaxonomyType, value: string) => {
+    setSalesTaxonomyBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/sales-taxonomy/${type}`, {
+        method: 'POST',
+        body: {
+          value,
+          reasonTemplate,
+          reasonNote
+        }
+      });
+      await Promise.all([loadSalesTaxonomy(), loadCenter(), selectedDomain === 'sales_crm_policies' ? loadDomain(selectedDomain) : Promise.resolve()]);
+      setMessage('Đã thêm taxonomy CRM thành công.');
+    } catch (taxonomyError) {
+      setError(toSettingsFriendlyError(taxonomyError, 'Không thể thêm taxonomy CRM.'));
+    } finally {
+      setSalesTaxonomyBusy(false);
+    }
+  };
+
+  const handleRenameSalesTaxonomy = async (type: SalesTaxonomyType, currentValue: string, nextValue: string) => {
+    setSalesTaxonomyBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/sales-taxonomy/${type}/${encodeURIComponent(currentValue)}`, {
+        method: 'PATCH',
+        body: {
+          nextValue,
+          reasonTemplate,
+          reasonNote
+        }
+      });
+      await Promise.all([loadSalesTaxonomy(), loadCenter(), selectedDomain === 'sales_crm_policies' ? loadDomain(selectedDomain) : Promise.resolve()]);
+      setMessage('Đã cập nhật taxonomy CRM thành công.');
+    } catch (taxonomyError) {
+      setError(toSettingsFriendlyError(taxonomyError, 'Không thể cập nhật taxonomy CRM.'));
+    } finally {
+      setSalesTaxonomyBusy(false);
+    }
+  };
+
+  const handleDeleteSalesTaxonomy = async (type: SalesTaxonomyType, value: string) => {
+    setSalesTaxonomyBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/sales-taxonomy/${type}/${encodeURIComponent(value)}`, {
+        method: 'DELETE',
+        body: {
+          reasonTemplate,
+          reasonNote
+        }
+      });
+      await Promise.all([loadSalesTaxonomy(), loadCenter(), selectedDomain === 'sales_crm_policies' ? loadDomain(selectedDomain) : Promise.resolve()]);
+      setMessage('Đã xóa taxonomy CRM thành công.');
+    } catch (taxonomyError) {
+      setError(toSettingsFriendlyError(taxonomyError, 'Không thể xóa taxonomy CRM.'));
+    } finally {
+      setSalesTaxonomyBusy(false);
+    }
+  };
+
+  const handleCreateCrmTagRegistry = async (type: CrmTagRegistryType, value: string) => {
+    setCrmTagRegistryBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/crm-tags/${type}`, {
+        method: 'POST',
+        body: {
+          value,
+          reasonTemplate,
+          reasonNote
+        }
+      });
+      await Promise.all([loadCrmTagRegistry(), loadCenter(), selectedDomain === 'sales_crm_policies' ? loadDomain(selectedDomain) : Promise.resolve()]);
+      setMessage('Đã thêm CRM tag thành công.');
+    } catch (registryError) {
+      setError(toSettingsFriendlyError(registryError, 'Không thể thêm CRM tag.'));
+    } finally {
+      setCrmTagRegistryBusy(false);
+    }
+  };
+
+  const handleRenameCrmTagRegistry = async (type: CrmTagRegistryType, currentValue: string, nextValue: string) => {
+    setCrmTagRegistryBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/crm-tags/${type}/${encodeURIComponent(currentValue)}`, {
+        method: 'PATCH',
+        body: {
+          nextValue,
+          reasonTemplate,
+          reasonNote
+        }
+      });
+      await Promise.all([loadCrmTagRegistry(), loadCenter(), selectedDomain === 'sales_crm_policies' ? loadDomain(selectedDomain) : Promise.resolve()]);
+      setMessage('Đã cập nhật CRM tag thành công.');
+    } catch (registryError) {
+      setError(toSettingsFriendlyError(registryError, 'Không thể cập nhật CRM tag.'));
+    } finally {
+      setCrmTagRegistryBusy(false);
+    }
+  };
+
+  const handleDeleteCrmTagRegistry = async (type: CrmTagRegistryType, value: string) => {
+    setCrmTagRegistryBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/crm-tags/${type}/${encodeURIComponent(value)}`, {
+        method: 'DELETE',
+        body: {
+          reasonTemplate,
+          reasonNote
+        }
+      });
+      await Promise.all([loadCrmTagRegistry(), loadCenter(), selectedDomain === 'sales_crm_policies' ? loadDomain(selectedDomain) : Promise.resolve()]);
+      setMessage('Đã xóa CRM tag thành công.');
+    } catch (registryError) {
+      setError(toSettingsFriendlyError(registryError, 'Không thể xóa CRM tag.'));
+    } finally {
+      setCrmTagRegistryBusy(false);
     }
   };
 
@@ -2002,6 +2525,109 @@ export function SettingsCenter() {
       await loadEnterpriseData();
     } catch (moveError) {
       setError(toSettingsFriendlyError(moveError, 'Di chuyển node thất bại.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPositionForm = () => {
+    setPositionForm({
+      id: '',
+      title: '',
+      code: '',
+      level: '',
+      status: 'ACTIVE'
+    });
+  };
+
+  const handleOpenCreatePosition = () => {
+    setPositionFormMode('create');
+    resetPositionForm();
+    setShowPositionForm(true);
+  };
+
+  const handleOpenEditPosition = (item: PositionSummaryItem) => {
+    setPositionFormMode('edit');
+    setPositionForm({
+      id: item.id,
+      title: item.title,
+      code: item.code,
+      level: item.level,
+      status: item.status || 'ACTIVE'
+    });
+    setShowPositionForm(true);
+  };
+
+  const handleCancelPositionForm = () => {
+    setShowPositionForm(false);
+    resetPositionForm();
+  };
+
+  const handleSubmitPositionForm = async () => {
+    const title = positionForm.title.trim();
+    if (!title) {
+      setError('Tên vị trí không được để trống.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const path = positionFormMode === 'create'
+        ? '/settings/positions'
+        : `/settings/positions/${positionForm.id}`;
+      const method = positionFormMode === 'create' ? 'POST' : 'PATCH';
+      const payload = await apiRequest<Record<string, unknown>>(path, {
+        method,
+        body: {
+          title,
+          code: positionForm.code.trim() || undefined,
+          level: positionForm.level.trim() || undefined,
+          status: positionForm.status
+        }
+      });
+      const createdOrUpdated = toRecord(payload.position);
+      const nextId = String(createdOrUpdated.id ?? '').trim();
+
+      setMessage(positionFormMode === 'create' ? 'Đã thêm vị trí công việc.' : 'Đã cập nhật vị trí công việc.');
+      setShowPositionForm(false);
+      resetPositionForm();
+      await loadEnterpriseData();
+      if (nextId) {
+        setSelectedPositionId(nextId);
+      }
+    } catch (positionError) {
+      setError(
+        toSettingsFriendlyError(
+          positionError,
+          positionFormMode === 'create' ? 'Thêm vị trí thất bại.' : 'Cập nhật vị trí thất bại.'
+        )
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeletePosition = async (item: PositionSummaryItem) => {
+    const accepted = window.confirm(`Xóa vị trí '${item.title}'?`);
+    if (!accepted) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/settings/positions/${item.id}`, {
+        method: 'DELETE'
+      });
+      setMessage('Đã xóa vị trí công việc.');
+      if (selectedPositionId === item.id) {
+        setSelectedPositionId('');
+        setPositionDetailTab('permissions');
+      }
+      await loadEnterpriseData();
+    } catch (deleteError) {
+      setError(toSettingsFriendlyError(deleteError, 'Xóa vị trí thất bại.'));
     } finally {
       setBusy(false);
     }
@@ -2278,6 +2904,38 @@ export function SettingsCenter() {
                       );
                     }
 
+                    if (field.type === 'managedList') {
+                      const managedListType = field.managedListType;
+                      if (!managedListType) {
+                        return (
+                          <div className="field" key={field.id}>
+                            <label>{field.label}</label>
+                            <small style={{ color: '#b91c1c' }}>Thiếu cấu hình managedListType cho field này.</small>
+                          </div>
+                        );
+                      }
+
+                      const pickerOptions = managedListType === 'fieldKey'
+                        ? hrAppendixFieldPickerOptions
+                        : undefined;
+
+                      return (
+                        <div className="field" key={field.id} style={{ gridColumn: '1 / -1' }}>
+                          <SettingsListManagerField
+                            title={field.label}
+                            description={field.helper}
+                            listType={managedListType}
+                            items={toManagedListItems(field, value)}
+                            pickerOptions={pickerOptions}
+                            busy={busy}
+                            testId={field.id}
+                            onChange={(nextValues) => updateField(field, nextValues)}
+                          />
+                          {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
+                        </div>
+                      );
+                    }
+
                     if (field.type === 'tags') {
                       const text = toStringArray(value).join(', ');
                       return (
@@ -2291,6 +2949,71 @@ export function SettingsCenter() {
                             onChange={(event) => updateField(field, event.target.value)}
                           />
                           {field.helper && <small>{field.helper}</small>}
+                          {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
+                        </div>
+                      );
+                    }
+
+                    if (field.type === 'taxonomyManager') {
+                      const managerType = field.taxonomyType;
+                      if (!managerType) {
+                        return (
+                          <div className="field" key={field.id}>
+                            <label>{field.label}</label>
+                            <small style={{ color: '#b91c1c' }}>Thiếu cấu hình taxonomyType cho field này.</small>
+                          </div>
+                        );
+                      }
+
+                      if (isSalesTaxonomyType(managerType)) {
+                        return (
+                          <div className="field" key={field.id} style={{ gridColumn: '1 / -1' }}>
+                            <TaxonomyManagerField
+                              type={managerType}
+                              title={field.label}
+                              description={field.helper}
+                              items={salesTaxonomy[managerType]}
+                              busy={busy || salesTaxonomyBusy}
+                              normalization="none"
+                              valueLabel="Gia tri taxonomy"
+                              searchPlaceholder="Tim kiem taxonomy..."
+                              inputPlaceholder="Vi du: DANG_TU_VAN"
+                              inputHelper="Gia tri taxonomy duoc giu nguyen theo cach nhap."
+                              onCreate={handleCreateSalesTaxonomy}
+                              onRename={handleRenameSalesTaxonomy}
+                              onDelete={handleDeleteSalesTaxonomy}
+                            />
+                            {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
+                          </div>
+                        );
+                      }
+
+                      if (!isCrmTagRegistryType(managerType)) {
+                        return (
+                          <div className="field" key={field.id}>
+                            <label>{field.label}</label>
+                            <small style={{ color: '#b91c1c' }}>taxonomyType không hợp lệ cho field này.</small>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="field" key={field.id} style={{ gridColumn: '1 / -1' }}>
+                          <TaxonomyManagerField
+                            type={managerType}
+                            title={field.label}
+                            description={field.helper}
+                            items={crmTagRegistry[managerType]}
+                            busy={busy || crmTagRegistryBusy}
+                            normalization="lower"
+                            valueLabel="Gia tri tag"
+                            searchPlaceholder="Tim kiem CRM tag..."
+                            inputPlaceholder="Vi du: vip"
+                            inputHelper="Gia tri se duoc chuan hoa lowercase de dong nhat CRM tag registry."
+                            onCreate={handleCreateCrmTagRegistry}
+                            onRename={handleRenameCrmTagRegistry}
+                            onDelete={handleDeleteCrmTagRegistry}
+                          />
                           {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
                         </div>
                       );
@@ -2681,68 +3404,290 @@ export function SettingsCenter() {
 
           {selectedDomain === 'access_security' && activeTabConfig?.showAccessMatrix === true && (
             <section style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem', marginTop: '0.9rem' }}>
-              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Ma trận quyền chi tiết (view/create/update/delete/approve)</h4>
+              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Trung tâm cấu hình vị trí và phân quyền</h4>
               <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
-                Engine ưu tiên DENY theo policy. Mỗi ô có thể chọn: Không cấu hình, ALLOW, hoặc DENY.
+                Quản trị tập trung danh sách vị trí, số nhân sự theo vị trí và ma trận quyền chi tiết theo từng hành động.
               </p>
 
               <div style={{ marginTop: '0.6rem', display: 'grid', gap: '0.65rem' }}>
                 <div style={{ border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
-                    <strong style={{ fontSize: '0.82rem' }}>Quyền theo vị trí</strong>
-                    <select
-                      value={selectedPositionId}
-                      onChange={(event) => setSelectedPositionId(event.target.value)}
-                      style={{ minWidth: '220px' }}
-                    >
-                      <option value="">-- Chọn vị trí --</option>
-                      {positionOptions.map((item) => (
-                        <option key={`perm-position-${item.id}`} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '0.82rem' }}>Danh sách vị trí công việc</strong>
+                    <div style={{ display: 'inline-flex', gap: '0.45rem' }}>
+                      {canManagePositionCatalog ? (
+                        <button type="button" className="btn btn-primary" onClick={handleOpenCreatePosition} disabled={busy}>
+                          Thêm vị trí
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Chỉ ADMIN được thêm/sửa/xóa vị trí.</span>
+                      )}
+                    </div>
                   </div>
+
+                  {showPositionForm && (
+                    <div style={{ marginTop: '0.55rem', border: '1px dashed #dbe9df', borderRadius: '8px', padding: '0.55rem' }}>
+                      <strong style={{ fontSize: '0.82rem' }}>
+                        {positionFormMode === 'create' ? 'Thêm vị trí mới' : 'Cập nhật vị trí'}
+                      </strong>
+                      <div className="form-grid" style={{ marginTop: '0.45rem' }}>
+                        <div className="field">
+                          <label>Tên vị trí</label>
+                          <input
+                            value={positionForm.title}
+                            onChange={(event) => setPositionForm((current) => ({ ...current, title: event.target.value }))}
+                            placeholder="Ví dụ: Trưởng phòng kinh doanh"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Mã vị trí</label>
+                          <input
+                            value={positionForm.code}
+                            onChange={(event) => setPositionForm((current) => ({ ...current, code: event.target.value }))}
+                            placeholder="SALES_MANAGER"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Cấp vị trí</label>
+                          <input
+                            value={positionForm.level}
+                            onChange={(event) => setPositionForm((current) => ({ ...current, level: event.target.value }))}
+                            placeholder="MANAGER / LEAD / STAFF"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Trạng thái</label>
+                          <select
+                            value={positionForm.status}
+                            onChange={(event) => setPositionForm((current) => ({ ...current, status: event.target.value }))}
+                          >
+                            {POSITION_STATUS_OPTIONS.map((item) => (
+                              <option key={`position-status-${item.value}`} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '0.45rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                        <button type="button" className="btn btn-ghost" onClick={handleCancelPositionForm} disabled={busy}>
+                          Hủy
+                        </button>
+                        <button type="button" className="btn btn-primary" onClick={handleSubmitPositionForm} disabled={busy}>
+                          {positionFormMode === 'create' ? 'Thêm vị trí' : 'Lưu thay đổi'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: '0.55rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                    <input
+                      style={{ maxWidth: '320px' }}
+                      value={positionSearch}
+                      onChange={(event) => setPositionSearch(event.target.value)}
+                      placeholder="Tìm vị trí theo tên/mã/cấp..."
+                    />
+                    <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                      {filteredPositions.length}/{positions.length} vị trí
+                    </span>
+                  </div>
+
                   <div className="table-wrap" style={{ marginTop: '0.45rem' }}>
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Module</th>
-                          {PERMISSION_ACTIONS.map((action) => (
-                            <th key={`position-action-${action}`}>{action}</th>
-                          ))}
+                          <th>Vị trí</th>
+                          <th>Mã</th>
+                          <th>Cấp</th>
+                          <th>Bộ phận</th>
+                          <th>Nhân sự</th>
+                          <th>Rule quyền</th>
+                          <th>Trạng thái</th>
+                          <th>Hành động</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {PERMISSION_MODULE_KEYS.map((moduleKey) => (
-                          <tr key={`position-module-${moduleKey}`}>
-                            <td>{moduleKey}</td>
-                            {PERMISSION_ACTIONS.map((action) => (
-                              <td key={`position-${moduleKey}-${action}`}>
-                                <select
-                                  value={positionMatrix[moduleKey]?.[action] ?? ''}
-                                  onChange={(event) => updateMatrixCell(setPositionMatrix, moduleKey, action, event.target.value as PermissionEffectValue)}
-                                >
-                                  <option value="">--</option>
-                                  <option value="ALLOW">ALLOW</option>
-                                  <option value="DENY">DENY</option>
-                                </select>
-                              </td>
-                            ))}
+                        {filteredPositions.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} style={{ color: 'var(--muted)' }}>
+                              Chưa có vị trí nào.
+                            </td>
                           </tr>
-                        ))}
+                        ) : (
+                          filteredPositions.map((item) => (
+                            <tr key={`position-row-${item.id}`} style={item.id === selectedPositionId ? { background: '#f5fbf7' } : undefined}>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() => {
+                                    setSelectedPositionId(item.id);
+                                    setPositionDetailTab('permissions');
+                                  }}
+                                  style={{ padding: 0, minHeight: 'unset' }}
+                                >
+                                  {item.title}
+                                </button>
+                              </td>
+                              <td>{item.code || '--'}</td>
+                              <td>{item.level || '--'}</td>
+                              <td>{item.departmentName || '--'}</td>
+                              <td>{item.employeeCount.toLocaleString('vi-VN')}</td>
+                              <td>{item.permissionRuleCount.toLocaleString('vi-VN')}</td>
+                              <td>{item.status}</td>
+                              <td>
+                                <div style={{ display: 'inline-flex', gap: '0.35rem' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost"
+                                    onClick={() => handleOpenEditPosition(item)}
+                                    disabled={!canManagePositionCatalog || busy}
+                                  >
+                                    Sửa
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost"
+                                    onClick={() => void handleDeletePosition(item)}
+                                    disabled={!canManagePositionCatalog || busy || item.employeeCount > 0}
+                                    title={item.employeeCount > 0 ? 'Không thể xóa vì đang có nhân sự.' : 'Xóa vị trí'}
+                                  >
+                                    Xóa
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    style={{ marginTop: '0.55rem' }}
-                    onClick={handleSavePositionPermissions}
-                    disabled={busy || !selectedPositionId}
-                  >
-                    Lưu quyền theo vị trí
-                  </button>
+                </div>
+
+                <div style={{ border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '0.82rem' }}>
+                      {selectedPosition ? `Chi tiết vị trí: ${selectedPosition.title}` : 'Chi tiết vị trí'}
+                    </strong>
+                    {selectedPosition && (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                        Nhân sự: {selectedPosition.employeeCount.toLocaleString('vi-VN')} • Rules: {selectedPosition.permissionRuleCount.toLocaleString('vi-VN')}
+                      </span>
+                    )}
+                  </div>
+
+                  {!selectedPosition ? (
+                    <p style={{ marginTop: '0.45rem', color: 'var(--muted)', fontSize: '0.82rem' }}>
+                      Chọn một vị trí trong danh sách để mở trang chi tiết quyền và danh sách nhân viên.
+                    </p>
+                  ) : (
+                    <>
+                      <div style={{ marginTop: '0.45rem', display: 'inline-flex', gap: '0.45rem' }}>
+                        <button
+                          type="button"
+                          className={positionDetailTab === 'permissions' ? 'btn btn-primary' : 'btn btn-ghost'}
+                          onClick={() => setPositionDetailTab('permissions')}
+                        >
+                          Chi tiết quyền
+                        </button>
+                        <button
+                          type="button"
+                          className={positionDetailTab === 'employees' ? 'btn btn-primary' : 'btn btn-ghost'}
+                          onClick={() => setPositionDetailTab('employees')}
+                        >
+                          Danh sách nhân viên
+                        </button>
+                      </div>
+
+                      {positionDetailTab === 'permissions' ? (
+                        <>
+                          <p style={{ marginTop: '0.45rem', marginBottom: 0, fontSize: '0.8rem', color: 'var(--muted)' }}>
+                            Engine ưu tiên DENY theo policy. Mỗi ô có thể chọn: Không cấu hình, ALLOW, hoặc DENY.
+                          </p>
+                          <div className="table-wrap" style={{ marginTop: '0.45rem' }}>
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Module</th>
+                                  {PERMISSION_ACTIONS.map((action) => (
+                                    <th key={`position-action-${action}`}>{action}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {PERMISSION_MODULE_KEYS.map((moduleKey) => (
+                                  <tr key={`position-module-${moduleKey}`}>
+                                    <td>{moduleKey}</td>
+                                    {PERMISSION_ACTIONS.map((action) => (
+                                      <td key={`position-${moduleKey}-${action}`}>
+                                        <select
+                                          value={positionMatrix[moduleKey]?.[action] ?? ''}
+                                          onChange={(event) =>
+                                            updateMatrixCell(setPositionMatrix, moduleKey, action, event.target.value as PermissionEffectValue)
+                                          }
+                                        >
+                                          <option value="">--</option>
+                                          <option value="ALLOW">ALLOW</option>
+                                          <option value="DENY">DENY</option>
+                                        </select>
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            style={{ marginTop: '0.55rem' }}
+                            onClick={handleSavePositionPermissions}
+                            disabled={busy || !selectedPositionId}
+                          >
+                            Lưu quyền theo vị trí
+                          </button>
+                        </>
+                      ) : (
+                        <div className="table-wrap" style={{ marginTop: '0.45rem' }}>
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Mã NV</th>
+                                <th>Họ tên</th>
+                                <th>Email</th>
+                                <th>Bộ phận</th>
+                                <th>Trạng thái</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {positionEmployeesBusy ? (
+                                <tr>
+                                  <td colSpan={5} style={{ color: 'var(--muted)' }}>
+                                    Đang tải danh sách nhân viên...
+                                  </td>
+                                </tr>
+                              ) : positionEmployees.length === 0 ? (
+                                <tr>
+                                  <td colSpan={5} style={{ color: 'var(--muted)' }}>
+                                    Chưa có nhân viên thuộc vị trí này.
+                                  </td>
+                                </tr>
+                              ) : (
+                                positionEmployees.map((employee) => (
+                                  <tr key={`position-employee-${employee.id}`}>
+                                    <td>{employee.code || '--'}</td>
+                                    <td>{employee.fullName}</td>
+                                    <td>{employee.email || '--'}</td>
+                                    <td>{employee.department || '--'}</td>
+                                    <td>{employee.status}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 <div style={{ border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}>
