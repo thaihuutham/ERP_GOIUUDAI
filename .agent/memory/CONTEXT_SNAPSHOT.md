@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-04 17:35 +07
+- Time: 2026-04-04 21:05 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-04_1735_codex.md`
+- Session Log: `.agent/sessions/2026-04-04_2105_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,41 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-04 21:05 (Access Security UX simplification + role-first flow)
+- User yêu cầu redesign trang `Bảo mật truy cập` vì quá dài, khó thao tác/quan sát; đồng thời đơn giản luồng dùng theo vai trò `ADMIN / MANAGER / STAFF`.
+- Đã triển khai:
+  - Tách tab `access_security` thành 4 nhóm rõ ràng:
+    - `Đăng nhập & mật khẩu`
+    - `Phân quyền hệ thống`
+    - `Nhật ký & Trợ lý AI`
+    - `Ma trận quyền hạn`
+  - Áp dụng lọc tab theo role để giảm overload:
+    - ADMIN: đầy đủ tab.
+    - MANAGER: chỉ các tab theo dõi vận hành.
+    - STAFF: chỉ tab đăng nhập/mật khẩu.
+  - Thêm section-card có nút `Thu gọn/Mở rộng`; trong `access_security` mặc định chỉ mở section đầu.
+  - Thêm role playbook trong UI để hướng dẫn thao tác nhanh theo từng vai trò.
+- Metadata/layout đồng bộ backend:
+  - cập nhật `apps/api/src/modules/settings/settings-layout.metadata.ts` theo tab IA mới.
+- Test cập nhật:
+  - unit: `apps/web/components/settings-center/__tests__/view-model.test.ts` (tab map + role filter).
+  - e2e: cập nhật navigation tab mới trong:
+    - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+    - `apps/web/e2e/tests/settings-center-audit-scope.spec.ts`
+- ADR mới:
+  - `docs/decisions/ADR-042-ACCESS-SECURITY-ROLE-FIRST-IA-CHUNKING.md`
+- Verify gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅ (`16 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`6 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4296 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
 
 ## Update 2026-04-04 17:35 (Settings Center Position & Permission Hub)
 - User yêu cầu đưa toàn bộ cấu hình vị trí + quyền theo vị trí vào Trung tâm cấu hình hệ thống.

@@ -2,9 +2,49 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-04 17:35 +07
+- Last updated: 2026-04-04 21:05 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-04 21:05 +07 (Access Security UX simplification + role-first flow)
+- User yêu cầu:
+  - trang `Bảo mật truy cập` đang quá dài, khó thao tác,
+  - cần thiết kế lại theo hướng chia nhỏ dữ liệu/khối thao tác,
+  - tối giản luồng sử dụng cho `admin/manager/nhân viên`.
+- Đã triển khai:
+  - IA domain `access_security` được tách thành 4 tab nhỏ:
+    - `Đăng nhập & mật khẩu`
+    - `Phân quyền hệ thống`
+    - `Nhật ký & Trợ lý AI`
+    - `Ma trận quyền hạn` (giữ hub vị trí + permission matrix).
+  - Bổ sung filter tab theo role để giảm overload:
+    - `ADMIN`: toàn bộ tab.
+    - `MANAGER`: `Đăng nhập & mật khẩu`, `Nhật ký & Trợ lý AI`.
+    - `STAFF`: `Đăng nhập & mật khẩu`.
+  - Thêm section card `Thu gọn/Mở rộng`; mặc định trong `access_security` chỉ mở section đầu tiên.
+  - Thêm role playbook trong domain `access_security` để hướng dẫn thao tác nhanh theo từng vai trò.
+- File cập nhật chính:
+  - `apps/web/components/settings-center/view-model.ts`
+  - `apps/api/src/modules/settings/settings-layout.metadata.ts`
+  - `apps/web/components/settings-center.tsx`
+  - `apps/web/app/styles/modules/workbench.css`
+  - tests:
+    - `apps/web/components/settings-center/__tests__/view-model.test.ts`
+    - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+    - `apps/web/e2e/tests/settings-center-audit-scope.spec.ts`
+- ADR mới:
+  - `docs/decisions/ADR-042-ACCESS-SECURITY-ROLE-FIRST-IA-CHUNKING.md`
+- Verify theo System Stability Gate:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅ (`16 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`6 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4296 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
 
 ## Session Update 2026-04-04 17:35 +07 (Settings Center - Position & Permission Hub)
 - User yêu cầu:

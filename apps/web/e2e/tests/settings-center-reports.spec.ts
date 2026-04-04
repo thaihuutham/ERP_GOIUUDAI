@@ -126,6 +126,10 @@ function buildDomainPayload(domain: string) {
 
 test.describe('Settings Center reports alignment', () => {
   test('renders phase-2 managed list fields for security and finance domains', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('erp_web_role', 'ADMIN');
+    });
+
     await page.route('**/api/v1/**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -190,6 +194,7 @@ test.describe('Settings Center reports alignment', () => {
     await page.goto('/modules/settings');
 
     await page.getByRole('button', { name: 'Bảo mật truy cập' }).click();
+    await page.getByRole('tab', { name: 'Phân quyền hệ thống' }).click();
     await expect(page.locator('[data-testid="list-manager-security-super-admin-legacy"]')).toBeVisible();
     await expect(page.locator('[data-testid="list-manager-security-perm-super-admin-emails"]')).toBeVisible();
 

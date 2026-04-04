@@ -99,6 +99,10 @@ const ACCESS_SECURITY_DOMAIN = {
 
 test.describe('Settings Center audit scope matrix', () => {
   test('renders audit scope controls, includes audit permission module, and saves branch toggle', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('erp_web_role', 'ADMIN');
+    });
+
     let savedAccessSecurityBody: any = null;
 
     await page.route('**/api/v1/**', async (route) => {
@@ -202,10 +206,12 @@ test.describe('Settings Center audit scope matrix', () => {
     await page.goto('/modules/settings');
     await page.getByRole('button', { name: 'Bảo mật truy cập' }).click();
 
+    await page.getByRole('tab', { name: 'Phân quyền hệ thống' }).click();
     await expect(page.locator('[data-testid="list-manager-security-super-admin-legacy"]')).toBeVisible();
     await expect(page.locator('[data-testid="list-manager-security-perm-super-admin-ids"]')).toBeVisible();
     await expect(page.locator('[data-testid="list-manager-security-perm-super-admin-emails"]')).toBeVisible();
 
+    await page.getByRole('tab', { name: 'Nhật ký & Trợ lý AI' }).click();
     await expect(page.getByText('Phân quyền nhật ký hệ thống theo cấp quản lý')).toBeVisible();
     await expect(page.getByLabel('Giám đốc: xem toàn công ty')).toBeChecked();
     await expect(page.getByLabel('Trưởng chi nhánh: xem trong phạm vi chi nhánh')).toBeChecked();
@@ -215,7 +221,7 @@ test.describe('Settings Center audit scope matrix', () => {
     await page.getByRole('tab', { name: 'Ma trận quyền hạn' }).click();
     await expect(page.getByRole('cell', { name: 'audit' }).first()).toBeVisible();
 
-    await page.getByRole('tab', { name: 'Chính sách bảo mật' }).click();
+    await page.getByRole('tab', { name: 'Nhật ký & Trợ lý AI' }).click();
     await page.getByLabel('Trưởng chi nhánh: xem trong phạm vi chi nhánh').uncheck();
     await page.getByRole('button', { name: 'Lưu cấu hình' }).click();
 

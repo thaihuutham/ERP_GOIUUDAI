@@ -18,6 +18,7 @@ import {
   type ManagedListType
 } from './settings-center/settings-list-manager-field';
 import {
+  filterDomainTabsByRole,
   filterSectionsForTabAndMode,
   resolveActiveTab,
   resolveDefaultAdvancedMode,
@@ -350,6 +351,42 @@ const REASON_TEMPLATES = [
   'Tối ưu tìm kiếm và hiệu năng',
   'Điều chỉnh vòng đời dữ liệu',
   'Tăng mức tự động hóa giám sát AI'
+] as const;
+
+const ROLE_LABEL_MAP: Record<string, string> = {
+  ADMIN: 'Admin',
+  MANAGER: 'Manager',
+  STAFF: 'Nhân viên'
+};
+
+const ACCESS_SECURITY_ROLE_PLAYBOOK = [
+  {
+    role: 'ADMIN',
+    title: 'Thiết lập toàn cục',
+    steps: [
+      'Cấu hình chính sách đăng nhập/mật khẩu theo tiêu chuẩn công ty.',
+      'Quản trị phân quyền hệ thống và ma trận quyền theo vị trí.',
+      'Rà soát nhật ký + chính sách AI trước khi lưu.'
+    ]
+  },
+  {
+    role: 'MANAGER',
+    title: 'Theo dõi phạm vi quản lý',
+    steps: [
+      'Kiểm tra chính sách đăng nhập áp dụng cho đội nhóm.',
+      'Theo dõi tab nhật ký & Trợ lý AI theo phạm vi phòng/chi nhánh.',
+      'Đề xuất thay đổi cho Admin khi cần mở rộng quyền.'
+    ]
+  },
+  {
+    role: 'STAFF',
+    title: 'Sử dụng tối giản',
+    steps: [
+      'Chỉ theo dõi hướng dẫn đăng nhập/mật khẩu liên quan trực tiếp.',
+      'Không cần thao tác ở ma trận phân quyền.',
+      'Báo lỗi truy cập qua quản lý trực tiếp hoặc Admin.'
+    ]
+  }
 ] as const;
 
 type SettingsLayoutPayload = {
@@ -1673,6 +1710,7 @@ export function SettingsCenter() {
   const [crmTagRegistry, setCrmTagRegistry] = useState<CrmTagRegistryPayload>(EMPTY_CRM_TAG_REGISTRY);
   const [crmTagRegistryBusy, setCrmTagRegistryBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sectionCollapseState, setSectionCollapseState] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<Record<string, unknown> | null>(null);
@@ -1722,11 +1760,13 @@ export function SettingsCenter() {
   });
 
   const domainConfig = DOMAIN_CONFIG[selectedDomain];
+  const normalizedRole = String(role ?? '').trim().toUpperCase();
   const sidebarGroups = useMemo(() => normalizeLayoutGroups(settingsLayout), [settingsLayout]);
   const domainTabs = useMemo(() => {
     const fromLayout = normalizeLayoutDomainTabs(settingsLayout, selectedDomain);
-    return fromLayout ?? resolveDomainTabs(selectedDomain);
-  }, [selectedDomain, settingsLayout]);
+    const baseTabs = fromLayout ?? resolveDomainTabs(selectedDomain);
+    return filterDomainTabsByRole(selectedDomain, baseTabs, role);
+  }, [selectedDomain, settingsLayout, role]);
   const resolvedActiveDomainTab = useMemo(
     () => resolveActiveTab(domainTabs, activeDomainTab),
     [domainTabs, activeDomainTab]
@@ -1738,6 +1778,15 @@ export function SettingsCenter() {
   const visibleSections = useMemo(
     () => filterSectionsForTabAndMode(domainConfig.sections, domainTabs, resolvedActiveDomainTab, advancedMode),
     [domainConfig.sections, domainTabs, resolvedActiveDomainTab, advancedMode]
+  );
+  const sectionViewModels = useMemo(
+    () =>
+      visibleSections.map((section, index) => ({
+        section,
+        sectionKey: `${selectedDomain}:${resolvedActiveDomainTab}:${section.id}`,
+        defaultCollapsed: selectedDomain === 'access_security' ? index > 0 : false
+      })),
+    [visibleSections, selectedDomain, resolvedActiveDomainTab]
   );
   const originalData = useMemo(() => toRecord(domainResponse?.data), [domainResponse]);
   const hrAppendixFieldPickerOptions = useMemo(
@@ -1769,7 +1818,7 @@ export function SettingsCenter() {
     () => mapFieldErrors(getDomainFields(selectedDomain), validationErrors),
     [selectedDomain, validationErrors]
   );
-  const canManagePositionCatalog = String(role ?? '').trim().toUpperCase() === 'ADMIN';
+  const canManagePositionCatalog = normalizedRole === 'ADMIN';
   const selectedPosition = useMemo(
     () => positions.find((item) => item.id === selectedPositionId) ?? null,
     [positions, selectedPositionId]
@@ -1788,6 +1837,27 @@ export function SettingsCenter() {
       );
     });
   }, [positionSearch, positions]);
+
+  useEffect(() => {
+    if (sectionViewModels.length === 0) {
+      return;
+    }
+
+    setSectionCollapseState((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const item of sectionViewModels) {
+        if (item.sectionKey in next) {
+          continue;
+        }
+        next[item.sectionKey] = item.defaultCollapsed;
+        changed = true;
+      }
+
+      return changed ? next : current;
+    });
+  }, [sectionViewModels]);
   const positionOptions = useMemo(() => {
     return positions
       .map((item) => ({
@@ -2769,15 +2839,63 @@ export function SettingsCenter() {
             onChange={setActiveDomainTab}
           />
 
+          {selectedDomain === 'access_security' && (
+            <section className="settings-role-playbook">
+              <h4 style={{ margin: 0, fontSize: '0.92rem' }}>Luồng thao tác theo vai trò</h4>
+              <div className="settings-role-playbook-grid">
+                {ACCESS_SECURITY_ROLE_PLAYBOOK.map((playbook) => {
+                  const isCurrentRole = normalizedRole === playbook.role;
+                  return (
+                    <article
+                      key={`playbook-${playbook.role}`}
+                      className={`settings-role-playbook-item${isCurrentRole ? ' is-current' : ''}`}
+                    >
+                      <strong>{ROLE_LABEL_MAP[playbook.role] ?? playbook.role}</strong>
+                      <p>{playbook.title}</p>
+                      <ul>
+                        {playbook.steps.map((step) => (
+                          <li key={`${playbook.role}-${step}`}>{step}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           <div style={{ display: 'grid', gap: '0.85rem' }}>
-            {visibleSections.map((section) => (
-              <section key={section.id} style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem' }}>
-                <h4 style={{ margin: 0, fontSize: '0.95rem' }}>{section.title}</h4>
+            {sectionViewModels.map(({ section, sectionKey }) => {
+              const isCollapsed = sectionCollapseState[sectionKey] ?? false;
+              return (
+              <section key={section.id} className={`settings-section-card${isCollapsed ? ' is-collapsed' : ''}`}>
+                <div className="settings-section-head">
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem' }}>{section.title}</h4>
+                    <p style={{ margin: '0.22rem 0 0 0', color: 'var(--muted)', fontSize: '0.74rem' }}>
+                      {section.fields.length} trường cấu hình
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    aria-expanded={!isCollapsed}
+                    onClick={() =>
+                      setSectionCollapseState((current) => ({
+                        ...current,
+                        [sectionKey]: !isCollapsed
+                      }))
+                    }
+                  >
+                    {isCollapsed ? 'Mở rộng' : 'Thu gọn'}
+                  </button>
+                </div>
                 {section.description && (
                   <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--muted)' }}>{section.description}</p>
                 )}
 
-                <div className="form-grid" style={{ marginTop: '0.6rem' }}>
+                {!isCollapsed && (
+                  <div className="form-grid" style={{ marginTop: '0.6rem' }}>
                   {section.fields.map((field) => {
                     const value = getFieldValue(field, draftData);
                     const errors = fieldErrorMap[field.id] ?? [];
@@ -3075,9 +3193,11 @@ export function SettingsCenter() {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                )}
               </section>
-            ))}
+              );
+            })}
           </div>
 
           {selectedDomain === 'org_profile' && activeTabConfig?.showOrgStructure === true && (

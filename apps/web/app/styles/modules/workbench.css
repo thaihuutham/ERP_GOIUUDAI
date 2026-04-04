@@ -328,6 +328,69 @@
   font-weight: 600;
 }
 
+.settings-role-playbook {
+  border: 1px solid #d9ebdf;
+  border-radius: 10px;
+  padding: 0.7rem;
+  background: #f8fcf9;
+  margin-bottom: 0.85rem;
+}
+
+.settings-role-playbook-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.settings-role-playbook-item {
+  border: 1px solid #dbe9df;
+  border-radius: 8px;
+  padding: 0.55rem;
+  background: #fff;
+  font-size: 0.78rem;
+  color: #2d4538;
+}
+
+.settings-role-playbook-item strong {
+  font-size: 0.82rem;
+}
+
+.settings-role-playbook-item p {
+  margin: 0.3rem 0 0 0;
+  color: #466555;
+}
+
+.settings-role-playbook-item ul {
+  margin: 0.42rem 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.settings-role-playbook-item.is-current {
+  border-color: #7fb78f;
+  box-shadow: inset 0 0 0 1px #7fb78f;
+}
+
+.settings-section-card {
+  border: 1px solid #e5f0e8;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.settings-section-card.is-collapsed {
+  background: #fcfffd;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
 .settings-list-manager {
   display: grid;
   gap: 0.65rem;
@@ -429,6 +492,10 @@
 
   .settings-sidebar-domain-meta {
     justify-items: start;
+  }
+
+  .settings-role-playbook-grid {
+    grid-template-columns: 1fr;
   }
 }
 

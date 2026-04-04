@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  filterDomainTabsByRole,
   filterSectionsForTabAndMode,
   resolveActiveTab,
   resolveDefaultAdvancedMode,
@@ -51,7 +52,12 @@ describe('settings view model', () => {
     expect(orgTabs.map((item) => item.key)).toEqual(['org-general', 'org-structure']);
 
     const securityTabs = resolveDomainTabs('access_security');
-    expect(securityTabs.map((item) => item.key)).toEqual(['security-policy', 'security-matrix']);
+    expect(securityTabs.map((item) => item.key)).toEqual([
+      'security-auth',
+      'security-governance',
+      'security-observability',
+      'security-matrix'
+    ]);
   });
 
   it('resolves domain tabs for phase-2 domains', () => {
@@ -112,5 +118,23 @@ describe('settings view model', () => {
 
     const orgStructureTab = filterSectionsForTabAndMode(sections, tabs, 'org-structure', false);
     expect(orgStructureTab).toEqual([]);
+  });
+
+  it('filters access-security tabs by role for a simpler experience', () => {
+    const tabs = resolveDomainTabs('access_security');
+
+    expect(filterDomainTabsByRole('access_security', tabs, 'ADMIN').map((item) => item.key)).toEqual([
+      'security-auth',
+      'security-governance',
+      'security-observability',
+      'security-matrix'
+    ]);
+    expect(filterDomainTabsByRole('access_security', tabs, 'MANAGER').map((item) => item.key)).toEqual([
+      'security-auth',
+      'security-observability'
+    ]);
+    expect(filterDomainTabsByRole('access_security', tabs, 'STAFF').map((item) => item.key)).toEqual([
+      'security-auth'
+    ]);
   });
 });

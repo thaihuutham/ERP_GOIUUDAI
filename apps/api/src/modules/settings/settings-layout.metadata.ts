@@ -45,16 +45,19 @@ const DOMAIN_TAB_MAP: Record<SettingsDomain, SettingsLayoutTabHint[]> = {
   ],
   access_security: [
     {
-      key: 'security-policy',
-      label: 'Chính sách bảo mật',
-      sectionIds: [
-        'security-session',
-        'security-password',
-        'security-permission-engine',
-        'security-audit-matrix',
-        'security-assistant-access',
-        'security-settings-editors'
-      ]
+      key: 'security-auth',
+      label: 'Đăng nhập & mật khẩu',
+      sectionIds: ['security-session', 'security-password']
+    },
+    {
+      key: 'security-governance',
+      label: 'Phân quyền hệ thống',
+      sectionIds: ['security-permission-engine', 'security-settings-editors']
+    },
+    {
+      key: 'security-observability',
+      label: 'Nhật ký & Trợ lý AI',
+      sectionIds: ['security-audit-matrix', 'security-assistant-access']
     },
     { key: 'security-matrix', label: 'Ma trận quyền hạn', sectionIds: [], showAccessMatrix: true }
   ],

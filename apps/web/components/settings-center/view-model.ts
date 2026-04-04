@@ -7,6 +7,8 @@ export type DomainTabConfig = {
   showAccessMatrix?: boolean;
 };
 
+type RoleKey = 'ADMIN' | 'MANAGER' | 'STAFF';
+
 type FieldLike = {
   isAdvanced?: boolean;
 };
@@ -53,16 +55,19 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
   ],
   access_security: [
     {
-      key: 'security-policy',
-      label: 'Chính sách bảo mật',
-      sectionIds: [
-        'security-session',
-        'security-password',
-        'security-permission-engine',
-        'security-audit-matrix',
-        'security-assistant-access',
-        'security-settings-editors'
-      ]
+      key: 'security-auth',
+      label: 'Đăng nhập & mật khẩu',
+      sectionIds: ['security-session', 'security-password']
+    },
+    {
+      key: 'security-governance',
+      label: 'Phân quyền hệ thống',
+      sectionIds: ['security-permission-engine', 'security-settings-editors']
+    },
+    {
+      key: 'security-observability',
+      label: 'Nhật ký & Trợ lý AI',
+      sectionIds: ['security-audit-matrix', 'security-assistant-access']
     },
     { key: 'security-matrix', label: 'Ma trận quyền hạn', sectionIds: [], showAccessMatrix: true }
   ],
@@ -88,6 +93,35 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
 
 export function resolveDomainTabs(domain: string): DomainTabConfig[] {
   return DOMAIN_TAB_MAP[domain] ?? [{ key: 'domain-overview', label: 'Cấu hình' }];
+}
+
+function normalizeRole(role: string | null | undefined): RoleKey {
+  const normalized = String(role ?? '').trim().toUpperCase();
+  if (normalized === 'ADMIN' || normalized === 'MANAGER') {
+    return normalized;
+  }
+  return 'STAFF';
+}
+
+export function filterDomainTabsByRole(
+  domain: string,
+  tabs: DomainTabConfig[],
+  role: string | null | undefined
+): DomainTabConfig[] {
+  if (domain !== 'access_security') {
+    return tabs;
+  }
+
+  const roleKey = normalizeRole(role);
+  const allowListByRole: Record<RoleKey, string[]> = {
+    ADMIN: ['security-auth', 'security-governance', 'security-observability', 'security-matrix'],
+    MANAGER: ['security-auth', 'security-observability'],
+    STAFF: ['security-auth']
+  };
+
+  const allowList = allowListByRole[roleKey];
+  const filtered = tabs.filter((tab) => allowList.includes(tab.key));
+  return filtered.length > 0 ? filtered : tabs;
 }
 
 export function resolveDefaultAdvancedMode(role: string | null | undefined) {
