@@ -17,11 +17,11 @@
 }
 
 .field label {
-  font-size: 0.71rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-weight: 400;
-  color: #6e7b72;
+  font-weight: 500;
+  color: #59685f;
 }
 
 .field input,
@@ -32,7 +32,8 @@
   border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text);
-  padding: 0.42rem 0.55rem;
+  padding: 0.5rem 0.6rem;
+  min-height: 40px;
   font: inherit;
   font-size: 0.88rem;
   font-weight: 400;
@@ -156,4 +157,13 @@
   padding: 0.65rem;
   display: grid;
   gap: 0.7rem;
+}
+
+@media (max-width: 720px) {
+  .field input,
+  .field select,
+  .field textarea {
+    font-size: 16px;
+    min-height: 44px;
+  }
 }

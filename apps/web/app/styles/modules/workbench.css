@@ -219,6 +219,129 @@
   gap: 0.6rem;
 }
 
+/* ── Settings Center ───────────────────────────── */
+
+.settings-center-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 360px;
+  gap: 1rem;
+}
+
+.settings-center-main {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem;
+  background: #fff;
+  min-width: 0;
+}
+
+.settings-center-right {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.settings-sidebar-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.settings-sidebar-title {
+  margin: 0.25rem 0 0.75rem 0;
+}
+
+.settings-sidebar-groups {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.settings-sidebar-group-label {
+  margin: 0 0 0.45rem 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-sidebar-domain-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-sidebar-domain-btn {
+  justify-content: space-between;
+  border: 1px solid var(--line);
+}
+
+.settings-sidebar-domain-btn-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.settings-sidebar-domain-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.settings-sidebar-state,
+.settings-sidebar-runtime {
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.settings-sidebar-state.is-ok,
+.settings-sidebar-runtime.is-ok {
+  color: #1b8748;
+}
+
+.settings-sidebar-state.is-warn,
+.settings-sidebar-runtime.is-warn {
+  color: #b45309;
+}
+
+.settings-advanced-toggle {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  background: #fff;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+@media (max-width: 1280px) {
+  .settings-center-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .settings-center-right {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .settings-center-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-sidebar-panel {
+    order: 2;
+  }
+
+  .settings-center-main {
+    order: 1;
+  }
+
+  .settings-center-right {
+    order: 3;
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Actions Grid ──────────────────────────────── */
 
 .actions-grid {

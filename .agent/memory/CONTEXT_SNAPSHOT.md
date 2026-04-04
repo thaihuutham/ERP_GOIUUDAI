@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-03 22:16 +07
+- Time: 2026-04-03 23:33 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-03_2216_codex.md`
+- Session Log: `.agent/sessions/2026-04-03_2333_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,125 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-03 23:25 (Backend compatibility layer: /settings/layout)
+- Đã thêm endpoint metadata layout cho Settings Center:
+  - `GET /api/v1/settings/layout`
+  - role: `STAFF/MANAGER/ADMIN`
+  - audit read action: `READ_SETTINGS_LAYOUT`.
+- File mới:
+  - `apps/api/src/modules/settings/settings-layout.metadata.ts`
+  - chứa static metadata cho:
+    - grouped sidebar (4 categories),
+    - advanced mode default theo role,
+    - tab map đủ 12 domains (phase 1 + phase 2),
+    - compatibility flags giữ nguyên domain-level submit/validate/save/snapshot.
+- Wiring service:
+  - `settings-policy.service.ts`: `getLayoutMetadata()`.
+  - `settings.service.ts`: `getSettingsLayout()`.
+  - `settings.controller.ts`: route `GET /settings/layout`.
+- Test:
+  - `apps/api/test/settings-policy.service.test.ts` thêm case assert metadata contract.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅ (`10 passed`)
+
+## Update 2026-04-03 23:33 (Gate closure after phase 2 metadata rollout)
+- Đã re-run full quality/stability gate để chốt session sau khi hoàn tất backend compatibility + frontend consume metadata:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅ (`10 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4264 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`6 passed`)
+- Trạng thái hiện tại:
+  - không còn lỗi lint `.next/types` trong lần chạy mới (đã pass ổn định).
+  - hành vi fallback khi thiếu `/settings/layout` vẫn được giữ (đã có e2e check).
+  - không phát sinh ADR mới trong session này.
+
+## Update 2026-04-03 23:18 (UI/UX standards uplift with ui-ux-pro-max)
+- Đã áp dụng skill `ui-ux-pro-max` để chuẩn hóa thiết kế Settings Center và các pattern UI cũ dùng chung.
+- Design direction giữ nguyên hệ thống hiện tại (enterprise/data-dense), tập trung vào:
+  - accessibility (focus states rõ ràng),
+  - touch target (nút/tab/check tối thiểu thân thiện thao tác),
+  - responsive behavior (Settings Center 3 cột -> 2 cột -> 1 cột),
+  - form readability trên mobile.
+- File thay đổi chính:
+  - `apps/web/app/styles/components.css`
+  - `apps/web/app/styles/forms.css`
+  - `apps/web/app/styles/modules/workbench.css`
+  - `apps/web/components/ui/tabs.tsx`
+  - `apps/web/components/settings-center.tsx`
+  - `apps/web/components/settings-center/grouped-sidebar.tsx`
+  - `apps/web/components/settings-center/advanced-toggle.tsx`
+- Runtime behavior giữ nguyên:
+  - không đổi flow save/validate/snapshot domain-level.
+  - không đổi API backend.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4264 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`5 passed`)
+
+## Update 2026-04-03 23:07 (Settings Center Redesign V2 - Phase 2)
+- Đã mở rộng tabization cho toàn bộ 9 domain còn lại ở Settings Center:
+  - `locale_calendar`, `approval_matrix`, `finance_controls`,
+  - `sales_crm_policies`, `catalog_scm_policies`,
+  - `integrations`, `notifications_templates`, `search_performance`,
+  - `data_governance_backup`.
+- File chính:
+  - `apps/web/components/settings-center/view-model.ts` (expand `DOMAIN_TAB_MAP`).
+- Test đã cập nhật:
+  - Unit: `apps/web/components/settings-center/__tests__/view-model.test.ts` (tab mapping Phase 2).
+  - E2E: `apps/web/e2e/tests/settings-center-reports.spec.ts` (tab flows Phase 2 + fix strict selectors).
+- Contract runtime không đổi:
+  - Không thay đổi semantics submit/validate/save/snapshot domain-level.
+  - Không thay đổi backend API trong pha này.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`5 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4262 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`5 passed`)
+
+## Update 2026-04-03 22:58 (Settings Center Redesign V2 - Phase 1)
+- Đã triển khai refactor-safe cho Settings Center theo Phase 1:
+  - grouped sidebar theo 4 category.
+  - Advanced Mode toggle + default theo role (`ADMIN` ON, `MANAGER/STAFF` OFF).
+  - tab hóa 3 domain trọng điểm:
+    - `org_profile`: Cấu hình chung / Sơ đồ tổ chức.
+    - `hr_policies`: Thiết lập nhân sự / Phụ lục hợp đồng / Tài khoản nhân viên.
+    - `access_security`: Chính sách bảo mật / Ma trận quyền hạn.
+  - áp dụng lọc `isAdvanced` ở section + field level.
+  - chuyển `reloadAll` sang `Promise.allSettled` để graceful degradation.
+- Tách component + view-model mới:
+  - `apps/web/components/settings-center/view-model.ts`
+  - `apps/web/components/settings-center/grouped-sidebar.tsx`
+  - `apps/web/components/settings-center/domain-tabs.tsx`
+  - `apps/web/components/settings-center/advanced-toggle.tsx`
+- Thêm test unit + e2e:
+  - `apps/web/components/settings-center/__tests__/view-model.test.ts`
+  - `apps/web/e2e/tests/settings-center-reports.spec.ts`
+  - `apps/web/e2e/tests/settings-center-audit-scope.spec.ts`
+- Docs governance mới:
+  - `docs/decisions/ADR-035-SETTINGS-CENTER-REDESIGN-V2-PHASED-IA-AND-ADVANCED-MODE.md`
+  - `docs/design/SETTINGS_CENTER_REDESIGN_V2_PHASE_PLAN.md`
+  - `docs/operations/SETTINGS_CENTER_REDESIGN_ROLLBACK.md`
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`4 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4260 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
 
 ## Update 2026-04-03 22:16 (Project-wide check before commit all)
 - User yêu cầu kiểm tra dự án và commit/push toàn bộ thay đổi hiện có trên workspace.

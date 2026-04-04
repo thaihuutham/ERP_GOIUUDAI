@@ -202,14 +202,16 @@ test.describe('Settings Center audit scope matrix', () => {
     await page.goto('/modules/settings');
     await page.getByRole('button', { name: 'Bảo mật truy cập' }).click();
 
-    await expect(page.getByText('Ma trận ủy quyền Audit Log theo cấp quản lý')).toBeVisible();
+    await expect(page.getByText('Phân quyền nhật ký hệ thống theo cấp quản lý')).toBeVisible();
     await expect(page.getByLabel('Giám đốc: xem toàn công ty')).toBeChecked();
     await expect(page.getByLabel('Trưởng chi nhánh: xem trong phạm vi chi nhánh')).toBeChecked();
     await expect(page.getByLabel('Trưởng phòng: xem trong phạm vi phòng ban')).toBeChecked();
-    await expect(page.getByLabel('Chặn MANAGER chưa được gán managerEmployeeId vào org unit')).toBeChecked();
+    await expect(page.getByLabel('Chặn MANAGER chưa được gán vào đơn vị tổ chức')).toBeChecked();
 
+    await page.getByRole('tab', { name: 'Ma trận quyền hạn' }).click();
     await expect(page.getByRole('cell', { name: 'audit' }).first()).toBeVisible();
 
+    await page.getByRole('tab', { name: 'Chính sách bảo mật' }).click();
     await page.getByLabel('Trưởng chi nhánh: xem trong phạm vi chi nhánh').uncheck();
     await page.getByRole('button', { name: 'Lưu cấu hình' }).click();
 

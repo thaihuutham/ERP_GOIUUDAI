@@ -364,6 +364,10 @@ export class SettingsService {
     return this.settingsPolicy.getCenter();
   }
 
+  getSettingsLayout() {
+    return this.settingsPolicy.getLayoutMetadata();
+  }
+
   async getRuntimeSettings() {
     return this.runtimeSettings.getWebRuntime();
   }

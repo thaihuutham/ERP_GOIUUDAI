@@ -8,6 +8,16 @@ import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type Bul
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { useUserRole } from './user-role-context';
 import { ERP_MODULES } from '@erp/shared';
+import { GroupedSidebar } from './settings-center/grouped-sidebar';
+import { DomainTabs } from './settings-center/domain-tabs';
+import { AdvancedToggle } from './settings-center/advanced-toggle';
+import {
+  filterSectionsForTabAndMode,
+  resolveActiveTab,
+  resolveDefaultAdvancedMode,
+  resolveDomainTabs,
+  type DomainTabConfig
+} from './settings-center/view-model';
 
 const DOMAIN_ORDER = [
   'org_profile',
@@ -269,6 +279,90 @@ const REASON_TEMPLATES = [
   'Điều chỉnh vòng đời dữ liệu',
   'Tăng mức tự động hóa giám sát AI'
 ] as const;
+
+type SettingsLayoutPayload = {
+  groupedSidebar?: Array<{
+    id?: string;
+    label?: string;
+    domains?: unknown;
+  }>;
+  domainTabs?: Record<string, unknown>;
+  advancedMode?: {
+    defaultByRole?: Record<string, unknown>;
+  };
+};
+
+function isDomainKey(value: unknown): value is DomainKey {
+  return typeof value === 'string' && DOMAIN_ORDER.includes(value as DomainKey);
+}
+
+function normalizeLayoutGroups(layout: SettingsLayoutPayload | null) {
+  const grouped = Array.isArray(layout?.groupedSidebar) ? layout.groupedSidebar : [];
+  const normalized = grouped
+    .map((group) => {
+      const domainsRaw = Array.isArray(group.domains) ? group.domains : [];
+      const domains = domainsRaw.filter((item): item is DomainKey => isDomainKey(item));
+      if (!group.id || !group.label || domains.length === 0) {
+        return null;
+      }
+      return {
+        id: String(group.id),
+        label: String(group.label),
+        domains
+      };
+    })
+    .filter((item): item is { id: string; label: string; domains: DomainKey[] } => Boolean(item));
+
+  if (normalized.length === 0) {
+    return DOMAIN_GROUPS;
+  }
+  return normalized;
+}
+
+function normalizeLayoutDomainTabs(layout: SettingsLayoutPayload | null, domain: DomainKey): DomainTabConfig[] | null {
+  const domainTabsMap = toRecord(layout?.domainTabs);
+  const rawTabs = domainTabsMap[domain];
+  if (!Array.isArray(rawTabs)) {
+    return null;
+  }
+
+  const normalized: DomainTabConfig[] = [];
+  for (const rawTab of rawTabs) {
+    const tab = toRecord(rawTab);
+    const key = String(tab.key ?? '').trim();
+    const label = String(tab.label ?? '').trim();
+    if (!key || !label) {
+      continue;
+    }
+
+    const next: DomainTabConfig = { key, label };
+    if (Array.isArray(tab.sectionIds)) {
+      next.sectionIds = tab.sectionIds.map((item) => String(item)).filter(Boolean);
+    }
+    if (tab.showOrgStructure === true) {
+      next.showOrgStructure = true;
+    }
+    if (tab.showHrAccounts === true) {
+      next.showHrAccounts = true;
+    }
+    if (tab.showAccessMatrix === true) {
+      next.showAccessMatrix = true;
+    }
+    normalized.push(next);
+  }
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveAdvancedModeDefaultByLayout(role: string | null | undefined, layout: SettingsLayoutPayload | null) {
+  const normalizedRole = String(role ?? '').trim().toUpperCase();
+  const defaultByRole = toRecord(layout?.advancedMode?.defaultByRole);
+  const candidate = defaultByRole[normalizedRole];
+  if (typeof candidate === 'boolean') {
+    return candidate;
+  }
+  return resolveDefaultAdvancedMode(role);
+}
 
 const CONFLICT_POLICY_OPTIONS: FieldOption[] = [
   { value: 'DENY_OVERRIDES', label: 'DENY ưu tiên cao nhất' },
@@ -1282,6 +1376,10 @@ export function SettingsCenter() {
   const { role } = useUserRole();
   const [center, setCenter] = useState<CenterPayload | null>(null);
   const [selectedDomain, setSelectedDomain] = useState<DomainKey>('org_profile');
+  const [advancedMode, setAdvancedMode] = useState<boolean>(resolveDefaultAdvancedMode(role));
+  const [advancedTouchedByUser, setAdvancedTouchedByUser] = useState(false);
+  const [settingsLayout, setSettingsLayout] = useState<SettingsLayoutPayload | null>(null);
+  const [activeDomainTab, setActiveDomainTab] = useState('');
   const [domainResponse, setDomainResponse] = useState<DomainPayload | null>(null);
   const [draftData, setDraftData] = useState<Record<string, unknown>>({});
   const [reasonTemplate, setReasonTemplate] = useState<string>(REASON_TEMPLATES[0]);
@@ -1324,6 +1422,23 @@ export function SettingsCenter() {
   });
 
   const domainConfig = DOMAIN_CONFIG[selectedDomain];
+  const sidebarGroups = useMemo(() => normalizeLayoutGroups(settingsLayout), [settingsLayout]);
+  const domainTabs = useMemo(() => {
+    const fromLayout = normalizeLayoutDomainTabs(settingsLayout, selectedDomain);
+    return fromLayout ?? resolveDomainTabs(selectedDomain);
+  }, [selectedDomain, settingsLayout]);
+  const resolvedActiveDomainTab = useMemo(
+    () => resolveActiveTab(domainTabs, activeDomainTab),
+    [domainTabs, activeDomainTab]
+  );
+  const activeTabConfig = useMemo(
+    () => domainTabs.find((tab) => tab.key === resolvedActiveDomainTab) ?? domainTabs[0] ?? null,
+    [domainTabs, resolvedActiveDomainTab]
+  );
+  const visibleSections = useMemo(
+    () => filterSectionsForTabAndMode(domainConfig.sections, domainTabs, resolvedActiveDomainTab, advancedMode),
+    [domainConfig.sections, domainTabs, resolvedActiveDomainTab, advancedMode]
+  );
   const originalData = useMemo(() => toRecord(domainResponse?.data), [domainResponse]);
 
   const submissionData = useMemo(
@@ -1395,6 +1510,15 @@ export function SettingsCenter() {
     setCenter(payload);
   };
 
+  const loadLayout = async () => {
+    try {
+      const payload = await apiRequest<Record<string, unknown>>('/settings/layout');
+      setSettingsLayout(payload as SettingsLayoutPayload);
+    } catch {
+      // Keep local fallback layout when endpoint is unavailable.
+    }
+  };
+
   const loadDomain = async (domain: DomainKey) => {
     const payload = await apiRequest<DomainPayload>(`/settings/domains/${domain}`);
     setDomainResponse(payload);
@@ -1442,14 +1566,45 @@ export function SettingsCenter() {
   const reloadAll = async (domain = selectedDomain) => {
     setBusy(true);
     setError(null);
-    try {
-      await Promise.all([loadCenter(), loadDomain(domain), loadEnterpriseData()]);
-    } catch (loadError) {
-      setError(toSettingsFriendlyError(loadError, 'Không tải được dữ liệu Trung tâm cấu hình.'));
-    } finally {
-      setBusy(false);
+    const failures: string[] = [];
+
+    const [centerResult, domainResult, enterpriseResult] = await Promise.allSettled([
+      loadCenter(),
+      loadDomain(domain),
+      loadEnterpriseData(),
+      loadLayout()
+    ]);
+
+    if (centerResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(centerResult.reason, 'Không tải được tổng quan miền cấu hình.'));
     }
+    if (domainResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(domainResult.reason, 'Không tải được cấu hình của miền đã chọn.'));
+    }
+    if (enterpriseResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(enterpriseResult.reason, 'Không tải được dữ liệu tổ chức/IAM.'));
+    }
+
+    if (failures.length > 0) {
+      setError(failures.join(' | '));
+    }
+
+    setBusy(false);
   };
+
+  useEffect(() => {
+    setAdvancedTouchedByUser(false);
+  }, [role]);
+
+  useEffect(() => {
+    if (!advancedTouchedByUser) {
+      setAdvancedMode(resolveAdvancedModeDefaultByLayout(role, settingsLayout));
+    }
+  }, [role, settingsLayout, advancedTouchedByUser]);
+
+  useEffect(() => {
+    setActiveDomainTab((current) => resolveActiveTab(domainTabs, current));
+  }, [domainTabs]);
 
   useEffect(() => {
     void reloadAll(selectedDomain);
@@ -1934,57 +2089,38 @@ export function SettingsCenter() {
   return (
     <article className="module-workbench" style={{ background: 'transparent' }}>
       <header className="module-header" style={{ background: 'transparent', borderBottom: 'none', padding: '0 0 1.5rem 0' }}>
-        <div>
-          <h1 style={{ fontSize: '1.65rem', fontWeight: 800 }}>Trung tâm cấu hình hệ thống</h1>
-          <p style={{ color: 'var(--muted)', marginTop: '0.4rem' }}>
-            Cấu hình tập trung cho {SYSTEM_PROFILE.companyName}: tối giản thao tác, chuẩn hóa dữ liệu, tăng tự động hóa và AI giám sát.
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.85rem', flexWrap: 'wrap' }}>
-            <Link href="/modules/settings/custom-fields" className="btn btn-ghost">
-              Mở trang Trường tùy chỉnh
-            </Link>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ fontSize: '1.65rem', fontWeight: 800 }}>Trung tâm cấu hình hệ thống</h1>
+            <p style={{ color: 'var(--muted)', marginTop: '0.4rem' }}>
+              Cấu hình tập trung cho {SYSTEM_PROFILE.companyName}: tối giản thao tác, chuẩn hóa dữ liệu, tăng tự động hóa và AI giám sát.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.85rem', flexWrap: 'wrap' }}>
+              <Link href="/modules/settings/custom-fields" className="btn btn-ghost">
+                Mở trang Trường tùy chỉnh
+              </Link>
+            </div>
           </div>
+          <AdvancedToggle
+            value={advancedMode}
+            onChange={(next) => {
+              setAdvancedTouchedByUser(true);
+              setAdvancedMode(next);
+            }}
+          />
         </div>
       </header>
 
-      <section style={{ display: 'grid', gridTemplateColumns: '240px minmax(0, 1fr) 360px', gap: '1rem' }}>
-        <aside style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.75rem', background: '#fff' }}>
-          <h3 style={{ margin: '0.25rem 0 0.75rem 0' }}>Miền cấu hình</h3>
-          <div style={{ display: 'grid', gap: '0.35rem' }}>
-            {DOMAIN_ORDER.map((domain) => {
-              const state = center?.domainStates.find((item) => item.domain === domain);
-              return (
-                <button
-                  key={domain}
-                  type="button"
-                  onClick={() => setSelectedDomain(domain)}
-                  className="btn btn-ghost"
-                  style={{
-                    justifyContent: 'space-between',
-                    border: selectedDomain === domain ? '1px solid var(--primary)' : '1px solid var(--line)',
-                    background: selectedDomain === domain ? 'var(--primary-soft)' : 'transparent'
-                  }}
-                >
-                  <span>{DOMAIN_LABEL[domain]}</span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <span style={{ color: state?.ok ? '#1b8748' : '#d97706', fontWeight: 700 }}>{state?.ok ? 'ỔN' : 'CẢNH BÁO'}</span>
-                    <span
-                      style={{
-                        fontSize: '0.68rem',
-                        fontWeight: 700,
-                        color: state?.runtimeApplied ? '#1b8748' : '#d97706'
-                      }}
-                    >
-                      {state?.runtimeApplied ? 'ĐANG DÙNG' : 'CHỜ ÁP DỤNG'}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+      <section className="settings-center-layout">
+        <GroupedSidebar
+          groups={sidebarGroups}
+          labels={DOMAIN_LABEL}
+          selectedDomain={selectedDomain}
+          onSelectDomain={setSelectedDomain}
+          domainStates={center?.domainStates}
+        />
 
-        <main style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '1rem', background: '#fff' }}>
+        <main className="settings-center-main">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '0.8rem' }}>
             <div>
               <h3 style={{ margin: 0 }}>{domainConfig.title}</h3>
@@ -2001,8 +2137,14 @@ export function SettingsCenter() {
             </button>
           </div>
 
+          <DomainTabs
+            tabs={domainTabs}
+            activeTab={resolvedActiveDomainTab}
+            onChange={setActiveDomainTab}
+          />
+
           <div style={{ display: 'grid', gap: '0.85rem' }}>
-            {domainConfig.sections.map((section) => (
+            {visibleSections.map((section) => (
               <section key={section.id} style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem' }}>
                 <h4 style={{ margin: 0, fontSize: '0.95rem' }}>{section.title}</h4>
                 {section.description && (
@@ -2215,7 +2357,7 @@ export function SettingsCenter() {
             ))}
           </div>
 
-          {selectedDomain === 'org_profile' && (
+          {selectedDomain === 'org_profile' && activeTabConfig?.showOrgStructure === true && (
             <section style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem', marginTop: '0.9rem' }}>
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Sơ đồ tổ chức doanh nghiệp</h4>
               <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
@@ -2368,7 +2510,7 @@ export function SettingsCenter() {
             </section>
           )}
 
-          {selectedDomain === 'hr_policies' && (
+          {selectedDomain === 'hr_policies' && activeTabConfig?.showHrAccounts === true && (
             <section style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem', marginTop: '0.9rem' }}>
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Tạo nhân viên + tài khoản đăng nhập</h4>
               <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
@@ -2537,7 +2679,7 @@ export function SettingsCenter() {
             </section>
           )}
 
-          {selectedDomain === 'access_security' && (
+          {selectedDomain === 'access_security' && activeTabConfig?.showAccessMatrix === true && (
             <section style={{ border: '1px solid #e5f0e8', borderRadius: '10px', padding: '0.75rem', marginTop: '0.9rem' }}>
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Ma trận quyền chi tiết (view/create/update/delete/approve)</h4>
               <p style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
@@ -2776,7 +2918,7 @@ export function SettingsCenter() {
           {message && <div className="banner banner-success" style={{ marginTop: '0.85rem' }}>{message}</div>}
         </main>
 
-        <aside style={{ display: 'grid', gap: '0.9rem' }}>
+        <aside className="settings-center-right">
           <section style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '0.9rem', background: '#fff' }}>
             <h3 style={{ margin: 0, fontSize: '1rem' }}>Checklist khởi tạo</h3>
             <ul style={{ margin: '0.65rem 0 0 1rem' }}>

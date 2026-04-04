@@ -79,6 +79,13 @@ export class SettingsController {
     return this.settingsService.getSettingsCenter();
   }
 
+  @Get('layout')
+  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @AuditRead({ action: 'READ_SETTINGS_LAYOUT', entityType: 'SettingsLayout' })
+  getSettingsLayout() {
+    return this.settingsService.getSettingsLayout();
+  }
+
   @Get('runtime')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
   getRuntimeSettings() {

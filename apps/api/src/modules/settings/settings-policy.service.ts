@@ -24,6 +24,7 @@ import {
   SettingsDomain,
   SettingsSnapshot
 } from './settings-policy.types';
+import { buildSettingsLayoutMetadata } from './settings-layout.metadata';
 
 const DOMAIN_KEY_PREFIX = 'settings.';
 const DOMAIN_KEY_SUFFIX = '.v1';
@@ -610,6 +611,10 @@ export class SettingsPolicyService {
       recentAudit: (await this.listAudit({ limit: 20 })).items,
       recentSnapshots: await this.listSnapshots(10)
     };
+  }
+
+  getLayoutMetadata() {
+    return buildSettingsLayoutMetadata();
   }
 
   async buildLegacySystemConfig() {

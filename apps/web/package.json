@@ -7,7 +7,8 @@
     "dev": "NEXT_DEV_INSTANCE=${NEXT_DEV_INSTANCE:-web} next dev --port ${PORT:-3000}",
     "build": "next build",
     "start": "next start --port 3000",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:unit": "npx vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@erp/shared": "file:../../packages/shared",

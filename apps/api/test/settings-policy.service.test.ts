@@ -130,6 +130,33 @@ function makeRuntimeSettingsMock() {
 }
 
 describe('SettingsPolicyService', () => {
+  it('provides phase-2 settings layout metadata for compatibility layer', () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const metadata = service.getLayoutMetadata();
+
+    expect(metadata.version).toBe(1);
+    expect(metadata.rolloutPhase).toBe('phase_2');
+    expect(metadata.groupedSidebar).toHaveLength(4);
+    expect(metadata.advancedMode.defaultByRole).toEqual({
+      ADMIN: true,
+      MANAGER: false,
+      STAFF: false
+    });
+    expect(metadata.domainTabs.org_profile.map((tab) => tab.key)).toEqual(['org-general', 'org-structure']);
+    expect(metadata.domainTabs.integrations.map((tab) => tab.key)).toEqual([
+      'integration-bhtot',
+      'integration-zalo',
+      'integration-ai'
+    ]);
+    expect(metadata.compatibility.preserveDomainLevelSubmitFlow).toBe(true);
+    expect(metadata.compatibility.preserveValidateSaveSnapshotContracts).toBe(true);
+  });
+
   it('resolves secret only for allowlist refs', () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();
