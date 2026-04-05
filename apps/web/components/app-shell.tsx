@@ -51,6 +51,7 @@ function isActive(pathname: string, href: string) {
 const ICON_MAP: Record<string, any> = {
   dashboard: LayoutDashboard,
   conversations: Bot,
+  zaloAccounts: Users,
   crm: Users,
   sales: ShoppingCart,
   catalog: Package,
@@ -92,6 +93,10 @@ function getCurrentModuleTitle(pathname: string) {
 
   if (pathname.startsWith('/modules/crm/conversations')) {
     return 'Hội thoại khách hàng';
+  }
+
+  if (pathname.startsWith('/modules/crm/zalo-accounts')) {
+    return 'Quản lý tài khoản Zalo';
   }
 
   const match = pathname.match(/^\/modules\/([^/]+)/);

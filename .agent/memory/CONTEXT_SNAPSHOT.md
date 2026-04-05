@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-05 13:11 +07
+- Time: 2026-04-05 15:05 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-05_1311_codex.md`
+- Session Log: `.agent/sessions/2026-04-05_1505_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,143 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-05 15:05 (P4 hardening: operational metrics + runbook)
+- Đã hoàn thành phase P4 theo `planning/ZALOCRM_ERP_INTEGRATION_PLAN.md`:
+  - thêm endpoint `GET /api/v1/zalo/operations/metrics`.
+  - response có 3 nhóm:
+    - `accountMetrics`: total/active account + breakdown status/type.
+    - `reconnectMetrics`: runtime reconnect fail total + theo account.
+    - `assignmentMetrics`: mismatch assignment active + reason + sample.
+- Instrumentation mới:
+  - `ZaloPersonalPoolService` ghi reconnect fail trong catch của `reconnectWithSavedSession`.
+  - expose `getReconnectFailureMetrics(...)` để support đọc nhanh.
+- Guard + mismatch logic:
+  - `ZaloAccountAssignmentService.assertCanViewOperationalMetrics()`:
+    - allow `ADMIN`/`MANAGER` + system context,
+    - deny `STAFF`.
+  - `getAssignmentMismatchMetrics()` detect 4 loại mismatch:
+    - `USER_ID_EMPTY`, `USER_NOT_FOUND`, `USER_INACTIVE`, `DUPLICATE_ACTIVE_ASSIGNMENT`.
+- Runbook support:
+  - `docs/operations/RUNBOOK.md` thêm section 13 cho command mẫu, giải thích metric, và checklist xử lý.
+- Verification session:
+  - `npm run test --workspace @erp/api -- test/zalo-account-assignment.service.test.ts test/zalo.service.test.ts` ✅ (`11 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Update 2026-04-05 14:12 (Discovery: tích hợp ZaloCRM multi-account + centralized conversations vào ERP)
+- Context yêu cầu mới:
+  - nhập năng lực từ `ZaloCRM` vào ERP cho 3 nhóm chức năng:
+    1) quản lý nhiều tài khoản Zalo cá nhân,
+    2) quản lý tập trung nhiều hội thoại trên web,
+    3) admin phân quyền account cho nhân viên chăm sóc.
+- Discovery đã hoàn thành:
+  - xác thực local ZaloCRM đồng bộ với GitHub `main` tại commit `d186fd2fd75f886a993e2de0b802e52675dac1f7`.
+  - xác thực runtime local `http://localhost:3080` đang hoạt động; endpoint account yêu cầu auth.
+  - ZaloCRM có đầy đủ primitives cần học:
+    - model `ZaloAccountAccess` (`read/chat/admin`) cho record-level ACL,
+    - `Conversation` unique theo `(zaloAccountId, externalThreadId)`,
+    - route/middleware enforce quyền theo account,
+    - UI quản trị account + cấp quyền + inbox đa account,
+    - cơ chế listener/socket/reconnect/circuit-breaker.
+  - ERP hiện có:
+    - đã có nền tảng `ZaloAccount`, `ConversationThread`, `ConversationMessage`,
+    - đã có PERSONAL pool và OA outbound,
+    - đã có CRM conversations workbench,
+    - chưa có account assignment ACL cấp record cho user theo từng Zalo account và chưa có trang quản trị account đầy đủ như ZaloCRM.
+- Hướng thiết kế ở mức high-level (chưa apply code):
+  - bổ sung lớp authorization record-level cho account ownership/assignment,
+  - mở rộng API/UI quản trị account (create/login/reconnect/disconnect/assign),
+  - hợp nhất inbox filter theo account quyền truy cập của user,
+  - rollout additive, không phá vỡ business logic ERP hiện hữu.
+- Trạng thái:
+  - session này chỉ phân tích và thiết kế plan để chốt với user; chưa thay đổi schema/code runtime.
+
+## Update 2026-04-05 14:17 (Decision lock + integration plan persisted)
+- User đã xác nhận chọn phương án:
+  - bảng chuyên biệt `zalo_account_assignments` cho account assignment ACL.
+- Đã persist quyết định kiến trúc:
+  - `docs/decisions/ADR-046-ZALO-ACCOUNT-ASSIGNMENT-SPECIALIZED-TABLE.md`
+- Đã persist kế hoạch triển khai:
+  - `planning/ZALOCRM_ERP_INTEGRATION_PLAN.md`
+  - nội dung chính:
+    - data model + index/constraint,
+    - API design cho account lifecycle + assignment CRUD,
+    - enforce đọc/ghi hội thoại theo permission (`READ/CHAT/ADMIN`),
+    - UI account management + assignment,
+    - rollout phases (P0 -> P4) + test strategy + risk mitigation.
+- Trạng thái:
+  - chưa apply migration/schema/code runtime ở session này.
+  - ready cho implementation phase khi user yêu cầu.
+
+## Update 2026-04-05 14:30 (P0 implementation completed for Zalo account assignment)
+- Đã triển khai code nền tảng theo ADR-046:
+  - schema + migration:
+    - enum `ZaloAccountPermissionLevel`,
+    - model `ZaloAccountAssignment`,
+    - migration `20260405143000_add_zalo_account_assignments`.
+  - service mới:
+    - `zalo-account-assignment.service.ts` (resolve scope, assert READ/CHAT/ADMIN, list/upsert/revoke assignment).
+  - wiring:
+    - `ConversationsModule` export assignment service,
+    - `ZaloService` inject assignment service.
+  - API mới:
+    - `GET /api/v1/zalo/accounts/:id/assignments`
+    - `PUT /api/v1/zalo/accounts/:id/assignments/:userId`
+    - `DELETE /api/v1/zalo/accounts/:id/assignments/:userId`
+  - enforce nền:
+    - Zalo send endpoints yêu cầu `CHAT`,
+    - conversations list/messages/evaluation lọc/kiểm quyền theo account assignment.
+- Quy ước rollout an toàn hiện tại:
+  - `ADMIN`/`MANAGER` bypass scope ở read/chat để tránh vỡ vận hành hiện hữu,
+  - `STAFF` bị giới hạn theo assignment active,
+  - quản trị assignment (list/upsert/revoke) chỉ cho `ADMIN` hệ thống.
+- Verification đã chạy:
+  - `npm run prisma:generate --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/zalo-account-assignment.service.test.ts test/zalo.service.test.ts test/conversations.api-flow.test.ts` ✅
+  - `docker ps` + `lsof :55432` ✅
+  - `npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `npm run prisma:migrate:status --workspace @erp/api` ✅ (`up to date`)
+  - `npm run build --workspace @erp/api` ✅
+
+## Update 2026-04-05 14:56 (P3 implementation completed for Zalo account admin UI + inbox permission UX)
+- Đã triển khai route và màn hình quản trị tài khoản Zalo:
+  - `apps/web/app/modules/crm/zalo-accounts/page.tsx`
+  - `apps/web/components/crm-zalo-accounts-workbench.tsx`
+- Màn P3 hỗ trợ:
+  - list/filter account đa tài khoản,
+  - create account,
+  - personal account lifecycle (`login/reconnect/disconnect`),
+  - assignment CRUD cho ADMIN (`GET/PUT/DELETE /zalo/accounts/:id/assignments/:userId`).
+- Sidebar/App shell:
+  - thêm item `Tài khoản Zalo` vào nhóm CRM,
+  - cập nhật title route `/modules/crm/zalo-accounts`.
+- Conversations workbench:
+  - hiển thị badge quyền account (`READ/CHAT/ADMIN`) trên thread list + detail,
+  - chặn gửi tin (disable button + banner) khi quyền account là `READ`,
+  - thêm link nhanh từ inbox sang trang quản trị tài khoản Zalo.
+- Backend hỗ trợ UX:
+  - `ZaloService.listAccounts` trả thêm `currentPermissionLevel`,
+  - `ZaloAccountAssignmentService` thêm `resolvePermissionMapForAccounts`.
+- E2E mới:
+  - `apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts`
+  - scenario: admin assign account cho staff (READ) -> staff chỉ thấy thread đúng scope và không gửi được.
+- Verification đã chạy:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/zalo-account-assignment.service.test.ts test/zalo.service.test.ts test/conversations.api-flow.test.ts` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4311 npm run test:e2e:web -- apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts` ✅
+  - stability gate:
+    - `docker ps` (có `erp-postgres` Up) ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
 
 ## Update 2026-04-05 13:11 (Deploy/UAT execution pass + env propagation hardening)
 - User yêu cầu “làm luôn” nhiệm vụ kế tiếp ở cấp dự án (deploy + UAT readiness).

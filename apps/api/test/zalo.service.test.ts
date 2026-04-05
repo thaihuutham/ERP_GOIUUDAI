@@ -7,7 +7,8 @@ describe('ZaloService OA outbound', () => {
   const prisma = {
     client: {
       zaloAccount: {
-        findFirst: vi.fn()
+        findFirst: vi.fn(),
+        findMany: vi.fn()
       }
     },
     getTenantId: vi.fn(() => 'tenant_demo_company')
@@ -21,7 +22,16 @@ describe('ZaloService OA outbound', () => {
     ingestExternalMessage: vi.fn()
   } as any;
 
-  const personalPool = {} as any;
+  const zaloAssignment = {
+    assertCanChatAccount: vi.fn(),
+    resolveAccessibleAccountIds: vi.fn(),
+    assertCanViewOperationalMetrics: vi.fn(),
+    getAssignmentMismatchMetrics: vi.fn()
+  } as any;
+
+  const personalPool = {
+    getReconnectFailureMetrics: vi.fn()
+  } as any;
   const oaOutboundWorker = {
     sendTextMessage: vi.fn()
   } as any;
@@ -34,9 +44,33 @@ describe('ZaloService OA outbound', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     prisma.client.zaloAccount.findFirst.mockReset();
+    prisma.client.zaloAccount.findMany.mockReset();
     conversationsService.ingestExternalMessage.mockReset();
+    zaloAssignment.assertCanChatAccount.mockReset();
+    zaloAssignment.resolveAccessibleAccountIds.mockReset();
+    zaloAssignment.assertCanViewOperationalMetrics.mockReset();
+    zaloAssignment.getAssignmentMismatchMetrics.mockReset();
     oaOutboundWorker.sendTextMessage.mockReset();
+    personalPool.getReconnectFailureMetrics.mockReset();
     runtimeSettings.getIntegrationRuntime.mockReset();
+    zaloAssignment.resolveAccessibleAccountIds.mockResolvedValue(null);
+    zaloAssignment.assertCanChatAccount.mockResolvedValue(undefined);
+    zaloAssignment.assertCanViewOperationalMetrics.mockResolvedValue(undefined);
+    zaloAssignment.getAssignmentMismatchMetrics.mockResolvedValue({
+      totalActiveAssignments: 0,
+      mismatchCount: 0,
+      mismatchByReason: {
+        USER_ID_EMPTY: 0,
+        USER_NOT_FOUND: 0,
+        USER_INACTIVE: 0,
+        DUPLICATE_ACTIVE_ASSIGNMENT: 0
+      },
+      samples: []
+    });
+    personalPool.getReconnectFailureMetrics.mockReturnValue({
+      totalFailures: 0,
+      byAccount: []
+    });
     runtimeSettings.getIntegrationRuntime.mockResolvedValue({
       zalo: {
         outboundUrl: '',
@@ -46,7 +80,7 @@ describe('ZaloService OA outbound', () => {
       }
     });
 
-    service = new ZaloService(prisma, config, conversationsService, personalPool, oaOutboundWorker, runtimeSettings);
+    service = new ZaloService(prisma, config, conversationsService, zaloAssignment, personalPool, oaOutboundWorker, runtimeSettings);
   });
 
   it('sends OA message and ingests outbound message into thread', async () => {
@@ -125,5 +159,64 @@ describe('ZaloService OA outbound', () => {
         content: 'Xin chao'
       })
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('returns operational metrics snapshot for support runbook', async () => {
+    prisma.client.zaloAccount.findMany.mockResolvedValue([
+      { id: 'acc_personal_1', accountType: 'PERSONAL', status: 'CONNECTED' },
+      { id: 'acc_personal_2', accountType: 'PERSONAL', status: 'DISCONNECTED' },
+      { id: 'acc_oa_1', accountType: 'OA', status: 'CONNECTED' }
+    ]);
+    personalPool.getReconnectFailureMetrics.mockReturnValue({
+      totalFailures: 3,
+      byAccount: [{ accountId: 'acc_personal_2', count: 3 }]
+    });
+    zaloAssignment.getAssignmentMismatchMetrics.mockResolvedValue({
+      totalActiveAssignments: 8,
+      mismatchCount: 1,
+      mismatchByReason: {
+        USER_ID_EMPTY: 0,
+        USER_NOT_FOUND: 1,
+        USER_INACTIVE: 0,
+        DUPLICATE_ACTIVE_ASSIGNMENT: 0
+      },
+      samples: [
+        {
+          assignmentId: 'assign_1',
+          userId: 'staff_missing',
+          zaloAccountId: 'acc_personal_2',
+          reason: 'USER_NOT_FOUND'
+        }
+      ]
+    });
+
+    const metrics = await service.getOperationalMetrics();
+
+    expect(zaloAssignment.assertCanViewOperationalMetrics).toHaveBeenCalledTimes(1);
+    expect(personalPool.getReconnectFailureMetrics).toHaveBeenCalledWith([
+      'acc_personal_1',
+      'acc_personal_2',
+      'acc_oa_1'
+    ]);
+    expect(metrics).toMatchObject({
+      accountMetrics: {
+        totalAccounts: 3,
+        activeAccounts: 2,
+        personalTotalAccounts: 2,
+        personalActiveAccounts: 1,
+        oaTotalAccounts: 1,
+        oaActiveAccounts: 1,
+        statusBreakdown: {
+          CONNECTED: 2,
+          DISCONNECTED: 1
+        }
+      },
+      reconnectMetrics: {
+        totalFailures: 3
+      },
+      assignmentMetrics: {
+        mismatchCount: 1
+      }
+    });
   });
 });

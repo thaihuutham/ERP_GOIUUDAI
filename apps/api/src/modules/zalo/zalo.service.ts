@@ -6,6 +6,7 @@ import { RuntimeSettingsService } from '../../common/settings/runtime-settings.s
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloOaOutboundWorkerService } from './zalo-oa-outbound.worker';
+import { ZaloAccountAssignmentService } from './zalo-account-assignment.service';
 import { ZaloPersonalPoolService } from './zalo-personal.pool.service';
 
 type AccountType = 'PERSONAL' | 'OA';
@@ -16,18 +17,31 @@ export class ZaloService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly conversationsService: ConversationsService,
+    private readonly zaloAssignment: ZaloAccountAssignmentService,
     private readonly personalPool: ZaloPersonalPoolService,
     private readonly oaOutboundWorker: ZaloOaOutboundWorkerService,
     private readonly runtimeSettings: RuntimeSettingsService
   ) {}
 
   async listAccounts(accountType?: AccountType | 'ALL') {
-    return this.prisma.client.zaloAccount.findMany({
+    const accessibleAccountIds = await this.zaloAssignment.resolveAccessibleAccountIds();
+    if (accessibleAccountIds && accessibleAccountIds.length === 0) {
+      return [];
+    }
+
+    const accounts = await this.prisma.client.zaloAccount.findMany({
       where: {
-        ...(accountType && accountType !== 'ALL' ? { accountType } : {})
+        ...(accountType && accountType !== 'ALL' ? { accountType } : {}),
+        ...(accessibleAccountIds ? { id: { in: accessibleAccountIds } } : {})
       },
       orderBy: { createdAt: 'asc' }
     });
+
+    const permissionMap = await this.zaloAssignment.resolvePermissionMapForAccounts(accounts.map((account) => account.id));
+    return accounts.map((account) => ({
+      ...account,
+      currentPermissionLevel: permissionMap[account.id] ?? null
+    }));
   }
 
   async createAccount(payload: Record<string, unknown>) {
@@ -118,6 +132,7 @@ export class ZaloService {
 
   async sendPersonalMessage(id: string, payload: Record<string, unknown>) {
     await this.requirePersonalAccount(id);
+    await this.zaloAssignment.assertCanChatAccount(id);
 
     const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
     const content = this.requiredString(payload.content, 'Thiếu nội dung tin nhắn.');
@@ -128,6 +143,7 @@ export class ZaloService {
 
   async sendOaMessage(id: string, payload: Record<string, unknown>) {
     const account = await this.requireOaAccount(id);
+    await this.zaloAssignment.assertCanChatAccount(account.id);
     const integrationRuntime = await this.runtimeSettings.getIntegrationRuntime();
 
     const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
@@ -217,6 +233,84 @@ export class ZaloService {
     };
   }
 
+  async listAccountAssignments(id: string) {
+    await this.requireAccount(id);
+    return this.zaloAssignment.listAssignmentsForAccount(id);
+  }
+
+  async upsertAccountAssignment(id: string, userId: string, payload: Record<string, unknown>) {
+    await this.requireAccount(id);
+    const permissionLevel = this.optionalString(payload.permissionLevel);
+    return this.zaloAssignment.upsertAssignment(id, userId, permissionLevel);
+  }
+
+  async revokeAccountAssignment(id: string, userId: string) {
+    await this.requireAccount(id);
+    return this.zaloAssignment.revokeAssignment(id, userId);
+  }
+
+  async getOperationalMetrics() {
+    await this.zaloAssignment.assertCanViewOperationalMetrics();
+    const tenantId = this.prisma.getTenantId();
+    const accounts = await this.prisma.client.zaloAccount.findMany({
+      where: { tenant_Id: tenantId },
+      select: {
+        id: true,
+        accountType: true,
+        status: true
+      }
+    });
+
+    const statusBreakdown: Record<string, number> = {};
+    let personalTotalAccounts = 0;
+    let oaTotalAccounts = 0;
+    let personalActiveAccounts = 0;
+    let oaActiveAccounts = 0;
+    let activeAccounts = 0;
+
+    for (const account of accounts) {
+      const accountType = String(account.accountType ?? 'PERSONAL').toUpperCase();
+      const status = String(account.status ?? 'DISCONNECTED').toUpperCase();
+      statusBreakdown[status] = (statusBreakdown[status] ?? 0) + 1;
+
+      const isActive = status === 'CONNECTED';
+      if (isActive) {
+        activeAccounts += 1;
+      }
+
+      if (accountType === 'OA') {
+        oaTotalAccounts += 1;
+        if (isActive) {
+          oaActiveAccounts += 1;
+        }
+        continue;
+      }
+
+      personalTotalAccounts += 1;
+      if (isActive) {
+        personalActiveAccounts += 1;
+      }
+    }
+
+    const reconnectMetrics = this.personalPool.getReconnectFailureMetrics(accounts.map((account) => account.id));
+    const assignmentMetrics = await this.zaloAssignment.getAssignmentMismatchMetrics();
+
+    return {
+      generatedAt: new Date(),
+      accountMetrics: {
+        totalAccounts: accounts.length,
+        activeAccounts,
+        personalTotalAccounts,
+        personalActiveAccounts,
+        oaTotalAccounts,
+        oaActiveAccounts,
+        statusBreakdown
+      },
+      reconnectMetrics,
+      assignmentMetrics
+    };
+  }
+
   private async verifyOaWebhookSignature(rawBody: string, signatureHeader?: string) {
     const integrationRuntime = await this.runtimeSettings.getIntegrationRuntime();
     const secret =
@@ -246,6 +340,14 @@ export class ZaloService {
       throw new BadRequestException('Tài khoản không phải loại PERSONAL.');
     }
 
+    return account;
+  }
+
+  private async requireAccount(id: string) {
+    const account = await this.prisma.client.zaloAccount.findFirst({ where: { id } });
+    if (!account) {
+      throw new NotFoundException('Không tìm thấy tài khoản Zalo.');
+    }
     return account;
   }
 

@@ -151,3 +151,45 @@ AUDIT_STRICT=true npm run quality:security
   - `viewerScope!=self`: chart + table.
 - Safe fallback:
   - Khi policy chua day du, backend fallback ve appendix defaults de khong chan van hanh form.
+
+## 13. Zalo operations metrics (P4 hardening)
+- Endpoint: `GET /api/v1/zalo/operations/metrics`
+- Mục tiêu:
+  - theo dõi số account active,
+  - theo dõi reconnect fail (runtime counter),
+  - phát hiện assignment mismatch để support xử lý sớm.
+
+### 13.1 Cách gọi nhanh
+```bash
+curl -sS "http://127.0.0.1:3001/api/v1/zalo/operations/metrics" \
+  -H "Authorization: Bearer <jwt-admin-or-manager>" \
+  -H "x-tenant-id: GOIUUDAI" | jq
+```
+
+### 13.2 Ý nghĩa chính của response
+- `accountMetrics.activeAccounts`:
+  - số account `status=CONNECTED` tại thời điểm snapshot.
+- `accountMetrics.statusBreakdown`:
+  - phân bố trạng thái account (`CONNECTED`, `DISCONNECTED`, `QR_PENDING`, `CONNECTING`, `ERROR`...).
+- `reconnectMetrics.totalFailures`:
+  - tổng số reconnect fail được ghi nhận từ lúc API process hiện tại khởi động.
+- `reconnectMetrics.byAccount[]`:
+  - top account có reconnect fail + thời điểm lỗi gần nhất.
+- `assignmentMetrics.mismatchCount`:
+  - tổng mismatch assignment active.
+- `assignmentMetrics.mismatchByReason`:
+  - `USER_ID_EMPTY`: assignment thiếu userId.
+  - `USER_NOT_FOUND`: assignment trỏ tới user không tồn tại.
+  - `USER_INACTIVE`: assignment trỏ tới user đã bị deactive.
+  - `DUPLICATE_ACTIVE_ASSIGNMENT`: nhiều assignment active trùng cặp (`zaloAccountId`, `userId`).
+
+### 13.3 Checklist support khi có cảnh báo
+1. Nếu `activeAccounts` giảm bất thường:
+   - kiểm tra `statusBreakdown` để xác định account đang `ERROR`/`DISCONNECTED`,
+   - chạy reconnect theo account trên màn CRM Zalo Accounts.
+2. Nếu `reconnectMetrics.totalFailures` tăng nhanh:
+   - kiểm tra `byAccount` để khoanh vùng account lỗi,
+   - xác minh session cũ còn hợp lệ, thử login QR lại account bị lỗi.
+3. Nếu `assignmentMetrics.mismatchCount > 0`:
+   - dùng `assignmentMetrics.samples` để xác định bản ghi lỗi,
+   - cleanup assignment không hợp lệ hoặc gán lại đúng user còn active.

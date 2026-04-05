@@ -20,10 +20,18 @@ type SavedSession = {
   userAgent?: string;
 };
 
+type ReconnectFailureMetric = {
+  count: number;
+  lastFailureAt: Date | null;
+  lastErrorMessage: string | null;
+};
+
 @Injectable()
 export class ZaloPersonalPoolService {
   private readonly logger = new Logger(ZaloPersonalPoolService.name);
   private readonly instances = new Map<string, PersonalInstance>();
+  private readonly reconnectFailuresByAccount = new Map<string, ReconnectFailureMetric>();
+  private reconnectFailureTotal = 0;
   private readonly require = createRequire(import.meta.url);
 
   constructor(
@@ -146,6 +154,7 @@ export class ZaloPersonalPoolService {
 
       this.attachListener(accountId, api);
     } catch (error) {
+      this.recordReconnectFailure(accountId, error);
       this.logger.error(`reconnectWithSavedSession failed for ${accountId}: ${(error as Error).message}`);
       await this.updateAccountStatus(accountId, 'ERROR');
       const inst = this.instances.get(accountId);
@@ -205,6 +214,33 @@ export class ZaloPersonalPoolService {
 
   getQrImage(accountId: string): string | null {
     return this.instances.get(accountId)?.lastQrImage ?? null;
+  }
+
+  getReconnectFailureMetrics(accountIds?: string[]) {
+    const scopedAccountIds = accountIds && accountIds.length > 0 ? new Set(accountIds) : null;
+    const byAccount = [...this.reconnectFailuresByAccount.entries()]
+      .filter(([accountId]) => !scopedAccountIds || scopedAccountIds.has(accountId))
+      .map(([accountId, metric]) => ({
+        accountId,
+        count: metric.count,
+        lastFailureAt: metric.lastFailureAt,
+        lastErrorMessage: metric.lastErrorMessage
+      }))
+      .sort((a, b) => {
+        if (b.count !== a.count) {
+          return b.count - a.count;
+        }
+        return a.accountId.localeCompare(b.accountId);
+      });
+
+    const totalFailures = scopedAccountIds
+      ? byAccount.reduce((sum, row) => sum + row.count, 0)
+      : this.reconnectFailureTotal;
+
+    return {
+      totalFailures,
+      byAccount
+    };
   }
 
   private resolveZaloCtor(): new (opts: { logging: boolean }) => any {
@@ -335,5 +371,21 @@ export class ZaloPersonalPoolService {
         status
       }
     });
+  }
+
+  private recordReconnectFailure(accountId: string, error: unknown) {
+    const existing = this.reconnectFailuresByAccount.get(accountId);
+    this.reconnectFailuresByAccount.set(accountId, {
+      count: (existing?.count ?? 0) + 1,
+      lastFailureAt: new Date(),
+      lastErrorMessage: this.normalizeErrorMessage(error)
+    });
+    this.reconnectFailureTotal += 1;
+  }
+
+  private normalizeErrorMessage(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error ?? 'Unknown reconnect error');
+    const normalized = raw.trim();
+    return normalized.length > 240 ? normalized.slice(0, 240) : normalized;
   }
 }

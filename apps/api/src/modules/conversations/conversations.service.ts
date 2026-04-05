@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { ConversationChannel, ConversationSenderType, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ZaloAccountAssignmentService } from '../zalo/zalo-account-assignment.service';
 
 type ThreadFilters = {
   channel?: ConversationChannel | 'ALL';
@@ -28,7 +29,10 @@ type IngestExternalMessagePayload = {
 
 @Injectable()
 export class ConversationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly zaloAssignment: ZaloAccountAssignmentService
+  ) {}
 
   async listThreads(query: PaginationQueryDto, filters: ThreadFilters = {}) {
     const take = Math.min(Math.max(query.limit ?? 30, 1), 200);
@@ -53,6 +57,18 @@ export class ConversationsService {
         { customerDisplayName: { contains: keyword, mode: 'insensitive' } },
         { externalThreadId: { contains: keyword, mode: 'insensitive' } }
       ];
+    }
+
+    const zaloScope = await this.resolveZaloThreadScope(filters);
+    if (zaloScope.mode === 'DENY') {
+      return {
+        items: [],
+        nextCursor: null,
+        limit: take
+      };
+    }
+    if (zaloScope.mode === 'WHERE') {
+      this.pushAndConstraint(where, zaloScope.constraint);
     }
 
     const rows = await this.prisma.client.conversationThread.findMany({
@@ -105,12 +121,17 @@ export class ConversationsService {
   async createThread(payload: Record<string, unknown>) {
     const channel = this.parseChannel(payload.channel, ConversationChannel.ZALO_PERSONAL);
     const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
+    const channelAccountId = this.optionalString(payload.channelAccountId) ?? null;
+
+    if (this.isZaloChannel(channel) && channelAccountId) {
+      await this.zaloAssignment.assertCanChatAccount(channelAccountId);
+    }
 
     const created = await this.prisma.client.conversationThread.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
         channel,
-        channelAccountId: this.optionalString(payload.channelAccountId) ?? null,
+        channelAccountId,
         externalThreadId,
         customerId: this.optionalString(payload.customerId) ?? null,
         customerDisplayName: this.optionalString(payload.customerDisplayName) ?? null,
@@ -128,6 +149,10 @@ export class ConversationsService {
     const thread = await this.prisma.client.conversationThread.findFirst({ where: { id: threadId } });
     if (!thread) {
       throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    if (this.isZaloChannel(thread.channel) && thread.channelAccountId) {
+      await this.zaloAssignment.assertCanReadAccount(thread.channelAccountId);
     }
 
     const take = Math.min(Math.max(query.limit ?? 50, 1), 500);
@@ -167,6 +192,10 @@ export class ConversationsService {
       throw new NotFoundException('Không tìm thấy hội thoại.');
     }
 
+    if (this.isZaloChannel(thread.channel) && thread.channelAccountId) {
+      await this.zaloAssignment.assertCanChatAccount(thread.channelAccountId);
+    }
+
     const senderType = this.parseSenderType(payload.senderType, ConversationSenderType.AGENT);
 
     const message = await this.createOrReuseMessage({
@@ -200,6 +229,10 @@ export class ConversationsService {
       throw new NotFoundException('Không tìm thấy hội thoại.');
     }
 
+    if (this.isZaloChannel(thread.channel) && thread.channelAccountId) {
+      await this.zaloAssignment.assertCanReadAccount(thread.channelAccountId);
+    }
+
     const evaluation = await this.prisma.client.conversationEvaluation.findFirst({
       where: { threadId },
       orderBy: { evaluatedAt: 'desc' },
@@ -214,6 +247,81 @@ export class ConversationsService {
       thread,
       evaluation
     };
+  }
+
+  private async resolveZaloThreadScope(filters: ThreadFilters): Promise<
+    | { mode: 'NONE' }
+    | { mode: 'DENY' }
+    | { mode: 'WHERE'; constraint: Prisma.ConversationThreadWhereInput }
+  > {
+    if (filters.channel && filters.channel !== 'ALL' && !this.isZaloChannel(filters.channel)) {
+      return { mode: 'NONE' };
+    }
+
+    const accountFilter = filters.channelAccountId ? [filters.channelAccountId] : undefined;
+    const accessibleAccountIds = await this.zaloAssignment.resolveAccessibleAccountIds(accountFilter);
+    if (accessibleAccountIds === null) {
+      return { mode: 'NONE' };
+    }
+
+    if (filters.channelAccountId && accessibleAccountIds.length === 0) {
+      return { mode: 'DENY' };
+    }
+
+    if (filters.channel && filters.channel !== 'ALL') {
+      if (accessibleAccountIds.length === 0) {
+        return { mode: 'DENY' };
+      }
+      if (filters.channelAccountId) {
+        return { mode: 'NONE' };
+      }
+      return {
+        mode: 'WHERE',
+        constraint: {
+          channelAccountId: { in: accessibleAccountIds }
+        }
+      };
+    }
+
+    const zaloChannels: ConversationChannel[] = [ConversationChannel.ZALO_PERSONAL, ConversationChannel.ZALO_OA];
+    if (accessibleAccountIds.length === 0) {
+      return {
+        mode: 'WHERE',
+        constraint: {
+          channel: {
+            notIn: zaloChannels
+          }
+        }
+      };
+    }
+
+    return {
+      mode: 'WHERE',
+      constraint: {
+        OR: [
+          {
+            channel: {
+              notIn: zaloChannels
+            }
+          },
+          {
+            channel: { in: zaloChannels },
+            channelAccountId: { in: accessibleAccountIds }
+          }
+        ]
+      }
+    };
+  }
+
+  private pushAndConstraint(where: Prisma.ConversationThreadWhereInput, constraint: Prisma.ConversationThreadWhereInput) {
+    if (!where.AND) {
+      where.AND = [];
+    }
+    if (Array.isArray(where.AND)) {
+      where.AND.push(constraint);
+      return;
+    }
+    where.AND = [where.AND, constraint];
   }
 
   private async resolveThreadForIngestion(payload: IngestExternalMessagePayload) {
@@ -390,5 +498,9 @@ export class ConversationsService {
       return false;
     }
     return fallback;
+  }
+
+  private isZaloChannel(channel: ConversationChannel) {
+    return channel === ConversationChannel.ZALO_PERSONAL || channel === ConversationChannel.ZALO_OA;
   }
 }

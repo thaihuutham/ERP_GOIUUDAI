@@ -63,6 +63,14 @@ export const SIDEBAR_GROUPS: SidebarGroupConfig[] = [
         iconKey: 'conversations',
         requiresFlag: 'zaloAutomation',
       },
+      {
+        type: 'custom',
+        key: 'zalo-accounts',
+        title: 'Tài khoản Zalo',
+        href: '/modules/crm/zalo-accounts',
+        iconKey: 'zaloAccounts',
+        requiresFlag: 'zaloAutomation',
+      },
     ],
   },
   {

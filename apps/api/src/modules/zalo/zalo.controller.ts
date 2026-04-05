@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
 import { Public } from '../../common/auth/auth.decorators';
 import { ZaloService } from './zalo.service';
 
@@ -49,6 +49,30 @@ export class ZaloController {
   @Post('accounts/:id/oa/messages/send')
   sendOaMessage(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.zaloService.sendOaMessage(id, body);
+  }
+
+  @Get('accounts/:id/assignments')
+  listAccountAssignments(@Param('id') id: string) {
+    return this.zaloService.listAccountAssignments(id);
+  }
+
+  @Put('accounts/:id/assignments/:userId')
+  upsertAccountAssignment(
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.zaloService.upsertAccountAssignment(id, userId, body);
+  }
+
+  @Delete('accounts/:id/assignments/:userId')
+  revokeAccountAssignment(@Param('id') id: string, @Param('userId') userId: string) {
+    return this.zaloService.revokeAccountAssignment(id, userId);
+  }
+
+  @Get('operations/metrics')
+  getOperationalMetrics() {
+    return this.zaloService.getOperationalMetrics();
   }
 
   @Public()

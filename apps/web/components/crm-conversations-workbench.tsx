@@ -10,6 +10,7 @@ import { Badge, statusToBadge } from './ui';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
 type ChannelFilter = ConversationChannel | 'ALL';
+type ZaloPermissionLevel = 'READ' | 'CHAT' | 'ADMIN';
 
 type ThreadEvaluationBrief = {
   id: string;
@@ -86,6 +87,7 @@ type ZaloAccount = {
   displayName?: string | null;
   zaloUid?: string | null;
   status?: string | null;
+  currentPermissionLevel?: ZaloPermissionLevel | null;
 };
 
 type ConversationQualityJob = {
@@ -172,6 +174,19 @@ function channelLabel(value: string | null | undefined) {
   return CHANNEL_LABELS[value as ChannelFilter] ?? value;
 }
 
+function permissionToBadge(permission: ZaloPermissionLevel | null | undefined) {
+  if (permission === 'ADMIN') {
+    return 'success' as const;
+  }
+  if (permission === 'CHAT') {
+    return 'info' as const;
+  }
+  if (permission === 'READ') {
+    return 'warning' as const;
+  }
+  return 'neutral' as const;
+}
+
 function toDateTime(value: string | null | undefined) {
   if (!value) {
     return '--';
@@ -192,6 +207,14 @@ function parseCommaSeparatedIds(raw: string) {
         .filter(Boolean)
     )
   );
+}
+
+function normalizePermission(value: string | null | undefined) {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'READ' || normalized === 'CHAT' || normalized === 'ADMIN') {
+    return normalized as ZaloPermissionLevel;
+  }
+  return null;
 }
 
 function readSummaryCounter(summaryJson: unknown, key: string) {
@@ -280,6 +303,37 @@ export function CrmConversationsWorkbench() {
     [threads, selectedThreadId]
   );
 
+  const permissionByAccountId = useMemo(() => {
+    const map = new Map<string, ZaloPermissionLevel>();
+    for (const account of zaloAccounts) {
+      const permission = normalizePermission(account.currentPermissionLevel);
+      if (permission) {
+        map.set(account.id, permission);
+      }
+    }
+    return map;
+  }, [zaloAccounts]);
+
+  const selectedThreadPermission = useMemo(() => {
+    if (!selectedThread?.channelAccountId) {
+      return null;
+    }
+    return permissionByAccountId.get(selectedThread.channelAccountId) ?? null;
+  }, [permissionByAccountId, selectedThread]);
+
+  const canSendSelectedThread = useMemo(() => {
+    if (!selectedThread || !selectedThreadId || !canCreate) {
+      return false;
+    }
+    if (selectedThread.channel !== 'ZALO_PERSONAL' && selectedThread.channel !== 'ZALO_OA') {
+      return true;
+    }
+    if (!selectedThreadPermission) {
+      return true;
+    }
+    return selectedThreadPermission !== 'READ';
+  }, [canCreate, selectedThread, selectedThreadId, selectedThreadPermission]);
+
   const selectedJob = useMemo(
     () => jobs.find((item) => item.id === selectedJobId) ?? null,
     [jobs, selectedJobId]
@@ -295,7 +349,12 @@ export function CrmConversationsWorkbench() {
       const payload = await apiRequest<ZaloAccount[]>('/zalo/accounts', {
         query: { accountType: 'ALL' }
       });
-      setZaloAccounts(normalizeListPayload(payload) as ZaloAccount[]);
+      setZaloAccounts(
+        (normalizeListPayload(payload) as ZaloAccount[]).map((account) => ({
+          ...account,
+          currentPermissionLevel: normalizePermission(account.currentPermissionLevel)
+        }))
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách tài khoản Zalo.');
     }
@@ -495,6 +554,10 @@ export function CrmConversationsWorkbench() {
       setErrorMessage('Vai trò hiện tại không có quyền gửi phản hồi.');
       return;
     }
+    if (!canSendSelectedThread) {
+      setErrorMessage('Bạn không có quyền CHAT trên tài khoản hội thoại đã chọn.');
+      return;
+    }
 
     try {
       if (selectedThread.channel === 'ZALO_PERSONAL' && selectedThread.channelAccountId) {
@@ -670,6 +733,9 @@ export function CrmConversationsWorkbench() {
             <Link className="btn btn-ghost" href="/modules/crm">
               Quay lại vận hành CRM
             </Link>
+            <Link className="btn btn-ghost" href="/modules/crm/zalo-accounts">
+              Quản lý tài khoản Zalo
+            </Link>
             <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>
               Tải lại toàn bộ
             </button>
@@ -787,6 +853,7 @@ export function CrmConversationsWorkbench() {
                       </th>
                       <th>Khách hàng</th>
                       <th>Kênh</th>
+                      <th>Quyền account</th>
                       <th>Chưa đọc</th>
                       <th>Đánh giá AI</th>
                       <th>Tin nhắn gần nhất</th>
@@ -795,6 +862,9 @@ export function CrmConversationsWorkbench() {
                   <tbody>
                     {threads.map((thread) => {
                       const latest = thread.evaluations?.[0];
+                      const accountPermission = thread.channelAccountId
+                        ? permissionByAccountId.get(thread.channelAccountId) ?? null
+                        : null;
                       return (
                         <tr key={thread.id} className={selectedThreadId === thread.id ? 'table-row-selected' : ''}>
                           <td>
@@ -823,6 +893,13 @@ export function CrmConversationsWorkbench() {
                           </td>
                           <td>
                             <Badge variant={statusToBadge(thread.channel)}>{channelLabel(thread.channel)}</Badge>
+                          </td>
+                          <td>
+                            {thread.channel === 'ZALO_PERSONAL' || thread.channel === 'ZALO_OA' ? (
+                              <Badge variant={permissionToBadge(accountPermission)}>{accountPermission || '--'}</Badge>
+                            ) : (
+                              '--'
+                            )}
                           </td>
                           <td>{thread.unreadCount ?? 0}</td>
                           <td>
@@ -868,6 +945,12 @@ export function CrmConversationsWorkbench() {
           </p>
           <p className="muted">
             Tài khoản: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
+          </p>
+          <p className="muted" style={{ marginTop: '0.2rem' }}>
+            Quyền account:{' '}
+            <Badge variant={permissionToBadge(selectedThreadPermission)}>
+              {selectedThreadPermission || '--'}
+            </Badge>
           </p>
 
           <div className="filter-grid">
@@ -915,6 +998,11 @@ export function CrmConversationsWorkbench() {
             <p className="muted">
               ZALO_PERSONAL: gửi thật qua zca-js. ZALO_OA: gửi qua OA official API khi tài khoản đã cấu hình token/url.
             </p>
+            {selectedThreadPermission === 'READ' ? (
+              <p className="banner banner-info" style={{ margin: 0 }}>
+                Tài khoản này đang ở mức quyền READ nên chỉ được xem hội thoại, không gửi tin nhắn.
+              </p>
+            ) : null}
             <div className="field">
               <label htmlFor="conversation-send-content">Nội dung</label>
               <textarea
@@ -925,17 +1013,16 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="action-buttons">
-              {canCreate && (
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={!selectedThreadId}
-                  data-testid="conversation-send-button"
-                >
-                  Gửi tin nhắn
-                </button>
-              )}
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={!canCreate || !canSendSelectedThread}
+                data-testid="conversation-send-button"
+              >
+                Gửi tin nhắn
+              </button>
             </div>
+            {!canCreate ? <p className="muted">Vai trò hiện tại không có quyền gửi phản hồi.</p> : null}
           </form>
 
           <section className="panel-surface">

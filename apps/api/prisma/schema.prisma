@@ -136,6 +136,12 @@ enum ConversationChannel {
   OTHER
 }
 
+enum ZaloAccountPermissionLevel {
+  READ
+  CHAT
+  ADMIN
+}
+
 enum ConversationSenderType {
   AGENT
   CUSTOMER
@@ -2373,12 +2379,33 @@ model ZaloAccount {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  threads ConversationThread[]
+  threads      ConversationThread[]
+  assignments ZaloAccountAssignment[]
 
   @@unique([tenant_Id, zaloUid])
   @@index([tenant_Id])
   @@index([tenant_Id, accountType])
   @@index([tenant_Id, status])
+}
+
+model ZaloAccountAssignment {
+  id              String                     @id @default(cuid())
+  tenant_Id       String
+  zaloAccountId   String
+  userId          String
+  permissionLevel ZaloAccountPermissionLevel @default(READ)
+  assignedBy      String?
+  assignedAt      DateTime                   @default(now())
+  revokedAt       DateTime?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  zaloAccount ZaloAccount @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, userId, revokedAt])
+  @@index([tenant_Id, zaloAccountId, revokedAt])
+  @@map("zalo_account_assignments")
 }
 
 model ConversationThread {
