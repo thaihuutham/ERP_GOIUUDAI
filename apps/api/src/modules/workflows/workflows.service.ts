@@ -1,10 +1,11 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { GenericStatus, Prisma, UserRole } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { GenericStatus, PermissionAction, Prisma, UserRole } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
-import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
+import { AUTH_USER_CONTEXT_KEY, IAM_SCOPE_CONTEXT_KEY } from '../../common/request/request.constants';
 import { AuthUser } from '../../common/auth/auth-user.type';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { IamAccessService } from '../iam/iam-access.service';
 import { SearchService } from '../search/search.service';
 import {
   CreateApprovalDto,
@@ -117,7 +118,8 @@ export class WorkflowsService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
     @Inject(ClsService) private readonly cls: ClsService,
-    @Inject(SearchService) private readonly search: SearchService
+    @Inject(SearchService) private readonly search: SearchService,
+    @Optional() @Inject(IamAccessService) private readonly iamAccess?: IamAccessService
   ) {}
 
   async listDefinitions(query: WorkflowsListQueryDto, entityIds?: string[]) {
@@ -297,7 +299,7 @@ export class WorkflowsService {
   }
 
   async listInstances(query: WorkflowsListQueryDto) {
-    return this.prisma.client.workflowInstance.findMany({
+    const rows = await this.prisma.client.workflowInstance.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.definitionId ? { definitionId: query.definitionId } : {}),
@@ -312,6 +314,19 @@ export class WorkflowsService {
       orderBy: { createdAt: 'desc' },
       take: this.take(query.limit)
     });
+
+    const actor = await this.resolveDecisionActor(query.requesterId);
+    if (!(await this.shouldEnforceWorkflowRecordAccess(actor))) {
+      return rows;
+    }
+
+    const filtered: typeof rows = [];
+    for (const row of rows) {
+      if (await this.canActorViewWorkflowInstance(row, actor)) {
+        filtered.push(row);
+      }
+    }
+    return filtered;
   }
 
   async getInstanceDetail(id: string) {
@@ -326,6 +341,14 @@ export class WorkflowsService {
 
     if (!instance) {
       throw new NotFoundException(`Workflow instance not found: ${id}`);
+    }
+
+    const actor = await this.resolveDecisionActor();
+    if (await this.shouldEnforceWorkflowRecordAccess(actor)) {
+      const canView = await this.canActorViewWorkflowInstance(instance, actor);
+      if (!canView) {
+        throw new ForbiddenException('Bạn không có quyền xem workflow instance này.');
+      }
     }
 
     return instance;
@@ -606,6 +629,13 @@ export class WorkflowsService {
       }
     });
 
+    await this.grantWorkflowInstanceAccess(instance.id, [replacement.approverId], {
+      sourceRef: `WORKFLOW_REASSIGN:${approval.id}`,
+      reason: 'Workflow task reassigned',
+      createdBy: actor.actorId,
+      expiresAt: approval.dueAt ?? null
+    });
+
     return this.getInstanceDetail(instance.id);
   }
 
@@ -658,6 +688,13 @@ export class WorkflowsService {
         toApproverId: delegateTarget.approverId,
         requestedTarget: body.toApproverId
       }
+    });
+
+    await this.grantWorkflowInstanceAccess(instance.id, [delegateTarget.approverId], {
+      sourceRef: `WORKFLOW_DELEGATE:${approval.id}`,
+      reason: 'Workflow task delegated',
+      createdBy: actor.actorId,
+      expiresAt: approval.dueAt ?? null
     });
 
     return this.getInstanceDetail(instance.id);
@@ -725,11 +762,19 @@ export class WorkflowsService {
       }
     });
 
+    await this.grantWorkflowInstanceAccess(instance.id, [escalationTarget.approverId], {
+      sourceRef: `WORKFLOW_ESCALATE:${approval.id}`,
+      reason: 'Workflow task escalated',
+      createdBy: actor.actorId,
+      expiresAt: approval.dueAt ?? null
+    });
+
     return this.getInstanceDetail(instance.id);
   }
 
   async listInstanceTimeline(instanceId: string) {
     await this.ensureInstance(instanceId);
+    await this.assertWorkflowInstanceAccessible(instanceId);
     return this.prisma.client.workflowActionLog.findMany({
       where: { instanceId },
       orderBy: { createdAt: 'asc' }
@@ -738,6 +783,7 @@ export class WorkflowsService {
 
   async listInstanceApprovals(instanceId: string) {
     await this.ensureInstance(instanceId);
+    await this.assertWorkflowInstanceAccessible(instanceId);
     return this.prisma.client.approval.findMany({
       where: { instanceId },
       orderBy: { createdAt: 'asc' }
@@ -875,7 +921,7 @@ export class WorkflowsService {
       ? await this.resolveSingleApprover(body.approverId, actor, { allowUnresolvedUserId: true })
       : null;
 
-    return this.prisma.client.approval.create({
+    const created = await this.prisma.client.approval.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
         instanceId: body.instanceId ?? null,
@@ -891,6 +937,17 @@ export class WorkflowsService {
         status: body.status ?? GenericStatus.PENDING
       }
     });
+
+    if (created.instanceId && created.approverId && created.status === GenericStatus.PENDING) {
+      await this.grantWorkflowInstanceAccess(created.instanceId, [created.approverId], {
+        sourceRef: `WORKFLOW_APPROVAL_CREATE:${created.id}`,
+        reason: 'Workflow approval created',
+        createdBy: actor.actorId,
+        expiresAt: created.dueAt ?? null
+      });
+    }
+
+    return created;
   }
 
   async updateApproval(id: string, body: UpdateApprovalDto) {
@@ -913,7 +970,16 @@ export class WorkflowsService {
       }
     });
 
-    return this.ensureApproval(id);
+    const updated = await this.ensureApproval(id);
+    if (updated.instanceId && updated.approverId && updated.status === GenericStatus.PENDING) {
+      await this.grantWorkflowInstanceAccess(updated.instanceId, [updated.approverId], {
+        sourceRef: `WORKFLOW_APPROVAL_UPDATE:${updated.id}`,
+        reason: 'Workflow approval updated',
+        createdBy: actor.actorId,
+        expiresAt: updated.dueAt ?? null
+      });
+    }
+    return updated;
   }
 
   private async advanceByDecision(instanceId: string, action: WorkflowDecisionAction, actorId: string | null, note: string | null) {
@@ -1041,6 +1107,17 @@ export class WorkflowsService {
         status: GenericStatus.PENDING
       }))
     });
+
+    await this.grantWorkflowInstanceAccess(
+      instance.id,
+      normalizedAssignments.map((assignment) => assignment.approverId),
+      {
+        sourceRef: `WORKFLOW_STEP:${step.key}`,
+        reason: `Workflow step assignment ${step.key}`,
+        createdBy: requesterId,
+        expiresAt: dueAt
+      }
+    );
   }
 
   private resolveApproversByMatrix(
@@ -1478,7 +1555,135 @@ export class WorkflowsService {
         requestedTarget: targetRole
       }
     });
+
+    await this.grantWorkflowInstanceAccess(instance.id, [target.approverId], {
+      sourceRef: `WORKFLOW_AUTO_ESCALATE:${task.id}`,
+      reason: 'Workflow task auto escalated',
+      createdBy: systemActor.actorId,
+      expiresAt: task.dueAt ?? null
+    });
     return true;
+  }
+
+  private async shouldEnforceWorkflowRecordAccess(actor: DecisionActor) {
+    if (!actor.actorId || actor.role === UserRole.ADMIN) {
+      return false;
+    }
+
+    const scope = this.ensureRecord(this.cls.get(IAM_SCOPE_CONTEXT_KEY));
+    const enabled = this.toBool(scope.enabled, false);
+    const mode = (this.cleanString(scope.mode) ?? '').toUpperCase();
+    const companyWide = this.toBool(scope.companyWide, false);
+
+    return enabled && mode === 'ENFORCE' && !companyWide;
+  }
+
+  private async canActorViewWorkflowInstance(
+    instance: { id: string; startedBy?: string | null },
+    actor: DecisionActor
+  ) {
+    const actorId = this.cleanString(actor.actorId);
+    if (!actorId) {
+      return false;
+    }
+
+    if (actor.role === UserRole.ADMIN) {
+      return true;
+    }
+
+    if (this.cleanString(instance.startedBy) === actorId) {
+      return true;
+    }
+
+    if (this.iamAccess) {
+      const granted = await this.iamAccess.canAccessRecord(
+        {
+          tenantId: this.prisma.getTenantId(),
+          userId: actorId,
+          role: actor.role ?? undefined,
+          email: actor.email ?? undefined,
+          employeeId: actor.employeeId ?? undefined
+        },
+        'WORKFLOW_INSTANCE',
+        instance.id,
+        PermissionAction.VIEW
+      );
+      if (granted) {
+        return true;
+      }
+    }
+
+    const legacyApproverTokens = await this.deriveLegacyApproverTokens(actor);
+    const assignment = await this.prisma.client.approval.findFirst({
+      where: {
+        instanceId: instance.id,
+        OR: [
+          { approverId: actorId },
+          ...legacyApproverTokens.map((token) => ({ approverId: token }))
+        ]
+      },
+      select: { id: true }
+    });
+
+    return Boolean(assignment);
+  }
+
+  private async assertWorkflowInstanceAccessible(instanceId: string) {
+    const actor = await this.resolveDecisionActor();
+    if (!(await this.shouldEnforceWorkflowRecordAccess(actor))) {
+      return;
+    }
+
+    const instance = await this.prisma.client.workflowInstance.findFirst({
+      where: { id: instanceId },
+      select: { id: true, startedBy: true }
+    });
+    if (!instance) {
+      throw new NotFoundException(`Workflow instance not found: ${instanceId}`);
+    }
+
+    const canView = await this.canActorViewWorkflowInstance(instance, actor);
+    if (!canView) {
+      throw new ForbiddenException('Bạn không có quyền xem workflow instance này.');
+    }
+  }
+
+  private async grantWorkflowInstanceAccess(
+    instanceId: string,
+    actorUserIds: string[],
+    params: { sourceRef?: string | null; reason?: string | null; createdBy?: string | null; expiresAt?: Date | null }
+  ) {
+    if (!this.iamAccess) {
+      return;
+    }
+
+    const recordId = this.cleanString(instanceId);
+    if (!recordId) {
+      return;
+    }
+
+    const targets = Array.from(
+      new Set(actorUserIds.map((item) => this.cleanString(item)).filter((item): item is string => Boolean(item)))
+    );
+    if (targets.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      targets.map((actorUserId) =>
+        this.iamAccess?.grantRecordAccess({
+          actorUserId,
+          recordType: 'WORKFLOW_INSTANCE',
+          recordId,
+          actions: [PermissionAction.VIEW, PermissionAction.APPROVE],
+          sourceRef: params.sourceRef ?? null,
+          reason: params.reason ?? null,
+          createdBy: this.cleanString(params.createdBy) ?? null,
+          updatedBy: this.cleanString(params.createdBy) ?? null,
+          expiresAt: params.expiresAt ?? null
+        })
+      )
+    );
   }
 
   private async resolveDecisionActor(legacyActorId?: string | null): Promise<DecisionActor> {
@@ -1900,6 +2105,27 @@ export class WorkflowsService {
     }
     const normalized = value.trim();
     return normalized ? normalized : null;
+  }
+
+  private ensureRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private toBool(value: unknown, fallback: boolean) {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    const normalized = this.cleanString(value)?.toLowerCase();
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    return fallback;
   }
 
   private toInputJson(value: unknown): Prisma.InputJsonValue | Prisma.NullTypes.DbNull {

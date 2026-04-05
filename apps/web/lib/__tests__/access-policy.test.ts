@@ -4,6 +4,7 @@ import {
   decideActionAccess,
   decideModuleAccess,
   decideRouteAccess,
+  mapRuntimeRoleToAccessRole,
   type EffectivePermissionMap
 } from '../access-policy';
 
@@ -24,6 +25,13 @@ function buildSnapshot(args: {
 }
 
 describe('access policy snapshot merge', () => {
+  it('treats MANAGER/STAFF legacy roles as USER in iam v2 mode', () => {
+    expect(mapRuntimeRoleToAccessRole('MANAGER', true)).toBe('USER');
+    expect(mapRuntimeRoleToAccessRole('STAFF', true)).toBe('USER');
+    expect(mapRuntimeRoleToAccessRole('ADMIN', true)).toBe('ADMIN');
+    expect(mapRuntimeRoleToAccessRole('MANAGER', false)).toBe('MANAGER');
+  });
+
   it('applies baseline then effective permissions', () => {
     const snapshot = buildSnapshot({
       role: 'MANAGER',

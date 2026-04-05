@@ -260,6 +260,20 @@ export class SettingsController {
     return this.settingsEnterpriseService.resetIamUserPassword(id);
   }
 
+  @Put('iam/users/:userId/scope-override')
+  @Roles(UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_IAM_USER_SCOPE_OVERRIDE', entityType: 'IamUserScopeOverride', entityIdParam: 'userId' })
+  updateIamUserScopeOverride(@Param('userId') userId: string, @Body() body: Record<string, unknown>) {
+    return this.settingsEnterpriseService.updateUserScopeOverride(userId, body);
+  }
+
+  @Put('iam/title-scope-mapping')
+  @Roles(UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_IAM_TITLE_SCOPE_MAPPING', entityType: 'IamTitleScopeMapping' })
+  updateIamTitleScopeMapping(@Body() body: Record<string, unknown>) {
+    return this.settingsEnterpriseService.updateTitleScopeMapping(body);
+  }
+
   @Get('organization/tree')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
   getOrganizationTree() {
@@ -328,8 +342,16 @@ export class SettingsController {
 
   @Put('permissions/users/:userId/overrides')
   @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditAction({ action: 'UPDATE_USER_PERMISSION_OVERRIDES', entityType: 'PermissionPolicy', entityIdParam: 'userId' })
   putUserPermissionOverrides(@Param('userId') userId: string, @Body() body: Record<string, unknown>) {
     return this.settingsEnterpriseService.putUserPermissionOverrides(userId, body);
+  }
+
+  @Get('permissions/iam-v2/mismatch-report')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @AuditRead({ action: 'READ_IAM_V2_MISMATCH_REPORT', entityType: 'PermissionPolicy' })
+  getIamV2MismatchReport(@Query() query: Record<string, unknown>) {
+    return this.settingsEnterpriseService.getIamMismatchReport(query);
   }
 
   @Get('permissions/effective')

@@ -4,9 +4,12 @@ import { canAccessAssistantRoute, resolveAssistantRouteFromPath } from './assist
 import { getMinRoleForModule, hasRoleAtLeast, type UserRole } from './rbac';
 
 export const PERMISSION_ACTIONS = ['VIEW', 'CREATE', 'UPDATE', 'DELETE', 'APPROVE'] as const;
+export const IAM_V2_ENFORCE_MODE = 'ENFORCE';
 
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export type PermissionEffect = 'ALLOW' | 'DENY';
+export type AccessRole = UserRole | 'USER';
+export type IamV2Mode = 'OFF' | 'SHADOW' | 'ENFORCE';
 
 export type PermissionDecision = {
   allowed: boolean;
@@ -25,6 +28,8 @@ export type EffectivePermissionMap = Record<string, Partial<Record<PermissionAct
 
 export type AccessPolicySnapshot = {
   role: UserRole;
+  accessRole: AccessRole;
+  iamV2Enabled: boolean;
   enabledModules: string[] | null;
   effectivePermissions: EffectivePermissionMap;
   modulePermissions: Record<string, ModulePermissionMatrix>;
@@ -60,14 +65,26 @@ function createDeniedMatrix(): ModulePermissionMatrix {
   };
 }
 
-function createBaselineMatrix(role: UserRole, moduleKey: string): ModulePermissionMatrix {
+export function mapRuntimeRoleToAccessRole(role: UserRole, iamV2Enabled: boolean): AccessRole {
+  if (role === 'ADMIN') {
+    return 'ADMIN';
+  }
+  if (iamV2Enabled) {
+    return 'USER';
+  }
+  return role;
+}
+
+function createBaselineMatrix(accessRole: AccessRole, moduleKey: string): ModulePermissionMatrix {
   const normalizedModule = normalizeModuleKey(moduleKey);
-  const canView = hasRoleAtLeast(role, getMinRoleForModule(normalizedModule));
+  const canView = accessRole === 'USER'
+    ? false
+    : hasRoleAtLeast(accessRole, getMinRoleForModule(normalizedModule));
   if (!canView) {
     return createDeniedMatrix();
   }
 
-  if (role === 'ADMIN') {
+  if (accessRole === 'ADMIN') {
     return {
       VIEW: true,
       CREATE: true,
@@ -77,7 +94,7 @@ function createBaselineMatrix(role: UserRole, moduleKey: string): ModulePermissi
     };
   }
 
-  if (role === 'MANAGER') {
+  if (accessRole === 'MANAGER') {
     return {
       VIEW: true,
       CREATE: true,
@@ -97,12 +114,12 @@ function createBaselineMatrix(role: UserRole, moduleKey: string): ModulePermissi
   };
 }
 
-function isHardDeniedByRole(role: UserRole, moduleKeyRaw: string) {
+function isHardDeniedByRole(accessRole: AccessRole, moduleKeyRaw: string) {
   const moduleKey = normalizeModuleKey(moduleKeyRaw);
-  if (moduleKey === 'settings' && role !== 'ADMIN') {
+  if (moduleKey === 'settings' && accessRole !== 'ADMIN') {
     return true;
   }
-  if (role === 'STAFF' && STAFF_HARD_DENY_MODULES.has(moduleKey)) {
+  if (accessRole === 'STAFF' && STAFF_HARD_DENY_MODULES.has(moduleKey)) {
     return true;
   }
   return false;
@@ -136,6 +153,7 @@ function collectModuleKeys(effectivePermissions: EffectivePermissionMap) {
 
 export function createAccessPolicySnapshot(args: {
   role: UserRole;
+  iamV2Enabled?: boolean;
   enabledModules?: string[] | null;
   effectivePermissions?: EffectivePermissionMap;
   runtimeResolved?: boolean;
@@ -143,6 +161,8 @@ export function createAccessPolicySnapshot(args: {
   loadedAt?: string | null;
 }): AccessPolicySnapshot {
   const role = args.role;
+  const iamV2Enabled = args.iamV2Enabled === true;
+  const accessRole = mapRuntimeRoleToAccessRole(role, iamV2Enabled);
   const enabledModules = normalizeEnabledModules(args.enabledModules);
   const effectivePermissions = args.effectivePermissions ?? {};
   const runtimeResolved = args.runtimeResolved === true;
@@ -153,9 +173,9 @@ export function createAccessPolicySnapshot(args: {
 
   for (const moduleKey of collectModuleKeys(effectivePermissions)) {
     const normalizedModule = normalizeModuleKey(moduleKey);
-    let matrix = createBaselineMatrix(role, normalizedModule);
+    let matrix = createBaselineMatrix(accessRole, normalizedModule);
 
-    if (isHardDeniedByRole(role, normalizedModule)) {
+    if (isHardDeniedByRole(accessRole, normalizedModule)) {
       matrix = createDeniedMatrix();
     } else {
       const overrides = effectivePermissions[normalizedModule] ?? effectivePermissions[moduleKey] ?? {};
@@ -178,6 +198,8 @@ export function createAccessPolicySnapshot(args: {
 
   return {
     role,
+    accessRole,
+    iamV2Enabled,
     enabledModules,
     effectivePermissions,
     modulePermissions,
@@ -185,6 +207,33 @@ export function createAccessPolicySnapshot(args: {
     effectiveResolved,
     loadedAt: args.loadedAt ?? null,
     isReady: runtimeResolved && effectiveResolved
+  };
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseIamV2Mode(value: unknown): IamV2Mode {
+  const mode = String(value ?? '').trim().toUpperCase();
+  if (mode === 'OFF' || mode === 'SHADOW' || mode === 'ENFORCE') {
+    return mode;
+  }
+  return 'SHADOW';
+}
+
+export function parseAccessSecurityIamV2State(payload: unknown): { enabled: boolean; mode: IamV2Mode } {
+  const record = toRecord(payload);
+  const dataRecord = toRecord(record.data);
+  const candidate = Object.keys(dataRecord).length > 0 ? dataRecord : record;
+  const iamV2 = toRecord(candidate.iamV2);
+  const enabled = iamV2.enabled === true;
+  return {
+    enabled,
+    mode: parseIamV2Mode(iamV2.mode)
   };
 }
 
@@ -284,7 +333,7 @@ export function decideModuleAccess(snapshot: AccessPolicySnapshot, moduleKeyRaw:
     };
   }
 
-  const matrix = snapshot.modulePermissions[moduleKey] ?? createBaselineMatrix(snapshot.role, moduleKey);
+  const matrix = snapshot.modulePermissions[moduleKey] ?? createBaselineMatrix(snapshot.accessRole, moduleKey);
   if (!matrix.VIEW) {
     return {
       allowed: false,
@@ -316,7 +365,7 @@ export function decideActionAccess(
   }
 
   const moduleKey = normalizeModuleKey(moduleKeyRaw);
-  const matrix = snapshot.modulePermissions[moduleKey] ?? createBaselineMatrix(snapshot.role, moduleKey);
+  const matrix = snapshot.modulePermissions[moduleKey] ?? createBaselineMatrix(snapshot.accessRole, moduleKey);
   return {
     allowed: Boolean(matrix[action]),
     reason: matrix[action] ? 'ACTION_ALLOWED' : 'ACTION_DENIED'

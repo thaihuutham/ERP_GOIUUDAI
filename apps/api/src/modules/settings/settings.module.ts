@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { SearchModule } from '../search/search.module';
 import { AuditModule } from '../audit/audit.module';
+import { IamModule } from '../iam/iam.module';
 import { SettingsPolicyService } from './settings-policy.service';
 import { SettingsController } from './settings.controller';
 import { SettingsEnterpriseService } from './settings-enterprise.service';
@@ -8,7 +9,7 @@ import { SettingsMaintenanceSchedulerService } from './settings-maintenance-sche
 import { SettingsService } from './settings.service';
 
 @Module({
-  imports: [SearchModule, AuditModule],
+  imports: [SearchModule, AuditModule, IamModule],
   controllers: [SettingsController],
   providers: [SettingsService, SettingsPolicyService, SettingsEnterpriseService, SettingsMaintenanceSchedulerService],
   exports: [SettingsPolicyService, SettingsEnterpriseService]

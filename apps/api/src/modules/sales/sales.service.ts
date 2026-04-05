@@ -3,6 +3,7 @@ import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
 import { SearchService } from '../search/search.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
 import { WorkflowsService } from '../workflows/workflows.service';
@@ -29,7 +30,8 @@ export class SalesService {
     @Inject(SearchService) private readonly search: SearchService,
     @Inject(SettingsPolicyService) private readonly settingsPolicy: SettingsPolicyService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
-    @Optional() @Inject(WorkflowsService) private readonly workflowsService?: WorkflowsService
+    @Optional() @Inject(WorkflowsService) private readonly workflowsService?: WorkflowsService,
+    @Optional() @Inject(IamScopeFilterService) private readonly iamScopeFilter?: IamScopeFilterService
   ) {}
 
   async listOrders(query: PaginationQueryDto, status?: GenericStatus | 'ALL', entityIds?: string[]) {
@@ -40,6 +42,15 @@ export class SalesService {
     const where: Prisma.OrderWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
     };
+
+    const scopeFilter = await this.resolveSalesScopeFilter();
+    if (!scopeFilter.companyWide) {
+      if (scopeFilter.employeeIds.length === 0) {
+        where.id = { in: [] };
+      } else {
+        where.employeeId = { in: scopeFilter.employeeIds };
+      }
+    }
 
     if (normalizedStatus) {
       where.status = normalizedStatus;
@@ -843,5 +854,20 @@ export class SalesService {
       const rightRank = rankMap.get(right.id) ?? Number.MAX_SAFE_INTEGER;
       return leftRank - rightRank;
     });
+  }
+
+  private async resolveSalesScopeFilter() {
+    if (!this.iamScopeFilter) {
+      return {
+        companyWide: true,
+        employeeIds: []
+      };
+    }
+
+    const scope = await this.iamScopeFilter.resolveForCurrentActor('sales');
+    return {
+      companyWide: scope.companyWide,
+      employeeIds: scope.employeeIds
+    };
   }
 }

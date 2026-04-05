@@ -1,10 +1,12 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { GenericStatus, PermissionAction, PermissionEffect, Prisma, UserRole } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { GenericStatus, IamScopeMode, PermissionAction, PermissionEffect, Prisma, UserRole } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { generateTemporaryPassword, hashPassword } from '../../common/auth/password.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveModuleKeyFromPath } from '../../common/auth/permission.util';
+import { IamCeilingService } from '../iam/iam-ceiling.service';
+import { IamShadowReportService } from '../iam/iam-shadow-report.service';
 
 const ORG_TYPE_ORDER = ['COMPANY', 'BRANCH', 'DEPARTMENT', 'TEAM'] as const;
 
@@ -14,7 +16,9 @@ type OrgUnitType = (typeof ORG_TYPE_ORDER)[number];
 export class SettingsEnterpriseService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(ClsService) private readonly cls: ClsService
+    @Inject(ClsService) private readonly cls: ClsService,
+    @Optional() @Inject(IamCeilingService) private readonly iamCeiling?: IamCeilingService,
+    @Optional() @Inject(IamShadowReportService) private readonly iamShadowReport?: IamShadowReportService
   ) {}
 
   async listIamUsers(query: Record<string, unknown>) {
@@ -712,9 +716,21 @@ export class SettingsEnterpriseService {
     }
 
     const body = this.ensureRecord(payload);
-    const actor = this.resolveActor();
+    const actorContext = this.resolveActorContext();
+    const actor = actorContext.actor;
     const reason = this.cleanString(body.reason);
     const rules = this.parsePermissionRules(body.rules);
+    const currentOverrides = await this.prisma.client.userPermissionOverride.findMany({
+      where: { userId }
+    });
+    this.assertPermissionOverrideGuardrails({
+      requesterUserId: actorContext.userId,
+      requesterRole: actorContext.role,
+      targetUserId: user.id,
+      targetUserRole: this.cleanString(user.role).toUpperCase(),
+      nextRules: rules,
+      currentRules: currentOverrides
+    });
     const tenantId = this.prisma.getTenantId();
 
     await this.prisma.client.$transaction(async (tx) => {
@@ -744,6 +760,198 @@ export class SettingsEnterpriseService {
         orderBy: [{ moduleKey: 'asc' }, { action: 'asc' }]
       })
     };
+  }
+
+  async updateUserScopeOverride(userIdRaw: string, payload: Record<string, unknown>) {
+    const userId = this.cleanString(userIdRaw);
+    if (!userId) {
+      throw new BadRequestException('Thiếu userId.');
+    }
+    const user = await this.prisma.client.user.findFirst({
+      where: { id: userId }
+    });
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy user.');
+    }
+
+    const body = this.ensureRecord(payload);
+    const scopeMode = this.parseIamScopeMode(body.scopeMode);
+    const rootOrgUnitId = this.cleanString(body.rootOrgUnitId);
+    if (rootOrgUnitId) {
+      await this.ensureOrgUnitExists(rootOrgUnitId);
+    }
+    const effectiveFrom = this.toDate(body.effectiveFrom);
+    const effectiveTo = this.toDate(body.effectiveTo);
+    if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
+      throw new BadRequestException('effectiveTo phải lớn hơn hoặc bằng effectiveFrom.');
+    }
+
+    const actor = this.resolveActor();
+    const tenantId = this.prisma.getTenantId();
+    const reason = this.cleanString(body.reason);
+    const existing = await this.prisma.client.iamUserScopeOverride.findFirst({
+      where: {
+        tenant_Id: tenantId,
+        userId
+      }
+    });
+
+    if (existing) {
+      await this.prisma.client.iamUserScopeOverride.updateMany({
+        where: {
+          tenant_Id: tenantId,
+          userId
+        },
+        data: {
+          scopeMode,
+          rootOrgUnitId: rootOrgUnitId || null,
+          effectiveFrom,
+          effectiveTo,
+          reason: reason || null,
+          updatedBy: actor
+        }
+      });
+    } else {
+      await this.prisma.client.iamUserScopeOverride.create({
+        data: {
+          tenant_Id: tenantId,
+          userId,
+          scopeMode,
+          rootOrgUnitId: rootOrgUnitId || null,
+          effectiveFrom,
+          effectiveTo,
+          reason: reason || null,
+          createdBy: actor,
+          updatedBy: actor
+        }
+      });
+    }
+
+    const override = await this.prisma.client.iamUserScopeOverride.findFirst({
+      where: {
+        tenant_Id: tenantId,
+        userId
+      }
+    });
+    if (!override) {
+      throw new NotFoundException('Không tìm thấy scope override sau khi cập nhật.');
+    }
+
+    return {
+      message: 'Đã cập nhật scope override cho user.',
+      userId,
+      override: {
+        id: override.id,
+        scopeMode: override.scopeMode,
+        rootOrgUnitId: override.rootOrgUnitId,
+        effectiveFrom: override.effectiveFrom,
+        effectiveTo: override.effectiveTo,
+        reason: override.reason
+      },
+      effectiveScope: {
+        mode: override.scopeMode,
+        rootOrgUnitId: override.rootOrgUnitId || null,
+        source: 'override'
+      }
+    };
+  }
+
+  async updateTitleScopeMapping(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
+    const titlePattern = this.cleanString(body.titlePattern);
+    if (!titlePattern) {
+      throw new BadRequestException('Thiếu titlePattern.');
+    }
+    const scopeMode = this.parseIamScopeMode(body.scopeMode);
+    const remove = this.toBool(body.remove, false);
+    const isActive = this.toBool(body.isActive, true);
+    const priority = this.toInt(body.priority, 100, 0, 10000);
+    const reason = this.cleanString(body.reason);
+    const actor = this.resolveActor();
+    const tenantId = this.prisma.getTenantId();
+    const settingKey = this.accessSecuritySettingKey();
+    const current = await this.prisma.client.setting.findFirst({
+      where: {
+        tenant_Id: tenantId,
+        settingKey
+      }
+    });
+
+    const settingValue = this.ensureRecord(current?.settingValue);
+    const currentMappings = this.normalizeTitleScopeMappings(
+      settingValue.iamTitleScopeMappings ?? settingValue.titleScopeMappings
+    );
+    const normalizedPattern = this.normalizeTitlePattern(titlePattern);
+    const withoutTarget = currentMappings.filter((item) => this.normalizeTitlePattern(item.titlePattern) !== normalizedPattern);
+
+    const nextMappings = remove
+      ? withoutTarget
+      : [
+          ...withoutTarget,
+          {
+            titlePattern,
+            scopeMode,
+            isActive,
+            priority,
+            reason: reason || null,
+            updatedAt: new Date().toISOString(),
+            updatedBy: actor
+          }
+        ].sort((a, b) => a.priority - b.priority || a.titlePattern.localeCompare(b.titlePattern));
+
+    const nextSettingValue: Record<string, unknown> = {
+      ...settingValue,
+      iamTitleScopeMappings: nextMappings
+    };
+
+    if (current) {
+      await this.prisma.client.setting.updateMany({
+        where: { id: current.id },
+        data: {
+          settingValue: nextSettingValue as Prisma.InputJsonValue
+        }
+      });
+    } else {
+      await this.prisma.client.setting.create({
+        data: {
+          tenant_Id: tenantId,
+          settingKey,
+          settingValue: nextSettingValue as Prisma.InputJsonValue
+        }
+      });
+    }
+
+    return {
+      message: remove ? 'Đã xóa title scope mapping.' : 'Đã cập nhật title scope mapping.',
+      mapping: remove
+        ? null
+        : nextMappings.find((item) => this.normalizeTitlePattern(item.titlePattern) === normalizedPattern) ?? null,
+      mappings: nextMappings
+    };
+  }
+
+  async getIamMismatchReport(query: Record<string, unknown>) {
+    const tenantId = this.prisma.getTenantId();
+    const moduleKey = this.cleanString(query.moduleKey);
+    const action = this.parsePermissionAction(query.action, false);
+    const limit = this.toInt(query.limit, 50, 1, 200);
+
+    if (!this.iamShadowReport) {
+      return {
+        generatedAt: new Date().toISOString(),
+        tenantId,
+        totalMismatches: 0,
+        totalGroups: 0,
+        items: []
+      };
+    }
+
+    return this.iamShadowReport.getMismatchReport({
+      tenantId,
+      moduleKey: moduleKey || undefined,
+      action: action ?? undefined,
+      limit
+    });
   }
 
   async getEffectivePermissions(query: Record<string, unknown>) {
@@ -1004,6 +1212,29 @@ export class SettingsEnterpriseService {
     return GenericStatus.ACTIVE;
   }
 
+  private parseIamScopeMode(value: unknown): IamScopeMode {
+    const mode = this.cleanString(value).toUpperCase();
+    if (mode === 'SELF' || mode === 'SUBTREE' || mode === 'UNIT_FULL') {
+      return mode;
+    }
+    throw new BadRequestException('scopeMode phải là SELF | SUBTREE | UNIT_FULL.');
+  }
+
+  private parsePermissionAction(value: unknown, required = true) {
+    const action = this.cleanString(value).toUpperCase();
+    if (!action) {
+      if (required) {
+        throw new BadRequestException('action là bắt buộc.');
+      }
+      return null;
+    }
+
+    if ((Object.values(PermissionAction) as string[]).includes(action)) {
+      return action as PermissionAction;
+    }
+    throw new BadRequestException('action không hợp lệ.');
+  }
+
   private assertOrgHierarchy(type: OrgUnitType, parentType: OrgUnitType | null) {
     if (type === 'COMPANY') {
       if (parentType !== null) {
@@ -1056,8 +1287,118 @@ export class SettingsEnterpriseService {
   }
 
   private resolveActor() {
+    return this.resolveActorContext().actor;
+  }
+
+  private accessSecuritySettingKey() {
+    return 'settings.access_security.v1';
+  }
+
+  private normalizeTitlePattern(value: unknown) {
+    return this.cleanString(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  }
+
+  private normalizeTitleScopeMappings(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [] as Array<{
+        titlePattern: string;
+        scopeMode: IamScopeMode;
+        isActive: boolean;
+        priority: number;
+        reason: string | null;
+        updatedAt: string;
+        updatedBy: string | null;
+      }>;
+    }
+
+    const dedupe = new Map<string, {
+      titlePattern: string;
+      scopeMode: IamScopeMode;
+      isActive: boolean;
+      priority: number;
+      reason: string | null;
+      updatedAt: string;
+      updatedBy: string | null;
+    }>();
+    for (const item of value) {
+      const row = this.ensureRecord(item);
+      const titlePattern = this.cleanString(row.titlePattern);
+      if (!titlePattern) {
+        continue;
+      }
+      const key = this.normalizeTitlePattern(titlePattern);
+      try {
+        const scopeMode = this.parseIamScopeMode(row.scopeMode);
+        dedupe.set(key, {
+          titlePattern,
+          scopeMode,
+          isActive: this.toBool(row.isActive, true),
+          priority: this.toInt(row.priority, 100, 0, 10000),
+          reason: this.toNullableString(row.reason),
+          updatedAt: this.toDate(row.updatedAt)?.toISOString() ?? new Date().toISOString(),
+          updatedBy: this.toNullableString(row.updatedBy)
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return Array.from(dedupe.values()).sort(
+      (a, b) => a.priority - b.priority || a.titlePattern.localeCompare(b.titlePattern)
+    );
+  }
+
+  private resolveActorContext() {
     const authUser = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
-    return this.cleanString(authUser.email) || this.cleanString(authUser.userId) || this.cleanString(authUser.sub) || 'system';
+    const userId = this.cleanString(authUser.userId ?? authUser.sub);
+    const role = this.cleanString(authUser.role).toUpperCase();
+    const actor = this.cleanString(authUser.email) || userId || 'system';
+    return {
+      actor,
+      userId,
+      role
+    };
+  }
+
+  private assertPermissionOverrideGuardrails(params: {
+    requesterUserId: string;
+    requesterRole: string;
+    targetUserId: string;
+    targetUserRole: string;
+    nextRules: Array<{ moduleKey: string; action: PermissionAction; effect: PermissionEffect }>;
+    currentRules: Array<{ moduleKey: string; action: PermissionAction; effect: PermissionEffect }>;
+  }) {
+    const ceiling = this.iamCeiling ?? new IamCeilingService();
+    ceiling.assertAdminCoreProtection(params.requesterRole, params.targetUserRole);
+
+    if (!params.requesterUserId || params.requesterRole === 'ADMIN') {
+      return;
+    }
+    if (params.requesterUserId !== params.targetUserId) {
+      return;
+    }
+
+    const hasAllowRule = params.nextRules.some((rule) => rule.effect === PermissionEffect.ALLOW);
+    if (hasAllowRule) {
+      throw new ForbiddenException('Không thể tự nâng quyền cho chính mình.');
+    }
+
+    const nextRuleMap = new Map<string, PermissionEffect>(
+      params.nextRules.map((rule) => [`${rule.moduleKey}:${rule.action}`, rule.effect])
+    );
+    const liftedDeniedRule = params.currentRules.some((rule) => {
+      if (rule.effect !== PermissionEffect.DENY) {
+        return false;
+      }
+      const signature = `${rule.moduleKey}:${rule.action}`;
+      return nextRuleMap.get(signature) !== PermissionEffect.DENY;
+    });
+    if (liftedDeniedRule) {
+      throw new ForbiddenException('Không thể tự nâng quyền cho chính mình.');
+    }
   }
 
   private ensureRecord(value: unknown): Record<string, unknown> {

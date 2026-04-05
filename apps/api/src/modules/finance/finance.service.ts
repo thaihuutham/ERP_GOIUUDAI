@@ -1,7 +1,8 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
 import {
   CreateAccountDto,
@@ -36,7 +37,8 @@ export class FinanceService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SettingsPolicyService) private readonly settingsPolicy: SettingsPolicyService,
-    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
+    @Optional() @Inject(IamScopeFilterService) private readonly iamScopeFilter?: IamScopeFilterService
   ) {}
 
   async listInvoices(query: FinanceListQueryDto, entityIds?: string[]) {
@@ -53,6 +55,21 @@ export class FinanceService {
           }
         : {})
     };
+
+    const scopeFilter = await this.resolveFinanceScopeFilter();
+    if (!scopeFilter.companyWide) {
+      if (scopeFilter.employeeIds.length === 0) {
+        where.id = { in: [] };
+      } else {
+        where.order = {
+          is: {
+            employeeId: {
+              in: scopeFilter.employeeIds
+            }
+          }
+        };
+      }
+    }
 
     const invoices = await this.prisma.client.invoice.findMany({
       where,
@@ -1024,5 +1041,20 @@ export class FinanceService {
 
   private take(limit?: number, max = 200) {
     return Math.min(Math.max(limit ?? 100, 1), max);
+  }
+
+  private async resolveFinanceScopeFilter() {
+    if (!this.iamScopeFilter) {
+      return {
+        companyWide: true,
+        employeeIds: []
+      };
+    }
+
+    const scope = await this.iamScopeFilter.resolveForCurrentActor('finance');
+    return {
+      companyWide: scope.companyWide,
+      employeeIds: scope.employeeIds
+    };
   }
 }

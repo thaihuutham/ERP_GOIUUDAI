@@ -271,6 +271,7 @@ test.describe('Settings Center reports alignment', () => {
     await page.goto('/modules/settings');
     await page.getByRole('button', { name: 'Bảo mật truy cập' }).click();
     await page.getByRole('tab', { name: 'Ma trận quyền hạn' }).click();
+    await expect(page.locator('[data-testid="iam-scope-override-editor"]')).toBeVisible();
 
     await page.getByRole('link', { name: 'Manager' }).click();
     await expect(page).toHaveURL(/\/modules\/settings\/positions\/position_1$/);
@@ -674,43 +675,68 @@ test.describe('Settings Center reports alignment', () => {
 
     await page.goto('/modules/settings');
 
-    await page.getByRole('button', { name: 'Ma trận phê duyệt' }).click();
+    const waitForReloadDone = async () => {
+      await expect(page.getByRole('button', { name: 'Làm mới' })).toBeEnabled();
+    };
+    const clickByRole = async (role: 'button' | 'tab', name: string) => {
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          await page.getByRole(role, { name }).click({ force: true, timeout: 5000 });
+          return;
+        } catch (error) {
+          if (attempt === 3) {
+            throw error;
+          }
+          await page.waitForTimeout(150);
+        }
+      }
+    };
+
+    await waitForReloadDone();
+    await clickByRole('button', 'Ma trận phê duyệt');
     await expect(page.getByRole('tab', { name: 'Quy tắc duyệt' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Leo thang & ủy quyền' }).click();
+    await clickByRole('tab', 'Leo thang & ủy quyền');
     await expect(page.getByRole('heading', { name: 'Leo thang & ủy quyền' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Kiểm soát tài chính' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Kiểm soát tài chính');
     await expect(page.getByRole('tab', { name: 'Kỳ kế toán' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Đánh số chứng từ' }).click();
+    await clickByRole('tab', 'Đánh số chứng từ');
     await expect(page.getByRole('heading', { name: 'Đánh số chứng từ' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Chính sách CRM/Bán hàng' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Chính sách CRM/Bán hàng');
     await expect(page.getByRole('tab', { name: 'Quy tắc đơn hàng' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Phân loại khách hàng' }).click();
+    await clickByRole('tab', 'Phân loại khách hàng');
     await expect(page.getByRole('heading', { name: 'Phân loại khách hàng' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Chính sách Danh mục/SCM' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Chính sách Danh mục/SCM');
     await expect(page.getByRole('tab', { name: 'Mặc định hệ thống' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Ràng buộc nhập/xuất' }).click();
+    await clickByRole('tab', 'Ràng buộc nhập/xuất');
     await expect(page.getByRole('heading', { name: 'Ràng buộc nhập/xuất' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Tích hợp hệ thống' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Tích hợp hệ thống');
     await expect(page.getByRole('tab', { name: 'BHTOT' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Zalo OA' }).click();
+    await clickByRole('tab', 'Zalo OA');
     await expect(page.getByRole('heading', { name: 'Zalo OA' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Thông báo & mẫu' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Thông báo & mẫu');
     await expect(page.getByRole('tab', { name: 'Template' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Kênh gửi' }).click();
+    await clickByRole('tab', 'Kênh gửi');
     await expect(page.getByRole('heading', { name: 'Chính sách kênh gửi' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Tìm kiếm & hiệu năng' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Tìm kiếm & hiệu năng');
     await expect(page.getByRole('tab', { name: 'Runtime' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Reindex' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Dữ liệu & backup' }).click();
+    await waitForReloadDone();
+    await clickByRole('button', 'Dữ liệu & backup');
     await expect(page.getByRole('tab', { name: 'Vòng đời dữ liệu' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Chính sách export' }).click();
+    await clickByRole('tab', 'Chính sách export');
     await expect(page.getByRole('heading', { name: 'Chính sách export' })).toBeVisible();
   });
 

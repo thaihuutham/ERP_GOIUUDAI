@@ -1,5 +1,6 @@
 import { GenericStatus, UserRole } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
+import { AUTH_USER_CONTEXT_KEY, IAM_SCOPE_CONTEXT_KEY } from '../src/common/request/request.constants';
 import { WorkflowsService } from '../src/modules/workflows/workflows.service';
 
 function makePrismaMock() {
@@ -83,15 +84,27 @@ function makeRuntimeSettingsMock() {
   };
 }
 
-function makeClsMock(authUser?: Record<string, unknown>) {
+function makeClsMock(authUser?: Record<string, unknown>, extras: Record<string, unknown> = {}) {
   return {
-    get: vi.fn().mockReturnValue(authUser ?? undefined)
+    get: vi.fn((key?: string) => {
+      if (typeof key === 'string' && Object.prototype.hasOwnProperty.call(extras, key)) {
+        return extras[key];
+      }
+      return authUser ?? undefined;
+    })
   };
 }
 
 function makeSearchMock() {
   return {
     syncOrderUpsert: vi.fn().mockResolvedValue(undefined)
+  };
+}
+
+function makeIamAccessMock() {
+  return {
+    canAccessRecord: vi.fn().mockResolvedValue(false),
+    grantRecordAccess: vi.fn().mockResolvedValue(null)
   };
 }
 
@@ -410,5 +423,95 @@ describe('WorkflowsService', () => {
     prisma.client.approval.findMany.mockResolvedValue([]);
     const run2 = await service.runAutoEscalation(50);
     expect(run2.escalated).toBe(0);
+  });
+
+  it('allows approver to view assigned instance outside normal scope', async () => {
+    const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const cls = makeClsMock(
+      { userId: 'staff_1', role: UserRole.STAFF },
+      {
+        [AUTH_USER_CONTEXT_KEY]: { userId: 'staff_1', role: UserRole.STAFF },
+        [IAM_SCOPE_CONTEXT_KEY]: {
+          enabled: true,
+          mode: 'ENFORCE',
+          companyWide: false,
+          actorIds: ['staff_1'],
+          employeeIds: [],
+          orgUnitIds: []
+        }
+      }
+    );
+    const search = makeSearchMock();
+    const iamAccess = makeIamAccessMock();
+    iamAccess.canAccessRecord.mockResolvedValue(true);
+
+    prisma.client.workflowInstance.findFirst.mockResolvedValue({
+      id: 'wf_scope_1',
+      definitionId: 'def_scope_1',
+      targetType: 'ORDER_EDIT',
+      targetId: 'SO-999',
+      currentStep: 'approval',
+      status: GenericStatus.PENDING,
+      contextJson: {},
+      startedBy: 'requester_outside',
+      definition: { id: 'def_scope_1' },
+      approvals: [],
+      actionLogs: []
+    });
+
+    const service = new WorkflowsService(prisma as any, runtimeSettings as any, cls as any, search as any, iamAccess as any);
+    const result = await service.getInstanceDetail('wf_scope_1');
+
+    expect(result.id).toBe('wf_scope_1');
+    expect(iamAccess.canAccessRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant_demo_company',
+        userId: 'staff_1'
+      }),
+      'WORKFLOW_INSTANCE',
+      'wf_scope_1',
+      'VIEW'
+    );
+  });
+
+  it('does not allow unrelated records outside scope', async () => {
+    const prisma = makePrismaMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const cls = makeClsMock(
+      { userId: 'staff_1', role: UserRole.STAFF },
+      {
+        [AUTH_USER_CONTEXT_KEY]: { userId: 'staff_1', role: UserRole.STAFF },
+        [IAM_SCOPE_CONTEXT_KEY]: {
+          enabled: true,
+          mode: 'ENFORCE',
+          companyWide: false,
+          actorIds: ['staff_1'],
+          employeeIds: [],
+          orgUnitIds: []
+        }
+      }
+    );
+    const search = makeSearchMock();
+    const iamAccess = makeIamAccessMock();
+    iamAccess.canAccessRecord.mockResolvedValue(false);
+    prisma.client.approval.findFirst.mockResolvedValue(null);
+    prisma.client.workflowInstance.findFirst.mockResolvedValue({
+      id: 'wf_scope_2',
+      definitionId: 'def_scope_2',
+      targetType: 'ORDER_EDIT',
+      targetId: 'SO-998',
+      currentStep: 'approval',
+      status: GenericStatus.PENDING,
+      contextJson: {},
+      startedBy: 'requester_outside',
+      definition: { id: 'def_scope_2' },
+      approvals: [],
+      actionLogs: []
+    });
+
+    const service = new WorkflowsService(prisma as any, runtimeSettings as any, cls as any, search as any, iamAccess as any);
+
+    await expect(service.getInstanceDetail('wf_scope_2')).rejects.toThrow('Bạn không có quyền xem workflow instance này.');
   });
 });

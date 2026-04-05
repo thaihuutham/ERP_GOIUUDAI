@@ -107,6 +107,7 @@ type DomainPayload = {
 
 type PermissionActionKey = 'VIEW' | 'CREATE' | 'UPDATE' | 'DELETE' | 'APPROVE';
 type PermissionEffectValue = '' | 'ALLOW' | 'DENY';
+type IamScopeMode = 'SELF' | 'SUBTREE' | 'UNIT_FULL';
 
 type PermissionRuleRow = {
   moduleKey: string;
@@ -208,6 +209,16 @@ type PositionSummaryItem = {
   departmentName: string;
   employeeCount: number;
   permissionRuleCount: number;
+};
+
+type IamMismatchReportItem = {
+  moduleKey: string;
+  action: PermissionActionKey;
+  mismatchCount: number;
+  legacyAllowCount: number;
+  iamAllowCount: number;
+  lastSeenAt: string;
+  sample: Record<string, unknown> | null;
 };
 
 const DOMAIN_LABEL: Record<DomainKey, string> = {
@@ -471,6 +482,11 @@ const CONFLICT_POLICY_OPTIONS: FieldOption[] = [
 ];
 
 const PERMISSION_ACTIONS: PermissionActionKey[] = ['VIEW', 'CREATE', 'UPDATE', 'DELETE', 'APPROVE'];
+const IAM_SCOPE_MODE_OPTIONS: Array<{ value: IamScopeMode; label: string }> = [
+  { value: 'SELF', label: 'SELF (chỉ bản thân)' },
+  { value: 'SUBTREE', label: 'SUBTREE (cây đơn vị)' },
+  { value: 'UNIT_FULL', label: 'UNIT_FULL (đơn vị đầy đủ)' }
+];
 
 const PERMISSION_MODULE_KEYS = [
   'crm',
@@ -1381,6 +1397,34 @@ function normalizePositionRows(payload: Record<string, unknown>) {
     .filter((item) => item.id && item.title);
 }
 
+function normalizeIamMismatchReport(payload: Record<string, unknown>) {
+  const itemsRaw = Array.isArray(payload.items) ? payload.items : [];
+  const items: IamMismatchReportItem[] = [];
+  for (const item of itemsRaw) {
+    const record = toRecord(item);
+    const actionValue = String(record.action ?? '').trim().toUpperCase();
+    if (!PERMISSION_ACTIONS.includes(actionValue as PermissionActionKey)) {
+      continue;
+    }
+    items.push({
+      moduleKey: String(record.moduleKey ?? '').trim().toLowerCase(),
+      action: actionValue as PermissionActionKey,
+      mismatchCount: toNumber(record.mismatchCount),
+      legacyAllowCount: toNumber(record.legacyAllowCount),
+      iamAllowCount: toNumber(record.iamAllowCount),
+      lastSeenAt: String(record.lastSeenAt ?? '').trim(),
+      sample: record.sample == null ? null : toRecord(record.sample)
+    });
+  }
+
+  return {
+    generatedAt: String(payload.generatedAt ?? '').trim(),
+    totalMismatches: toNumber(payload.totalMismatches),
+    totalGroups: toNumber(payload.totalGroups),
+    items
+  };
+}
+
 function createEmptyPermissionMatrix(): PermissionMatrix {
   const matrix: PermissionMatrix = {};
   for (const moduleKey of PERMISSION_MODULE_KEYS) {
@@ -1710,6 +1754,42 @@ export function SettingsCenter() {
     });
   const [selectedOverrideUserId, setSelectedOverrideUserId] = useState('');
   const [overrideMatrix, setOverrideMatrix] = useState<PermissionMatrix>(() => createEmptyPermissionMatrix());
+  const [iamScopeOverrideForm, setIamScopeOverrideForm] = useState<{
+    scopeMode: IamScopeMode;
+    rootOrgUnitId: string;
+    reason: string;
+  }>({
+    scopeMode: 'SELF',
+    rootOrgUnitId: '',
+    reason: 'Điều chỉnh scope override theo user'
+  });
+  const [iamTitleScopeForm, setIamTitleScopeForm] = useState<{
+    titlePattern: string;
+    scopeMode: IamScopeMode;
+    priority: number;
+    reason: string;
+  }>({
+    titlePattern: '',
+    scopeMode: 'SUBTREE',
+    priority: 100,
+    reason: 'Cập nhật title scope mapping'
+  });
+  const [iamMismatchFilter, setIamMismatchFilter] = useState<{
+    moduleKey: string;
+    action: '' | PermissionActionKey;
+    limit: number;
+  }>({
+    moduleKey: '',
+    action: '',
+    limit: 30
+  });
+  const [iamMismatchReport, setIamMismatchReport] = useState<{
+    generatedAt: string;
+    totalMismatches: number;
+    totalGroups: number;
+    items: IamMismatchReportItem[];
+  } | null>(null);
+  const [iamMismatchBusy, setIamMismatchBusy] = useState(false);
   const [accountForm, setAccountForm] = useState({
     fullName: '',
     email: '',
@@ -1792,6 +1872,7 @@ export function SettingsCenter() {
     [selectedDomain, validationErrors]
   );
   const canManagePositionCatalog = canAction('settings', 'UPDATE');
+  const canManageIamAdmin = canAction('settings', 'UPDATE');
   const filteredPositions = useMemo(() => {
     const keyword = positionSearch.trim().toLowerCase();
     if (!keyword) {
@@ -1906,6 +1987,33 @@ export function SettingsCenter() {
     });
   };
 
+  const loadIamMismatchReport = async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) {
+      setIamMismatchBusy(true);
+    }
+    try {
+      const payload = await apiRequest<Record<string, unknown>>('/settings/permissions/iam-v2/mismatch-report', {
+        query: {
+          limit: iamMismatchFilter.limit,
+          moduleKey: iamMismatchFilter.moduleKey || undefined,
+          action: iamMismatchFilter.action || undefined
+        }
+      });
+      setIamMismatchReport(normalizeIamMismatchReport(payload));
+    } catch {
+      setIamMismatchReport({
+        generatedAt: '',
+        totalMismatches: 0,
+        totalGroups: 0,
+        items: []
+      });
+    } finally {
+      if (!options.silent) {
+        setIamMismatchBusy(false);
+      }
+    }
+  };
+
   const loadEnterpriseData = async () => {
     const [iamPayload, orgPayload, positionPayload] = await Promise.all([
       apiRequest<Record<string, unknown>>('/settings/iam/users', {
@@ -1939,14 +2047,17 @@ export function SettingsCenter() {
     setError(null);
     const failures: string[] = [];
 
-    const [centerResult, domainResult, enterpriseResult, layoutResult, salesTaxonomyResult, crmTagRegistryResult] = await Promise.allSettled([
-      loadCenter(),
-      loadDomain(domain),
-      loadEnterpriseData(),
-      loadLayout(),
-      loadSalesTaxonomy(),
-      loadCrmTagRegistry()
-    ]);
+    const shouldLoadMismatch = domain === 'access_security';
+    const [centerResult, domainResult, enterpriseResult, layoutResult, salesTaxonomyResult, crmTagRegistryResult, mismatchResult] =
+      await Promise.allSettled([
+        loadCenter(),
+        loadDomain(domain),
+        loadEnterpriseData(),
+        loadLayout(),
+        loadSalesTaxonomy(),
+        loadCrmTagRegistry(),
+        shouldLoadMismatch ? loadIamMismatchReport({ silent: true }) : Promise.resolve(undefined)
+      ]);
 
     if (centerResult.status === 'rejected') {
       failures.push(toSettingsFriendlyError(centerResult.reason, 'Không tải được tổng quan miền cấu hình.'));
@@ -1965,6 +2076,9 @@ export function SettingsCenter() {
     }
     if (crmTagRegistryResult.status === 'rejected') {
       failures.push(toSettingsFriendlyError(crmTagRegistryResult.reason, 'Không tải được CRM tag registry.'));
+    }
+    if (mismatchResult.status === 'rejected') {
+      failures.push(toSettingsFriendlyError(mismatchResult.reason, 'Không tải được IAM mismatch report.'));
     }
 
     if (failures.length > 0) {
@@ -2614,6 +2728,65 @@ export function SettingsCenter() {
       await loadEnterpriseData();
     } catch (overrideError) {
       setError(toSettingsFriendlyError(overrideError, 'Lưu override quyền thất bại.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveIamScopeOverride = async () => {
+    if (!selectedOverrideUserId) {
+      setError('Vui lòng chọn user để cấu hình scope override.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest(`/settings/iam/users/${selectedOverrideUserId}/scope-override`, {
+        method: 'PUT',
+        body: {
+          scopeMode: iamScopeOverrideForm.scopeMode,
+          rootOrgUnitId: iamScopeOverrideForm.rootOrgUnitId || undefined,
+          reason: iamScopeOverrideForm.reason.trim() || undefined
+        }
+      });
+      setMessage('Đã cập nhật IAM scope override.');
+    } catch (scopeError) {
+      setError(toSettingsFriendlyError(scopeError, 'Cập nhật IAM scope override thất bại.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUpsertIamTitleScopeMapping = async (remove = false) => {
+    if (!iamTitleScopeForm.titlePattern.trim()) {
+      setError('Vui lòng nhập title pattern.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiRequest('/settings/iam/title-scope-mapping', {
+        method: 'PUT',
+        body: {
+          titlePattern: iamTitleScopeForm.titlePattern.trim(),
+          scopeMode: iamTitleScopeForm.scopeMode,
+          priority: iamTitleScopeForm.priority,
+          reason: iamTitleScopeForm.reason.trim() || undefined,
+          remove
+        }
+      });
+      setMessage(remove ? 'Đã xóa IAM title scope mapping.' : 'Đã cập nhật IAM title scope mapping.');
+    } catch (titleScopeError) {
+      setError(
+        toSettingsFriendlyError(
+          titleScopeError,
+          remove ? 'Xóa IAM title scope mapping thất bại.' : 'Cập nhật IAM title scope mapping thất bại.'
+        )
+      );
     } finally {
       setBusy(false);
     }
@@ -3620,6 +3793,276 @@ export function SettingsCenter() {
                     Lưu override theo user
                   </button>
                 </div>
+
+                {canManageIamAdmin ? (
+                  <div
+                    data-testid="iam-scope-override-editor"
+                    style={{ border: '1px solid #e8efea', borderRadius: '8px', padding: '0.55rem' }}
+                  >
+                    <strong style={{ fontSize: '0.82rem' }}>IAM v2 scope override + shadow mismatch</strong>
+                    <p style={{ marginTop: '0.35rem', color: 'var(--muted)', fontSize: '0.8rem' }}>
+                      Quản trị scope theo user, title scope mapping, và theo dõi mismatch giữa legacy và IAM v2.
+                    </p>
+
+                    <div className="form-grid" style={{ marginTop: '0.45rem', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                      <div className="field">
+                        <label>User scope override</label>
+                        <select
+                          value={selectedOverrideUserId}
+                          onChange={(event) => setSelectedOverrideUserId(event.target.value)}
+                        >
+                          <option value="">-- Chọn user --</option>
+                          {iamUsers.map((item) => {
+                            const id = String(item.id ?? '');
+                            const email = String(item.email ?? '');
+                            return (
+                              <option key={`scope-user-${id}`} value={id}>
+                                {email || id}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>Scope mode</label>
+                        <select
+                          value={iamScopeOverrideForm.scopeMode}
+                          onChange={(event) =>
+                            setIamScopeOverrideForm((current) => ({
+                              ...current,
+                              scopeMode: event.target.value as IamScopeMode
+                            }))
+                          }
+                        >
+                          {IAM_SCOPE_MODE_OPTIONS.map((item) => (
+                            <option key={`scope-mode-${item.value}`} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>Root org unit (optional)</label>
+                        <select
+                          value={iamScopeOverrideForm.rootOrgUnitId}
+                          onChange={(event) =>
+                            setIamScopeOverrideForm((current) => ({
+                              ...current,
+                              rootOrgUnitId: event.target.value
+                            }))
+                          }
+                        >
+                          <option value="">-- Không chọn --</option>
+                          {orgUnitOptions.map((item) => (
+                            <option key={`scope-org-${item.id}`} value={item.id}>
+                              {item.name} ({item.type})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>Lý do</label>
+                        <input
+                          value={iamScopeOverrideForm.reason}
+                          onChange={(event) =>
+                            setIamScopeOverrideForm((current) => ({
+                              ...current,
+                              reason: event.target.value
+                            }))
+                          }
+                          placeholder="Điều chỉnh phạm vi theo vị trí"
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '0.45rem', display: 'inline-flex', gap: '0.45rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => void handleSaveIamScopeOverride()}
+                        disabled={busy || !selectedOverrideUserId}
+                      >
+                        Lưu scope override
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: '0.65rem', borderTop: '1px dashed #dbe9df', paddingTop: '0.6rem' }}>
+                      <strong style={{ fontSize: '0.8rem' }}>Title scope mapping</strong>
+                      <div className="form-grid" style={{ marginTop: '0.45rem', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                        <div className="field">
+                          <label>Title pattern</label>
+                          <input
+                            value={iamTitleScopeForm.titlePattern}
+                            onChange={(event) =>
+                              setIamTitleScopeForm((current) => ({
+                                ...current,
+                                titlePattern: event.target.value
+                              }))
+                            }
+                            placeholder="VD: TRUONG PHONG"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Scope mode</label>
+                          <select
+                            value={iamTitleScopeForm.scopeMode}
+                            onChange={(event) =>
+                              setIamTitleScopeForm((current) => ({
+                                ...current,
+                                scopeMode: event.target.value as IamScopeMode
+                              }))
+                            }
+                          >
+                            {IAM_SCOPE_MODE_OPTIONS.map((item) => (
+                              <option key={`title-scope-mode-${item.value}`} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="field">
+                          <label>Priority</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10000}
+                            value={iamTitleScopeForm.priority}
+                            onChange={(event) =>
+                              setIamTitleScopeForm((current) => ({
+                                ...current,
+                                priority: Number(event.target.value || 0)
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Lý do</label>
+                          <input
+                            value={iamTitleScopeForm.reason}
+                            onChange={(event) =>
+                              setIamTitleScopeForm((current) => ({
+                                ...current,
+                                reason: event.target.value
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '0.45rem', display: 'inline-flex', gap: '0.45rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void handleUpsertIamTitleScopeMapping(false)}
+                          disabled={busy || !iamTitleScopeForm.titlePattern.trim()}
+                        >
+                          Lưu title mapping
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void handleUpsertIamTitleScopeMapping(true)}
+                          disabled={busy || !iamTitleScopeForm.titlePattern.trim()}
+                        >
+                          Xóa title mapping
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '0.65rem', borderTop: '1px dashed #dbe9df', paddingTop: '0.6rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <strong style={{ fontSize: '0.8rem' }}>IAM v2 mismatch report</strong>
+                        <div style={{ display: 'inline-flex', gap: '0.45rem', alignItems: 'center' }}>
+                          <select
+                            value={iamMismatchFilter.moduleKey}
+                            onChange={(event) =>
+                              setIamMismatchFilter((current) => ({
+                                ...current,
+                                moduleKey: event.target.value
+                              }))
+                            }
+                          >
+                            <option value="">Tất cả module</option>
+                            {MODULE_OPTIONS.map((item) => (
+                              <option key={`mismatch-module-${item.value}`} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={iamMismatchFilter.action}
+                            onChange={(event) =>
+                              setIamMismatchFilter((current) => ({
+                                ...current,
+                                action: event.target.value as '' | PermissionActionKey
+                              }))
+                            }
+                          >
+                            <option value="">Tất cả action</option>
+                            {PERMISSION_ACTIONS.map((action) => (
+                              <option key={`mismatch-action-${action}`} value={action}>
+                                {action}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void loadIamMismatchReport()}
+                            disabled={iamMismatchBusy}
+                          >
+                            {iamMismatchBusy ? 'Đang tải...' : 'Làm mới report'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <p style={{ marginTop: '0.3rem', color: 'var(--muted)', fontSize: '0.78rem' }}>
+                        Tổng mismatch: {iamMismatchReport?.totalMismatches ?? 0} · Nhóm: {iamMismatchReport?.totalGroups ?? 0} · Cập nhật: {formatDateTime(iamMismatchReport?.generatedAt)}
+                      </p>
+
+                      <div className="table-wrap" style={{ marginTop: '0.45rem' }}>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Module</th>
+                              <th>Action</th>
+                              <th>Mismatch</th>
+                              <th>Legacy ALLOW</th>
+                              <th>IAM ALLOW</th>
+                              <th>Last seen</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(iamMismatchReport?.items.length ?? 0) === 0 ? (
+                              <tr>
+                                <td colSpan={6} style={{ color: 'var(--muted)' }}>
+                                  Chưa có mismatch nào trong bộ nhớ runtime.
+                                </td>
+                              </tr>
+                            ) : (
+                              iamMismatchReport?.items.map((item) => (
+                                <tr key={`mismatch-${item.moduleKey}-${item.action}`}>
+                                  <td>{item.moduleKey}</td>
+                                  <td>{item.action}</td>
+                                  <td>{item.mismatchCount.toLocaleString('vi-VN')}</td>
+                                  <td>{item.legacyAllowCount.toLocaleString('vi-VN')}</td>
+                                  <td>{item.iamAllowCount.toLocaleString('vi-VN')}</td>
+                                  <td>{formatDateTime(item.lastSeenAt)}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    data-testid="iam-scope-override-editor-readonly"
+                    style={{ border: '1px dashed #dbe9df', borderRadius: '8px', padding: '0.55rem', color: 'var(--muted)' }}
+                  >
+                    Chỉ tài khoản có quyền quản trị IAM mới truy cập editor scope override.
+                  </div>
+                )}
               </div>
             </section>
           )}

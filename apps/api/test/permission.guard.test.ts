@@ -2,6 +2,8 @@ import { ForbiddenException } from '@nestjs/common';
 import { PermissionAction, PermissionEffect } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PermissionGuard } from '../src/common/auth/permission.guard';
+import { IamShadowLogPayload, IamShadowLogService } from '../src/modules/iam/iam-shadow-log.service';
+import { IamShadowReportService } from '../src/modules/iam/iam-shadow-report.service';
 
 function makeContext(path: string, method = 'GET') {
   return {
@@ -23,6 +25,7 @@ function makeGuard(options?: {
   iamMode?: 'OFF' | 'SHADOW' | 'ENFORCE';
   iamEnabled?: boolean;
   iamEnforcementModules?: string[];
+  iamShadowLog?: { logLegacyVsIam: (payload: IamShadowLogPayload) => void };
 }) {
   const reflector = {
     getAllAndOverride: vi.fn().mockReturnValue(false)
@@ -94,7 +97,7 @@ function makeGuard(options?: {
     })
   };
 
-  const iamShadowLog = {
+  const iamShadowLog = options?.iamShadowLog ?? {
     logLegacyVsIam: vi.fn()
   };
 
@@ -211,5 +214,37 @@ describe('PermissionGuard', () => {
     });
 
     await expect(guard.canActivate(makeContext('/api/v1/sales/orders', 'GET'))).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('records legacy vs iam decision mismatches with module/action dimensions', async () => {
+    const shadowReport = new IamShadowReportService();
+    const shadowLog = new IamShadowLogService(shadowReport);
+    const { guard } = makeGuard({
+      positionRules: [
+        {
+          moduleKey: 'crm',
+          action: PermissionAction.VIEW,
+          effect: PermissionEffect.ALLOW
+        }
+      ],
+      overrides: [],
+      iamEnabled: true,
+      iamMode: 'SHADOW',
+      iamAllowed: false,
+      iamEnforcementModules: ['crm'],
+      iamShadowLog: shadowLog
+    });
+
+    await expect(guard.canActivate(makeContext('/api/v1/crm/customers', 'GET'))).resolves.toBe(true);
+
+    const report = shadowReport.getMismatchReport({
+      tenantId: 'GOIUUDAI'
+    });
+    expect(report.items[0]).toEqual(
+      expect.objectContaining({
+        moduleKey: 'crm',
+        action: PermissionAction.VIEW
+      })
+    );
   });
 });

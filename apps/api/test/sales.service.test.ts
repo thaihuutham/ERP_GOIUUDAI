@@ -21,6 +21,7 @@ function makePrismaMock() {
     getTenantId: vi.fn().mockReturnValue('tenant_demo_company'),
     client: {
       order: {
+        findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn(),
         updateMany: vi.fn()
       },
@@ -106,6 +107,40 @@ function makeRuntimeSettingsMock() {
 }
 
 describe('SalesService', () => {
+  it('filters order list by IAM scope employee ids', async () => {
+    const prisma = makePrismaMock();
+    const scopeFilter = {
+      resolveForCurrentActor: vi.fn().mockResolvedValue({
+        enabled: true,
+        mode: 'LIMITED',
+        companyWide: false,
+        actorIds: ['user_in_scope'],
+        employeeIds: ['emp_in_scope_1', 'emp_in_scope_2'],
+        orgUnitIds: []
+      })
+    };
+
+    const service = new SalesService(
+      prisma as any,
+      makeSearchMock() as any,
+      makeSettingsPolicyMock() as any,
+      makeRuntimeSettingsMock() as any,
+      undefined,
+      scopeFilter as any
+    );
+
+    await service.listOrders({ limit: 20 } as any);
+
+    expect(scopeFilter.resolveForCurrentActor).toHaveBeenCalledWith('sales');
+    expect(prisma.client.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          employeeId: { in: ['emp_in_scope_1', 'emp_in_scope_2'] }
+        })
+      })
+    );
+  });
+
   it('approves pending order via /sales/orders/:id/approve flow', async () => {
     const prisma = makePrismaMock();
     const initialOrder = {

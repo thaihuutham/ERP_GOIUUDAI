@@ -13,6 +13,7 @@ function makePrismaMock() {
         updateMany: vi.fn()
       },
       invoice: {
+        findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn(),
         create: vi.fn(),
         updateMany: vi.fn()
@@ -81,6 +82,44 @@ function makeRuntimeSettingsMock() {
 }
 
 describe('FinanceService', () => {
+  it('filters invoice list by IAM scope employee ids through linked order', async () => {
+    const prisma = makePrismaMock();
+    const iamScopeFilter = {
+      resolveForCurrentActor: vi.fn().mockResolvedValue({
+        enabled: true,
+        mode: 'LIMITED',
+        companyWide: false,
+        actorIds: ['user_in_scope'],
+        employeeIds: ['emp_fin_scope_1'],
+        orgUnitIds: []
+      })
+    };
+
+    const service = new FinanceService(
+      prisma as any,
+      makeSettingsPolicyMock() as any,
+      makeRuntimeSettingsMock() as any,
+      iamScopeFilter as any
+    );
+
+    await service.listInvoices({} as any);
+
+    expect(iamScopeFilter.resolveForCurrentActor).toHaveBeenCalledWith('finance');
+    expect(prisma.client.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          order: {
+            is: {
+              employeeId: {
+                in: ['emp_fin_scope_1']
+              }
+            }
+          }
+        })
+      })
+    );
+  });
+
   it('rejects unbalanced journal lines', async () => {
     const prisma = makePrismaMock();
     const settingsPolicy = makeSettingsPolicyMock();

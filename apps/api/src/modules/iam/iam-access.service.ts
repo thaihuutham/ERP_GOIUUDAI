@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { PermissionAction, PermissionEffect } from '@prisma/client';
+import { IamGrantReason, PermissionAction, PermissionEffect } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { IamActionDecision, IamActorContext } from './iam.types';
 import { IamScopeService } from './iam-scope.service';
@@ -71,6 +71,92 @@ export class IamAccessService {
       scope,
       allowed: actionDecision.allowed
     };
+  }
+
+  async grantRecordAccess(params: {
+    actorUserId: string;
+    recordType: string;
+    recordId: string;
+    actions: PermissionAction[];
+    grantReason?: IamGrantReason;
+    expiresAt?: Date | null;
+    sourceRef?: string | null;
+    reason?: string | null;
+    createdBy?: string | null;
+    updatedBy?: string | null;
+  }) {
+    const tenantId = this.prisma.getTenantId();
+    const actorUserId = this.cleanString(params.actorUserId);
+    const recordType = this.cleanString(params.recordType).toUpperCase();
+    const recordId = this.cleanString(params.recordId);
+    if (!tenantId || !actorUserId || !recordType || !recordId) {
+      return null;
+    }
+
+    const actions = Array.from(new Set((params.actions ?? []).filter((item) => !!item)));
+    if (actions.length === 0) {
+      return null;
+    }
+
+    return this.prisma.client.iamRecordAccessGrant.create({
+      data: {
+        tenant_Id: tenantId,
+        actorUserId,
+        recordType,
+        recordId,
+        grantReason: params.grantReason ?? IamGrantReason.WORKFLOW_ASSIGNMENT,
+        actions,
+        expiresAt: params.expiresAt ?? null,
+        sourceRef: this.cleanString(params.sourceRef) || null,
+        reason: this.cleanString(params.reason) || null,
+        createdBy: this.cleanString(params.createdBy) || null,
+        updatedBy: this.cleanString(params.updatedBy) || null
+      }
+    });
+  }
+
+  async canAccessRecord(
+    actor: IamActorContext,
+    recordTypeRaw: string,
+    recordIdRaw: string,
+    action: PermissionAction
+  ) {
+    const role = this.cleanString(actor.role).toUpperCase();
+    if (role === 'ADMIN') {
+      return true;
+    }
+
+    const tenantId = this.cleanString(actor.tenantId);
+    const userId = this.cleanString(actor.userId);
+    const recordType = this.cleanString(recordTypeRaw).toUpperCase();
+    const recordId = this.cleanString(recordIdRaw);
+    if (!tenantId || !userId || !recordType || !recordId) {
+      return false;
+    }
+
+    const acceptedActions = action === PermissionAction.VIEW
+      ? [PermissionAction.VIEW, PermissionAction.APPROVE]
+      : [action];
+    const now = new Date();
+    const grants = await this.prisma.client.iamRecordAccessGrant.findMany({
+      where: {
+        tenant_Id: tenantId,
+        actorUserId: userId,
+        recordType,
+        recordId,
+        OR: acceptedActions.map((accepted) => ({
+          actions: { has: accepted }
+        })),
+        AND: [
+          {
+            OR: [{ expiresAt: null }, { expiresAt: { gte: now } }]
+          }
+        ]
+      },
+      take: 1
+    });
+
+    return grants.length > 0;
   }
 
   private async loadActionEffects(actor: IamActorContext, moduleKey: string, action: PermissionAction) {

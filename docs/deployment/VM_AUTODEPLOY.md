@@ -30,6 +30,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - `MEILI_TIMEOUT_MS` (optional)
 - `MEILI_ENABLE_WRITE_SYNC` (`true|false`)
 - `PERMISSION_ENGINE_ENABLED` (`true|false`)
+- `IAM_V2_ENABLED` (`true|false`, optional env override cho guard IAM v2)
 - `NEXT_PUBLIC_AUTH_ENABLED` (`true|false`, web login gate)
 - `AUDIT_ARCHIVE_S3_ENDPOINT` (vd `http://minio:9000`)
 - `AUDIT_ARCHIVE_S3_BUCKET` (vd `erp-audit-archive`)
@@ -74,6 +75,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `DEFAULT_TENANT_ID` (mặc định workflow: `GOIUUDAI`)
   - `TENANCY_MODE` (mặc định workflow: `single`)
   - `PERMISSION_ENGINE_ENABLED` (mặc định workflow: `false`)
+  - `IAM_V2_ENABLED` (optional; để trống nếu muốn lấy hoàn toàn từ `settings.access_security.iamV2.enabled`)
   - `AI_OPENAI_COMPAT_BASE_URL`
   - `AI_OPENAI_COMPAT_MODEL`
   - `AI_OPENAI_COMPAT_TIMEOUT_MS`
@@ -194,6 +196,8 @@ Chạy sau khi workflow `deploy-vm` hoàn tất để verify nghiệp vụ mục
 - Search status + reindex:
   - `GET /api/v1/settings/search/status`
   - `POST /api/v1/settings/search/reindex` với payload `{"entity":"all"}`
+- IAM v2 mismatch observability:
+  - `GET /api/v1/settings/permissions/iam-v2/mismatch-report?limit=20`
 
 Ví dụ:
 ```bash
@@ -234,3 +238,20 @@ scripts/deploy/smoke-assistant-access-boundary.sh
    - `NEXT_PUBLIC_AUTH_ENABLED=true`
    - `PERMISSION_ENGINE_ENABLED=true`
 4. Sau khi UAT pass toàn bộ phân hệ, bật prod theo cùng bộ flag.
+
+## IAM v2 rollout/rollback (module-by-module)
+- Runtime source of truth:
+  - `settings.access_security.iamV2.enabled`
+  - `settings.access_security.iamV2.mode` (`OFF|SHADOW|ENFORCE`)
+  - `settings.access_security.iamV2.enforcementModules` (danh sách module hoặc `all/*`)
+- Optional env override:
+  - `IAM_V2_ENABLED=true|false` (chỉ override cờ enabled ở guard; mode/module vẫn lấy từ settings).
+- Khuyến nghị rollout an toàn:
+  1. Bắt đầu `mode=SHADOW`, `enforcementModules` theo từng module nhỏ (`crm`, `sales`, ...), theo dõi mismatch report.
+  2. Khi mismatch ổn định, chuyển module mục tiêu sang `ENFORCE`.
+  3. Mở rộng dần sang các module khác, không bật all-modules một bước.
+- Rollback nhanh theo module:
+  1. Đưa `mode` về `SHADOW` để ngừng deny cứng nhưng vẫn quan sát mismatch.
+  2. Gỡ module khỏi `enforcementModules` nếu chỉ rollback cục bộ.
+  3. Nếu sự cố rộng, đặt `mode=OFF` hoặc tạm `IAM_V2_ENABLED=false`.
+  4. Verify lại bằng endpoint mismatch report + smoke permission/e2e trước khi rollout lại.

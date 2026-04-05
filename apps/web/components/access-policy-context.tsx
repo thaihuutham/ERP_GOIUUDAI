@@ -8,6 +8,8 @@ import {
   decideActionAccess,
   decideModuleAccess,
   decideRouteAccess,
+  IAM_V2_ENFORCE_MODE,
+  parseAccessSecurityIamV2State,
   parseEffectivePermissionMap,
   parseRuntimeEnabledModules,
   type AccessPolicySnapshot,
@@ -28,6 +30,7 @@ type AccessPolicyContextValue = {
 
 type AccessPolicyCachePayload = {
   role: UserRole;
+  iamV2Enabled: boolean;
   enabledModules: string[] | null;
   effectivePermissions: EffectivePermissionMap;
   loadedAt: string;
@@ -41,6 +44,7 @@ const AccessPolicyContext = createContext<AccessPolicyContextValue | undefined>(
 function createEmptySnapshot(role: UserRole) {
   return createAccessPolicySnapshot({
     role,
+    iamV2Enabled: false,
     enabledModules: null,
     effectivePermissions: {},
     runtimeResolved: false,
@@ -73,6 +77,7 @@ function readCachedPolicy(role: UserRole): AccessPolicyCachePayload | null {
     }
     return {
       role,
+      iamV2Enabled: parsed.iamV2Enabled === true,
       enabledModules: Array.isArray(parsed.enabledModules) ? parsed.enabledModules : null,
       effectivePermissions:
         parsed.effectivePermissions && typeof parsed.effectivePermissions === 'object'
@@ -92,6 +97,7 @@ function writeCachedPolicy(snapshot: AccessPolicySnapshot) {
 
   const payload: AccessPolicyCachePayload = {
     role: snapshot.role,
+    iamV2Enabled: snapshot.iamV2Enabled,
     enabledModules: snapshot.enabledModules,
     effectivePermissions: snapshot.effectivePermissions,
     loadedAt: snapshot.loadedAt
@@ -128,6 +134,7 @@ export function AccessPolicyProvider({ children }: { children: ReactNode }) {
       setSnapshot(
         createAccessPolicySnapshot({
           role,
+          iamV2Enabled: cached.iamV2Enabled,
           enabledModules: cached.enabledModules,
           effectivePermissions: cached.effectivePermissions,
           runtimeResolved: true,
@@ -140,9 +147,10 @@ export function AccessPolicyProvider({ children }: { children: ReactNode }) {
     }
 
     const load = async () => {
-      const [runtimeResult, effectiveResult] = await Promise.allSettled([
+      const [runtimeResult, effectiveResult, accessSecurityResult] = await Promise.allSettled([
         apiRequest('/settings/runtime'),
-        apiRequest('/settings/permissions/effective')
+        apiRequest('/settings/permissions/effective'),
+        apiRequest('/settings/domains/access_security')
       ]);
 
       if (!mounted) {
@@ -158,9 +166,15 @@ export function AccessPolicyProvider({ children }: { children: ReactNode }) {
         effectiveResult.status === 'fulfilled'
           ? parseEffectivePermissionMap(effectiveResult.value)
           : cached?.effectivePermissions ?? {};
+      const iamV2State =
+        accessSecurityResult.status === 'fulfilled'
+          ? parseAccessSecurityIamV2State(accessSecurityResult.value)
+          : { enabled: cached?.iamV2Enabled === true, mode: 'SHADOW' as const };
+      const iamV2Enabled = iamV2State.enabled && iamV2State.mode === IAM_V2_ENFORCE_MODE;
 
       const resolvedSnapshot = createAccessPolicySnapshot({
         role,
+        iamV2Enabled,
         enabledModules,
         effectivePermissions,
         runtimeResolved: true,

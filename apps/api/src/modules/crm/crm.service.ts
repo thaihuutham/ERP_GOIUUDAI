@@ -1,9 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { assertValidVietnamPhone, normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
 import { SearchService } from '../search/search.service';
 
 @Injectable()
@@ -11,7 +12,8 @@ export class CrmService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SearchService) private readonly search: SearchService,
-    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
+    @Optional() @Inject(IamScopeFilterService) private readonly iamScopeFilter?: IamScopeFilterService
   ) {}
 
   async listCustomers(
@@ -26,6 +28,16 @@ export class CrmService {
     const where: Prisma.CustomerWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
     };
+
+    const scopeFilter = await this.resolveCustomerScopeFilter();
+    if (!scopeFilter.companyWide) {
+      if (scopeFilter.actorIds.length === 0) {
+        where.id = { in: [] };
+      } else {
+        where.ownerStaffId = { in: scopeFilter.actorIds };
+      }
+    }
+
     let normalizedStage: string | undefined;
     if (filters.stage) {
       const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
@@ -907,5 +919,20 @@ export class CrmService {
       const rightRank = rankMap.get(right.id) ?? Number.MAX_SAFE_INTEGER;
       return leftRank - rightRank;
     });
+  }
+
+  private async resolveCustomerScopeFilter() {
+    if (!this.iamScopeFilter) {
+      return {
+        companyWide: true,
+        actorIds: []
+      };
+    }
+
+    const scope = await this.iamScopeFilter.resolveForCurrentActor('crm');
+    return {
+      companyWide: scope.companyWide,
+      actorIds: scope.actorIds
+    };
   }
 }

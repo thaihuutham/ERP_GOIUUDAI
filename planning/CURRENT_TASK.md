@@ -2,9 +2,202 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-05 15:05 +07
+- Last updated: 2026-04-05 18:13 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-05 18:13 +07 (IAM rollout Task 10 + Task 11 handoff/stability)
+- User yêu cầu tiếp tục triển khai.
+- Đã hoàn tất Task 10 (web IAM admin UI + access policy adaptation):
+  - `apps/web/lib/access-policy.ts`:
+    - thêm mapping runtime role sang access role theo IAM v2 (`ADMIN|USER`) qua `mapRuntimeRoleToAccessRole(...)`,
+    - parse `access_security.iamV2` và đưa `iamV2Enabled` vào `AccessPolicySnapshot`.
+  - `apps/web/components/access-policy-context.tsx`:
+    - nạp thêm `/settings/domains/access_security`,
+    - bật `iamV2Enabled` khi policy `enabled=true` và `mode=ENFORCE`.
+  - `apps/web/components/settings-center.tsx`:
+    - thêm IAM admin UI trong domain `access_security`:
+      - scope override theo user (`PUT /settings/iam/users/:id/scope-override`),
+      - title scope mapping (`PUT /settings/iam/title-scope-mapping`),
+      - mismatch report (`GET /settings/permissions/iam-v2/mismatch-report`),
+    - sửa normalize mismatch report để đảm bảo type-safe build (`IamMismatchReportItem[]` không còn union null).
+  - tests:
+    - `apps/web/lib/__tests__/access-policy.test.ts` thêm case MANAGER/STAFF -> USER trong IAM v2.
+    - `apps/web/e2e/tests/settings-center-reports.spec.ts` thêm assert editor IAM hiện diện + ổn định hóa click flow tránh flaky detach khi rerender.
+- Đã hoàn tất Task 11 (rollout docs + stability gate):
+  - cập nhật `docs/deployment/VM_AUTODEPLOY.md`:
+    - thêm `IAM_V2_ENABLED`,
+    - thêm smoke endpoint mismatch report,
+    - thêm hướng dẫn rollout/rollback module-by-module cho IAM v2.
+- Verify:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`13 passed`)
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`11 passed`)
+  - Backend sanity:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts test/permission.guard.test.ts` ✅ (`13 passed`)
+  - Stability gate:
+    - `docker ps ...` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 17:08 +07 (IAM rollout Task 9: mismatch report API)
+- User yêu cầu tiếp tục triển khai theo kế hoạch IAM.
+- Đã hoàn tất Task 9:
+  - thêm service mới `apps/api/src/modules/iam/iam-shadow-report.service.ts`:
+    - ghi nhận mismatch `legacy vs iam` theo tenant trong runtime memory,
+    - aggregate theo chiều `moduleKey + action`,
+    - expose report gồm `totalMismatches`, `totalGroups`, `items` (count + sample mới nhất).
+  - cập nhật `apps/api/src/modules/iam/iam-shadow-log.service.ts`:
+    - khi phát hiện mismatch thì vừa log warning vừa ghi vào `IamShadowReportService`.
+  - cập nhật `apps/api/src/modules/iam/iam.module.ts`:
+    - register/export `IamShadowReportService`.
+  - cập nhật `apps/api/src/modules/settings/settings.module.ts`:
+    - import `IamModule` để `SettingsEnterpriseService` đọc mismatch report cùng instance runtime.
+  - cập nhật `apps/api/src/modules/settings/settings-enterprise.service.ts`:
+    - thêm API service `getIamMismatchReport(query)` (filter `moduleKey`, `action`, `limit`).
+  - cập nhật `apps/api/src/modules/settings/settings.controller.ts`:
+    - thêm endpoint `GET /settings/permissions/iam-v2/mismatch-report` (`MANAGER|ADMIN`, `@AuditRead`).
+  - cập nhật test:
+    - `apps/api/test/permission.guard.test.ts` thêm test xác nhận mismatch được ghi và aggregate theo `module/action`.
+    - `apps/api/test/settings-enterprise.service.test.ts` thêm test service trả mismatch report đúng shape.
+- Verify:
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/settings-enterprise.service.test.ts -t "mismatch"` ✅ (`3 passed`)
+  - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/workflows.service.test.ts` ✅ (`25 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Stability gate:
+    - `docker ps ...` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 16:47 +07 (IAM rollout Task 8: scope override + title scope mapping APIs)
+- User yêu cầu tiếp tục triển khai theo kế hoạch IAM.
+- Đã hoàn tất Task 8:
+  - `apps/api/src/modules/settings/settings-enterprise.service.ts`:
+    - thêm API service `updateUserScopeOverride(userId, payload)`:
+      - validate user tồn tại,
+      - validate `scopeMode` (`SELF|SUBTREE|UNIT_FULL`),
+      - optional validate `rootOrgUnitId`,
+      - validate khoảng thời gian `effectiveFrom/effectiveTo`,
+      - upsert vào `iam_user_scope_override`,
+      - trả về `override` + `effectiveScope`.
+    - thêm API service `updateTitleScopeMapping(payload)`:
+      - validate `titlePattern`, `scopeMode`,
+      - upsert/delete mapping trong `settings.access_security.v1` (`iamTitleScopeMappings`),
+      - chuẩn hóa/dedupe/sort theo `priority`.
+    - thêm helper parse/normalize:
+      - `parseIamScopeMode`, `normalizeTitlePattern`, `normalizeTitleScopeMappings`, `accessSecuritySettingKey`.
+  - `apps/api/src/modules/settings/settings.controller.ts`:
+    - thêm endpoint:
+      - `PUT /settings/iam/users/:userId/scope-override`
+      - `PUT /settings/iam/title-scope-mapping`
+    - cả hai endpoint yêu cầu `ADMIN` và có `@AuditAction`.
+  - `apps/api/test/settings-enterprise.service.test.ts`:
+    - thêm test:
+      - update user scope override trả về effective scope đúng.
+      - update title scope mapping lưu scope mode đúng.
+- Verify:
+  - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts` ✅ (`6 passed`)
+  - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/workflows.service.test.ts` ✅ (`23 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Stability gate:
+    - `docker ps ...` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 16:28 +07 (IAM rollout Task 7: settings enterprise guardrails)
+- User yêu cầu tiếp tục triển khai theo kế hoạch IAM.
+- Đã hoàn tất Task 7 (guardrails cho user permission overrides):
+  - `apps/api/src/modules/settings/settings-enterprise.service.ts`:
+    - thêm guardrail trong `putUserPermissionOverrides(...)`:
+      - chặn non-admin chỉnh override cho target user role `ADMIN` (`ADMIN core protection`).
+      - chặn self-elevation cho actor không phải ADMIN:
+        - từ payload có rule `ALLOW`,
+        - hoặc gỡ `DENY` override hiện có của chính actor.
+    - bổ sung `resolveActorContext(...)` và `assertPermissionOverrideGuardrails(...)`.
+    - tích hợp `IamCeilingService` (optional injection + fallback local instance) để tái dùng rule chuẩn cho admin-core protection.
+  - `apps/api/src/modules/settings/settings.controller.ts`:
+    - thêm audit decorator cho route `PUT /settings/permissions/users/:userId/overrides` (`UPDATE_USER_PERMISSION_OVERRIDES`).
+  - `apps/api/test/settings-enterprise.service.test.ts`:
+    - thêm test:
+      - non-admin không được chỉnh quyền lõi của ADMIN.
+      - actor không được tự nâng quyền bằng allow override.
+- Verify:
+  - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts` ✅ (`4 passed`)
+  - `npm run test --workspace @erp/api -- test/settings-enterprise.service.test.ts test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts` ✅ (`15 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Stability gate:
+    - `docker ps ...` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 16:06 +07 (IAM rollout Task 6: workflow record-level exception grants)
+- User yêu cầu tiếp tục theo kế hoạch IAM rollout.
+- Đã hoàn tất Task 6 theo `docs/plans/2026-04-05-admin-user-iam-scope-rollout.md`:
+  - `apps/api/src/modules/workflows/workflows.service.ts`:
+    - thêm enforcement helper:
+      - `shouldEnforceWorkflowRecordAccess(...)`
+      - `canActorViewWorkflowInstance(...)`
+      - `assertWorkflowInstanceAccessible(...)`
+      - `grantWorkflowInstanceAccess(...)`
+    - `listInstances` và `getInstanceDetail` nay kiểm quyền record-level khi scope context ở mode `ENFORCE` + không company-wide.
+    - `listInstanceTimeline` / `listInstanceApprovals` chặn đọc trái phép qua `assertWorkflowInstanceAccessible`.
+    - cấp grant `WORKFLOW_INSTANCE` (`VIEW`, `APPROVE`) tại các điểm assignment:
+      - tạo approval theo step (`ensureStepApprovals`),
+      - reassign / delegate / escalate / auto-escalate,
+      - createApproval / updateApproval.
+  - `apps/api/test/workflows.service.test.ts`:
+    - thêm 2 test mới:
+      - cho phép xem instance ngoài scope khi có record grant,
+      - chặn instance ngoài scope khi không liên quan.
+- Verify:
+  - `npm run test --workspace @erp/api -- test/workflows.service.test.ts` ✅ (`6 passed`)
+  - `npm run test --workspace @erp/api -- test/workflows.service.test.ts test/iam-access.service.test.ts` ✅ (`9 passed`)
+  - regression gộp:
+    - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/crm.service.test.ts test/sales.service.test.ts test/finance.service.test.ts test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/workflows.service.test.ts` ✅ (`36 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Stability gate:
+    - `docker ps ...` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 15:49 +07 (IAM rollout Task 5: scope filter helper + CRM/Sales/Finance list enforcement)
+- User yêu cầu tiếp tục triển khai theo kế hoạch.
+- Đã triển khai bước tiếp theo của plan IAM (`docs/plans/2026-04-05-admin-user-iam-scope-rollout.md` - Task 5):
+  - tạo service mới:
+    - `apps/api/src/modules/iam/iam-scope-filter.service.ts`
+    - đọc `IAM_SCOPE_CONTEXT_KEY` từ CLS và trả scope runtime chuẩn hóa (`COMPANY|LIMITED`) cho filter tầng service.
+  - wiring module:
+    - `apps/api/src/modules/iam/iam.module.ts` export `IamScopeFilterService`.
+    - `apps/api/src/modules/crm/crm.module.ts` import `IamModule`.
+    - `apps/api/src/modules/sales/sales.module.ts` import `IamModule`.
+    - `apps/api/src/modules/finance/finance.module.ts` import `IamModule`.
+  - áp scope filtering vào read-path:
+    - `CrmService.listCustomers`: khi scope giới hạn -> filter `ownerStaffId IN actorIds`.
+    - `SalesService.listOrders`: khi scope giới hạn -> filter `employeeId IN employeeIds`.
+    - `FinanceService.listInvoices`: khi scope giới hạn -> filter theo relation order `order.employeeId IN employeeIds`.
+  - rollout-safe:
+    - nếu chưa có ENFORCE scope context (IAM v2 OFF/SHADOW hoặc route không enforce) thì giữ `companyWide` để không phá behavior hiện hữu.
+- Đã bổ sung test regression:
+  - mới: `apps/api/test/crm.service.test.ts` (customer list filter theo actor scope).
+  - cập nhật: `apps/api/test/sales.service.test.ts` (order list filter theo employee scope).
+  - cập nhật: `apps/api/test/finance.service.test.ts` (invoice list filter theo employee scope qua order relation).
+- Verify:
+  - `npm run test --workspace @erp/api -- test/crm.service.test.ts test/sales.service.test.ts test/finance.service.test.ts` ✅ (`16 passed`)
+  - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/crm.service.test.ts test/sales.service.test.ts test/finance.service.test.ts test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts` ✅ (`30 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Stability gate:
+    - `docker ps ...` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
 
 ## Session Update 2026-04-05 15:05 +07 (P4 implementation: operational metrics + support runbook)
 - User yêu cầu tiếp tục phase P4.
