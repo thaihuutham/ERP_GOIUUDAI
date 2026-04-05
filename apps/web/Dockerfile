@@ -8,6 +8,10 @@ RUN npm install
 
 FROM node:22-alpine AS build
 WORKDIR /workspace
+ARG NEXT_PUBLIC_API_BASE_URL=http://api:3001/api/v1
+ARG NEXT_PUBLIC_AUTH_ENABLED=false
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ENV NEXT_PUBLIC_AUTH_ENABLED=${NEXT_PUBLIC_AUTH_ENABLED}
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY . .
 RUN npm run build --workspace @erp/shared

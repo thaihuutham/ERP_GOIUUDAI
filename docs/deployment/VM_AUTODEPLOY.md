@@ -208,6 +208,8 @@ scripts/deploy/smoke-crm-conversations.sh
 Ghi chú:
 - `smoke-crm-conversations.sh` mặc định đọc tenant từ `DEFAULT_TENANT_ID` (fallback `GOIUUDAI`).
 - Auth mode của smoke mặc định đọc từ `AUTH_ENABLED` (fallback `false`).
+- Có thể tạm bỏ qua kiểm tra AI khi chưa cấp key bằng `SMOKE_SKIP_AI_QUALITY=true`.
+- Có thể tạm bỏ qua kiểm tra OA outbound bằng `SMOKE_SKIP_OA_OUTBOUND=true`.
 
 ## Post-deploy smoke (AI Assistant access boundary)
 Smoke này xác nhận guard bảo mật end-to-end cho case report-dispatch scope mismatch:

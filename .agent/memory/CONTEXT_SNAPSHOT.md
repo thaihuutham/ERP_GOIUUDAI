@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-04 21:45 +07
+- Time: 2026-04-05 13:11 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-04_2145_codex.md`
+- Session Log: `.agent/sessions/2026-04-05_1311_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,259 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-05 13:11 (Deploy/UAT execution pass + env propagation hardening)
+- User yêu cầu “làm luôn” nhiệm vụ kế tiếp ở cấp dự án (deploy + UAT readiness).
+- Đã triển khai các thay đổi vận hành để tránh lệch cấu hình giữa workflow/deploy/compose:
+  - `.github/workflows/deploy-vm.yml`
+    - bổ sung inject:
+      - `NEXT_PUBLIC_AUTH_ENABLED`
+      - `PERMISSION_ENGINE_ENABLED`
+      - `SETTINGS_ENCRYPTION_MASTER_KEY`
+      - `BHTOT_API_KEY`
+  - `scripts/deploy/deploy-from-runner.sh`
+    - đọc + ghi đầy đủ các biến mới vào `.deploy.env`.
+    - thêm warning runtime:
+      - `NEXT_PUBLIC_AUTH_ENABLED=true` nhưng `AUTH_ENABLED!=true`
+      - thiếu `SETTINGS_ENCRYPTION_MASTER_KEY` (secrets lưu DB không mã hóa được at-rest).
+  - `docker-compose.yml`
+    - API env: thêm `PERMISSION_ENGINE_ENABLED`, `SETTINGS_ENCRYPTION_MASTER_KEY`, `BHTOT_API_KEY`.
+    - Web build/runtime env: thêm `NEXT_PUBLIC_AUTH_ENABLED` và build args.
+  - `apps/web/Dockerfile`
+    - thêm `ARG/ENV NEXT_PUBLIC_AUTH_ENABLED` + `NEXT_PUBLIC_API_BASE_URL` ở stage build để không bị hardcode `false` trong bundle.
+  - `config/.env.example`
+    - thêm `BHTOT_API_KEY=`.
+  - docs cập nhật:
+    - `docs/operations/RUNBOOK.md` (GitHub Variables bổ sung `NEXT_PUBLIC_AUTH_ENABLED`, `PERMISSION_ENGINE_ENABLED`, `TENANCY_MODE`).
+    - `docs/deployment/VM_AUTODEPLOY.md` (ghi rõ cờ skip smoke AI/OA).
+- Đã sửa lỗi script smoke CRM:
+  - `scripts/deploy/smoke-crm-conversations.sh` fix `set -u` với mảng header rỗng.
+  - thêm cờ `SMOKE_SKIP_AI_QUALITY=true` (mặc định vẫn kiểm tra AI).
+- Kết quả thực thi kỹ thuật local:
+  - Stability gate:
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - `scripts/deploy/healthcheck.sh` ✅
+  - `docker compose up -d meilisearch` ✅
+  - `GET /api/v1/settings/search/status`:
+    - trước: `healthy=false` (chưa có Meili)
+    - sau: `healthy=true`
+  - `POST /api/v1/settings/search/reindex` với `x-erp-dev-role: ADMIN` ✅
+    - `customers=122`, `orders=140`, `products=120`
+  - `scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+  - `scripts/deploy/smoke-crm-conversations.sh`:
+    - fail expected khi không skip AI do thiếu `AI_OPENAI_COMPAT_*` local.
+    - pass với `SMOKE_SKIP_AI_QUALITY=true SMOKE_SKIP_OA_OUTBOUND=true`.
+  - `docker compose build web` ✅ (xác nhận build args mới hoạt động end-to-end).
+- Blocker external:
+  - Không thể trigger trực tiếp GitHub Actions từ local vì môi trường không có `gh` CLI/token.
+  - Cần chạy `deploy-vm` từ GitHub UI hoặc môi trường có GitHub auth.
+
+## Update 2026-04-05 12:23 (Assistant layer normalize + full gate rerun)
+- User yêu cầu tiếp tục rollout normalize payload parser.
+- Đã mở rộng normalize xuống lớp Assistant API và các màn hình assistant:
+  - `apps/web/lib/assistant-api.ts`:
+    - thêm `normalizeAssistantListResponse<T>(...)`,
+    - các hàm list (`listKnowledgeSources`, `listKnowledgeDocuments`, `listRuns`, `listChannels`) chuyển sang normalize list/object thống nhất qua `normalizeListPayload`/`normalizeObjectPayload`.
+  - `apps/web/components/assistant/assistant-runs-board.tsx`
+  - `apps/web/components/assistant/assistant-knowledge-board.tsx`
+  - `apps/web/components/assistant/assistant-channels-board.tsx`
+  - đồng thời chuẩn hóa parse users list thủ công trong các board assistant về helper chung.
+- Ghi chú e2e:
+  - lần chạy đầu bị false-negative do Playwright reuse server đang chạy sẵn ở cổng `3100` (ứng dụng khác), không phải regression của repo.
+  - đã rerun với `CI=1` và tách cổng `PLAYWRIGHT_PORT=3111` để ép webServer đúng của dự án.
+- Verification:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=3111 npm run test:e2e:web -- apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts` ✅ (`4 passed`)
+  - Backend + DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'` ✅
+    - `lsof -nP -iTCP -sTCP:LISTEN | rg ':(5432|5433|6379|7700)\\b'` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `set -a; source .env; set +a; npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/sales.service.test.ts test/scm.api-flow.test.ts` ✅ (`21 passed`)
+
+## Update 2026-04-05 12:11 (Mở rộng normalize list parser trên các màn hình chưa migrate)
+- User yêu cầu tiếp tục triển khai sau đợt normalize board chính.
+- Đã mở rộng parser coverage cho các màn hình còn parse thủ công:
+  - `apps/web/components/crm-conversations-workbench.tsx`
+  - `apps/web/components/audit-operations-board.tsx`
+  - `apps/web/components/workflows-operations-board.tsx`
+  - `apps/web/components/settings-custom-fields-page.tsx`
+  - `apps/web/components/settings-center.tsx`
+  - `apps/web/components/hr-attendance-board.tsx`
+  - `apps/web/components/hr-goals-tracking-board.tsx`
+- Thay đổi kỹ thuật:
+  - chuyển các điểm `Array.isArray(payload)` / `payload.items` sang `normalizeListPayload(...)` để đồng bộ behavior toàn web.
+  - không đổi nghiệp vụ; chỉ chuẩn hóa lớp đọc payload.
+- Verification:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4302 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Backend + DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/sales.service.test.ts test/scm.api-flow.test.ts test/workflows.service.test.ts test/reports.service.test.ts` ✅ (`28 passed`)
+
+## Update 2026-04-05 10:16 (Frontend normalize wrapped custom-fields entities across module boards)
+- User yêu cầu tiếp tục rollout theo hướng áp dụng toàn hệ thống.
+- Đã chuẩn hóa parser payload phía web để hỗ trợ đồng thời:
+  - flat entity cũ,
+  - wrapped entity mới (`{ id, base, customFields }`).
+- Thay đổi chính:
+  - `apps/web/lib/api-client.ts`
+    - thêm unwrap helper cho wrapped entity.
+    - `normalizeListPayload` và `normalizeObjectPayload` normalize row/object trước khi trả về.
+  - các board module chính chuyển sang normalize helper dùng chung:
+    - `apps/web/components/crm-customers-board.tsx`
+    - `apps/web/components/crm-operations-board.tsx`
+    - `apps/web/components/hr-operations-board.tsx`
+    - `apps/web/components/finance-operations-board.tsx`
+    - `apps/web/components/sales-operations-board.tsx`
+    - `apps/web/components/scm-operations-board.tsx`
+- Tác động:
+  - không đổi behavior nghiệp vụ backend,
+  - giảm rủi ro vỡ UI khi endpoint bật custom-fields wrapper.
+- Verification:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4302 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Backend + DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/sales.service.test.ts test/scm.api-flow.test.ts` ✅ (`21 passed`)
+
+## Update 2026-04-05 09:12 (IAM v2 groundwork - runtime policy + schema + guard shadow/enforce)
+- User yêu cầu tiếp tục triển khai sau khi chốt design IAM `ADMIN/USER + scope`.
+- Đã hoàn thành nền tảng backend theo hướng additive (không cắt legacy):
+  - `access_security.iamV2` runtime policy:
+    - default: `enabled=false`, `mode=SHADOW`, `enforcementModules=[]`, `protectAdminCore=true`, `denySelfElevation=true`.
+    - files:
+      - `apps/api/src/modules/settings/settings-policy.types.ts`
+      - `apps/api/src/modules/settings/settings-policy.service.ts`
+      - `apps/api/src/common/settings/runtime-settings.service.ts`
+      - `apps/api/test/settings-policy.service.test.ts`
+  - Prisma schema/migration IAM v2:
+    - `apps/api/prisma/schema.prisma`
+    - `apps/api/prisma/migrations/20260405090049_add_iam_v2_tables/migration.sql`
+    - tables mới:
+      - `iam_action_grants`
+      - `iam_capability_grants`
+      - `iam_user_scope_override`
+      - `iam_permission_ceiling`
+      - `iam_resolved_scope_members`
+      - `iam_record_access_grants`
+  - Core service module IAM:
+    - `apps/api/src/modules/iam/iam.types.ts`
+    - `apps/api/src/modules/iam/iam-access.service.ts`
+    - `apps/api/src/modules/iam/iam-scope.service.ts`
+    - `apps/api/src/modules/iam/iam-ceiling.service.ts`
+    - `apps/api/src/modules/iam/iam-shadow-log.service.ts`
+    - `apps/api/src/modules/iam/iam.module.ts`
+    - tests:
+      - `apps/api/test/iam-access.service.test.ts`
+      - `apps/api/test/iam-scope.service.test.ts`
+  - Guard integration:
+    - `apps/api/src/common/auth/permission.guard.ts`:
+      - giữ legacy decision làm baseline,
+      - thêm IAM v2 `SHADOW/ENFORCE`,
+      - shadow mismatch logger,
+      - `ENFORCE` deny theo IAM decision.
+    - test:
+      - `apps/api/test/permission.guard.test.ts`
+  - app wiring:
+    - thêm `IamModule` vào `apps/api/src/app.module.ts`.
+- ADR mới:
+  - `docs/decisions/ADR-044-ADMIN-USER-IAM-SCOPE-HYBRID.md`
+- Verification:
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/settings-policy.service.test.ts` ✅ (`27 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+- Vấn đề đáng chú ý:
+  - `prisma migrate dev` báo drift cũ trên local DB; đã dùng đường an toàn:
+    - generate migration SQL bằng `prisma migrate diff` từ schema before/after,
+    - apply bằng `migrate deploy` (không reset DB).
+
+## Update 2026-04-05 09:30 (IAM v2 toàn module - bỏ ràng buộc rollout theo danh sách)
+- User yêu cầu áp IAM v2 cho toàn hệ thống thay vì đi theo nhánh rollout module.
+- Đã chuẩn hóa semantics enforcement module:
+  - `iamV2.enforcementModules=[]` => toàn bộ module.
+  - token `ALL` / `*` => canonical về `[]` (toàn bộ module).
+  - danh sách module cụ thể vẫn hỗ trợ cho tương thích ngược.
+- Files chính:
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+  - `apps/api/src/common/settings/runtime-settings.service.ts`
+  - `apps/api/src/common/auth/permission.guard.ts`
+  - tests:
+    - `apps/api/test/settings-policy.service.test.ts`
+    - `apps/api/test/permission.guard.test.ts`
+- ADR mới:
+  - `docs/decisions/ADR-045-IAMV2-ALL-MODULE-ENFORCEMENT.md`
+- Verification:
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/settings-policy.service.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Update 2026-04-05 09:50 (SCM regression fix + module sweep)
+- Tiếp tục nhiệm vụ rollout IAM v2 toàn hệ thống bằng regression sweep các module chính.
+- Đã xử lý lỗi block ở SCM integration test:
+  - nguyên nhân: endpoint PO trả entity dạng wrapped custom-fields (`{ id, base, customFields }`) trong khi assertion test đang đọc field phẳng.
+  - fix: thêm helper unwrap response ở `apps/api/test/scm.api-flow.test.ts` để chấp nhận cả wrapped/flat shape.
+- Verification:
+  - `npm run test --workspace @erp/api -- test/scm.api-flow.test.ts` ✅
+  - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/sales.service.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/scm.api-flow.test.ts test/reports.service.test.ts test/workflows.service.test.ts` ✅
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/settings-policy.service.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/scm.api-flow.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+
+## Update 2026-04-05 07:24 (Staff-first hardening - quyền route/menu/action + e2e gate)
+- User yêu cầu triển khai kế hoạch hardening quyền frontend toàn ERP theo nguyên tắc:
+  - route không quyền -> redirect Dashboard,
+  - menu/card/link không quyền -> ẩn,
+  - action không quyền -> ẩn hoàn toàn.
+- Trạng thái triển khai trong codebase:
+  - đã có policy engine frontend tập trung (`AccessPolicySnapshot`, `canRoute/canModule/canAction`) và provider bọc toàn app.
+  - các board/page trọng yếu đang dùng policy để ẩn module/action và fail-safe khi policy chưa ready.
+- Session này hoàn tất phần còn thiếu để chốt nghiệm thu:
+  - sửa e2e hardening:
+    - `apps/web/e2e/tests/access-policy-hardening.spec.ts`
+    - thêm mock `domainStates` cho `/settings/center` để tránh crash settings route test.
+    - đồng bộ assertions CRM theo UI thực tế của `/modules/crm` (customers board): kiểm tra ẩn/hiện action theo STAFF/MANAGER/ADMIN.
+  - giữ negative check: không xuất hiện chuỗi `Bạn không có quyền truy cập tài nguyên này.` trong luồng chuẩn.
+- Verify gate:
+  - ban đầu DB gate fail do `erp-postgres` chưa chạy; đã xử lý bằng `docker compose up -d postgres`.
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4302 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
 
 ## Update 2026-04-04 21:45 (Position detail mở trang riêng)
 - User phản hồi UX: click tên vị trí trong `Ma trận quyền hạn` nhưng vẫn phải cuộn màn hình dài để xem chi tiết.

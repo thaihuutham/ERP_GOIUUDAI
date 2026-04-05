@@ -68,7 +68,10 @@ npm run test --workspace @erp/api
 
 ### GitHub Variables
 - `AUTH_ENABLED` (khuyến nghị `true` cho production)
+- `NEXT_PUBLIC_AUTH_ENABLED` (bật login gate ở web; nên đồng bộ với `AUTH_ENABLED`)
+- `PERMISSION_ENGINE_ENABLED` (bật Permission Guard runtime)
 - `DEFAULT_TENANT_ID`
+- `TENANCY_MODE` (`single` cho nội bộ, `multi` cho SaaS)
 - `AI_OPENAI_COMPAT_BASE_URL`
 - `AI_OPENAI_COMPAT_MODEL` (optional)
 - `AI_OPENAI_COMPAT_TIMEOUT_MS` (optional)
@@ -103,6 +106,7 @@ scripts/deploy/smoke-crm-conversations.sh
 
 Tuỳ chọn:
 - `SMOKE_SKIP_OA_OUTBOUND=true` nếu tạm thời chưa có OA token/account để verify outbound.
+- `SMOKE_SKIP_AI_QUALITY=true` nếu tạm thời chưa cấp `AI_OPENAI_COMPAT_*` để verify scoring.
 
 ## 10. Chạy pipeline test + security theo 1 lệnh
 ```bash

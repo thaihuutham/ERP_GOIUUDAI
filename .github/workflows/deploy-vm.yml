@@ -17,6 +17,8 @@ jobs:
           DEPLOY_WORKDIR: /opt/erp-retail
           DEPLOY_ENV_FILE: /opt/erp-retail/.deploy.env
           AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'false' }}
+          NEXT_PUBLIC_AUTH_ENABLED: ${{ vars.NEXT_PUBLIC_AUTH_ENABLED || 'false' }}
+          PERMISSION_ENGINE_ENABLED: ${{ vars.PERMISSION_ENGINE_ENABLED || 'false' }}
           DEFAULT_TENANT_ID: ${{ vars.DEFAULT_TENANT_ID || 'GOIUUDAI' }}
           TENANCY_MODE: ${{ vars.TENANCY_MODE || 'single' }}
           API_PORT: ${{ vars.API_PORT || '3001' }}
@@ -29,11 +31,13 @@ jobs:
           AI_OPENAI_COMPAT_API_KEY: ${{ secrets.AI_OPENAI_COMPAT_API_KEY }}
           AI_OPENAI_COMPAT_MODEL: ${{ vars.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini' }}
           AI_OPENAI_COMPAT_TIMEOUT_MS: ${{ vars.AI_OPENAI_COMPAT_TIMEOUT_MS || '45000' }}
+          BHTOT_API_KEY: ${{ secrets.BHTOT_API_KEY }}
           ZALO_OA_WEBHOOK_SECRET: ${{ secrets.ZALO_OA_WEBHOOK_SECRET }}
           ZALO_OA_OUTBOUND_URL: ${{ vars.ZALO_OA_OUTBOUND_URL }}
           ZALO_OA_ACCESS_TOKEN: ${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           ZALO_OA_API_BASE_URL: ${{ vars.ZALO_OA_API_BASE_URL || 'https://openapi.zalo.me/v3.0/oa' }}
           ZALO_OA_OUTBOUND_TIMEOUT_MS: ${{ vars.ZALO_OA_OUTBOUND_TIMEOUT_MS || '20000' }}
+          SETTINGS_ENCRYPTION_MASTER_KEY: ${{ secrets.SETTINGS_ENCRYPTION_MASTER_KEY }}
           SEARCH_ENGINE: ${{ vars.SEARCH_ENGINE || 'sql' }}
           MEILI_HOST: ${{ vars.MEILI_HOST || 'http://meilisearch:7700' }}
           MEILI_MASTER_KEY: ${{ secrets.MEILI_MASTER_KEY }}

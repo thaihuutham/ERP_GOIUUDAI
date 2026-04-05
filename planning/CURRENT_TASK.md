@@ -2,9 +2,270 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-04 21:45 +07
+- Last updated: 2026-04-05 13:11 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-05 13:11 +07 (Deploy/UAT readiness pass theo yêu cầu user)
+- User yêu cầu “ok, bạn làm đi” cho nhóm việc kế tiếp cấp dự án (deploy + UAT).
+- Đã thực hiện:
+  - Đồng bộ env propagation quan trọng xuyên suốt:
+    - workflow `deploy-vm` -> `deploy-from-runner.sh` -> `.deploy.env` -> `docker-compose`.
+    - bổ sung:
+      - `NEXT_PUBLIC_AUTH_ENABLED`
+      - `PERMISSION_ENGINE_ENABLED`
+      - `SETTINGS_ENCRYPTION_MASTER_KEY`
+      - `BHTOT_API_KEY`
+  - Sửa build-time web auth flag:
+    - `apps/web/Dockerfile` thêm `ARG/ENV NEXT_PUBLIC_AUTH_ENABLED` để bundle phản ánh đúng cấu hình khi deploy.
+    - `docker-compose.yml` thêm `build.args` cho web.
+  - Harden deploy script:
+    - warning khi `NEXT_PUBLIC_AUTH_ENABLED=true` nhưng `AUTH_ENABLED!=true`.
+    - warning khi thiếu `SETTINGS_ENCRYPTION_MASTER_KEY`.
+  - Fix smoke bug:
+    - `scripts/deploy/smoke-crm-conversations.sh` không còn lỗi `unbound variable` khi không có extra headers.
+    - thêm option `SMOKE_SKIP_AI_QUALITY=true` (mặc định vẫn kiểm AI).
+  - Đồng bộ docs/runtime mẫu:
+    - `config/.env.example` thêm `BHTOT_API_KEY`.
+    - `docs/operations/RUNBOOK.md`, `docs/deployment/VM_AUTODEPLOY.md` cập nhật hướng dẫn tương ứng.
+- Verify thực thi local:
+  - Stability gate:
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - `bash -n scripts/deploy/deploy-from-runner.sh` ✅
+  - `bash -n scripts/deploy/smoke-crm-conversations.sh` ✅
+  - `bash -n scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+  - `docker compose config` ✅
+  - `docker compose build web` ✅
+  - `scripts/deploy/healthcheck.sh` ✅
+  - `docker compose up -d meilisearch` ✅
+  - `POST /api/v1/settings/search/reindex` (`entity=all`, role `ADMIN`) ✅
+    - indexed: `customers=122`, `orders=140`, `products=120`
+  - `scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+  - `scripts/deploy/smoke-crm-conversations.sh`:
+    - với full AI check: ❌ (môi trường local thiếu `AI_OPENAI_COMPAT_*`)
+    - với `SMOKE_SKIP_AI_QUALITY=true SMOKE_SKIP_OA_OUTBOUND=true`: ✅
+- Blocker còn lại:
+  - chưa trigger được workflow `deploy-vm` thật do môi trường hiện tại không có `gh` CLI/token GitHub.
+  - cần thao tác từ GitHub UI (workflow_dispatch) hoặc máy có auth GitHub.
+
+## Session Update 2026-04-05 12:23 +07 (Assistant payload normalize + gate verify lại)
+- Theo yêu cầu user “tiếp tục”, mở rộng bước normalize payload cho lớp Assistant để bỏ parse thủ công `payload.items`.
+- Đã sửa:
+  - `apps/web/lib/assistant-api.ts`
+    - thêm `normalizeAssistantListResponse<T>(...)`.
+    - các API list (`knowledge sources/documents`, `runs`, `channels`) trả payload đã normalize.
+  - `apps/web/components/assistant/assistant-runs-board.tsx`
+  - `apps/web/components/assistant/assistant-knowledge-board.tsx`
+  - `apps/web/components/assistant/assistant-channels-board.tsx`
+- Lưu ý verify e2e:
+  - lần chạy đầu fail do Playwright reuse server khác ở port `3100` (không phải app ERP).
+  - rerun đúng bằng `CI=1 PLAYWRIGHT_PORT=3111` và pass đầy đủ.
+- Verify:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=3111 npm run test:e2e:web -- apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts` ✅ (`4 passed`)
+  - Backend/infra gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'` ✅
+    - `lsof -nP -iTCP -sTCP:LISTEN | rg ':(5432|5433|6379|7700)\\b'` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `set -a; source .env; set +a; npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/sales.service.test.ts test/scm.api-flow.test.ts` ✅ (`21 passed`)
+
+## Session Update 2026-04-05 12:11 +07 (Mở rộng normalize list parser cho toàn bộ màn hình còn lại)
+- Theo yêu cầu user “tiếp tục”, mở rộng coverage normalize payload cho các màn hình chưa chuyển sang helper chung.
+- Mục tiêu:
+  - loại bỏ parse thủ công `payload.items`/`Array.isArray(payload)` rải rác,
+  - đảm bảo tương thích nhất quán khi API trả list dạng array hoặc `{ items: [...] }`, kể cả wrapped entity flow.
+- Đã sửa:
+  - `apps/web/components/crm-conversations-workbench.tsx`
+  - `apps/web/components/audit-operations-board.tsx`
+  - `apps/web/components/workflows-operations-board.tsx`
+  - `apps/web/components/settings-custom-fields-page.tsx`
+  - `apps/web/components/settings-center.tsx`
+  - `apps/web/components/hr-attendance-board.tsx`
+  - `apps/web/components/hr-goals-tracking-board.tsx`
+- Cách làm:
+  - thay parse list thủ công sang `normalizeListPayload(...)` từ `api-client`.
+  - giữ nguyên nghiệp vụ và contract UI hiện tại (chỉ đổi lớp normalize).
+- Verify:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4302 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Backend/infra gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/sales.service.test.ts test/scm.api-flow.test.ts test/workflows.service.test.ts test/reports.service.test.ts` ✅ (`28 passed`)
+
+## Session Update 2026-04-05 10:16 +07 (Frontend normalize wrapped entities cho toàn module boards)
+- Theo yêu cầu user “tiếp tục”, triển khai bước tiếp theo để tương thích response `wrapped custom-fields` trên frontend các module chính.
+- Mục tiêu:
+  - không đi theo rollout nhánh/module lẻ,
+  - áp cơ chế normalize dùng chung để CRM/HR/Finance/Sales/SCM đọc được cả payload flat và wrapped.
+- Đã sửa:
+  - `apps/web/lib/api-client.ts`
+    - thêm unwrap helper cho entity dạng `{ id, base, customFields }`.
+    - `normalizeListPayload` và `normalizeObjectPayload` giờ tự normalize từng row/object.
+  - chuyển các board sang helper normalize chung:
+    - `apps/web/components/crm-customers-board.tsx`
+    - `apps/web/components/crm-operations-board.tsx`
+    - `apps/web/components/hr-operations-board.tsx`
+    - `apps/web/components/finance-operations-board.tsx`
+    - `apps/web/components/sales-operations-board.tsx`
+    - `apps/web/components/scm-operations-board.tsx`
+- Không thay đổi business logic backend; chỉ chuẩn hóa parsing payload phía web.
+- Verify:
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4302 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Backend/infra gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/sales.service.test.ts test/scm.api-flow.test.ts` ✅ (`21 passed`)
+
+## Session Update 2026-04-05 09:50 +07 (SCM regression fix + module sweep)
+- Theo yêu cầu user, tiếp tục nhiệm vụ sau khi bật semantics IAM v2 all-modules:
+  - chạy regression cụm module chính để phát hiện điểm vỡ.
+- Root cause:
+  - `test/scm.api-flow.test.ts` fail vì API PO response đang ở dạng wrapped custom-fields (`{ id, base, customFields }`) nên assertion cũ đọc shape phẳng bị `undefined`.
+- Đã sửa:
+  - cập nhật test helper unwrap response entity để tương thích cả 2 shape (flat + wrapped):
+    - `apps/api/test/scm.api-flow.test.ts`
+  - không thay đổi business logic SCM.
+- Verify:
+  - `npm run test --workspace @erp/api -- test/scm.api-flow.test.ts` ✅
+  - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/sales.service.test.ts test/hr.api-flow.test.ts test/finance.service.test.ts test/scm.api-flow.test.ts test/reports.service.test.ts test/workflows.service.test.ts` ✅
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/settings-policy.service.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/scm.api-flow.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 09:30 +07 (IAM v2 áp toàn bộ module)
+- User yêu cầu không rollout theo nhánh/module list, muốn áp toàn hệ thống.
+- Đã chuẩn hóa semantics `iamV2.enforcementModules`:
+  - `[]` = áp dụng cho toàn bộ module.
+  - `['ALL']` hoặc `['*']` = canonical về `[]` (toàn bộ module).
+  - danh sách module cụ thể vẫn được giữ để tương thích rollout từng phần.
+- Files cập nhật:
+  - `apps/api/src/modules/settings/settings-policy.service.ts`
+  - `apps/api/src/common/settings/runtime-settings.service.ts`
+  - `apps/api/src/common/auth/permission.guard.ts`
+  - `apps/api/test/settings-policy.service.test.ts`
+  - `apps/api/test/permission.guard.test.ts`
+- ADR mới:
+  - `docs/decisions/ADR-045-IAMV2-ALL-MODULE-ENFORCEMENT.md`
+- Verify:
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/settings-policy.service.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-05 09:12 +07 (IAM v2 groundwork: runtime policy + schema + guard shadow/enforce)
+- User yêu cầu tiếp tục triển khai sau khi chốt design `ADMIN/USER + scope`.
+- Đã triển khai backend foundation theo hướng additive, không cắt logic cũ:
+  - runtime/policy:
+    - thêm `access_security.iamV2` với safe defaults:
+      - `enabled=false`
+      - `mode=SHADOW`
+      - `enforcementModules=[]`
+      - `protectAdminCore=true`
+      - `denySelfElevation=true`
+    - parse/normalize/validate ở:
+      - `apps/api/src/modules/settings/settings-policy.types.ts`
+      - `apps/api/src/modules/settings/settings-policy.service.ts`
+      - `apps/api/src/common/settings/runtime-settings.service.ts`
+    - test cập nhật:
+      - `apps/api/test/settings-policy.service.test.ts`
+  - schema IAM v2:
+    - thêm enums/models trong `apps/api/prisma/schema.prisma`.
+    - tạo migration additive:
+      - `apps/api/prisma/migrations/20260405090049_add_iam_v2_tables/migration.sql`
+    - bảng mới:
+      - `iam_action_grants`
+      - `iam_capability_grants`
+      - `iam_user_scope_override`
+      - `iam_permission_ceiling`
+      - `iam_resolved_scope_members`
+      - `iam_record_access_grants`
+  - IAM core services:
+    - `apps/api/src/modules/iam/iam.types.ts`
+    - `apps/api/src/modules/iam/iam-access.service.ts`
+    - `apps/api/src/modules/iam/iam-scope.service.ts`
+    - `apps/api/src/modules/iam/iam-ceiling.service.ts`
+    - `apps/api/src/modules/iam/iam-shadow-log.service.ts`
+    - `apps/api/src/modules/iam/iam.module.ts`
+    - unit tests:
+      - `apps/api/test/iam-access.service.test.ts`
+      - `apps/api/test/iam-scope.service.test.ts`
+  - guard integration:
+    - `apps/api/src/common/auth/permission.guard.ts`
+      - giữ legacy decision path,
+      - thêm IAM v2 `SHADOW/ENFORCE` theo module list,
+      - shadow mismatch logger,
+      - `ENFORCE` deny theo IAM decision.
+    - test cập nhật:
+      - `apps/api/test/permission.guard.test.ts`
+  - app wiring:
+    - thêm `IamModule` vào `apps/api/src/app.module.ts`
+- ADR mới:
+  - `docs/decisions/ADR-044-ADMIN-USER-IAM-SCOPE-HYBRID.md`
+- Verify theo System Stability Gate (phạm vi backend):
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api` ✅ (apply migration IAM v2)
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/iam-access.service.test.ts test/iam-scope.service.test.ts test/settings-policy.service.test.ts` ✅ (`27 passed`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+
+## Session Update 2026-04-05 07:24 +07 (Staff-first hardening acceptance + e2e fix)
+- User yêu cầu triển khai plan hardening quyền frontend toàn ERP:
+  - chặn route không quyền và redirect Dashboard,
+  - ẩn menu/link/card không quyền,
+  - ẩn hoàn toàn action không quyền.
+- Trạng thái code hiện tại:
+  - policy engine frontend + provider quyền tập trung đã được tích hợp trong app shell và các board/page trọng yếu.
+  - route/menu/action gating đang chạy theo `canRoute`, `canModule`, `canAction` và fail-safe cho module nhạy cảm.
+- Session này chốt phần còn thiếu để pass nghiệm thu:
+  - sửa spec e2e `apps/web/e2e/tests/access-policy-hardening.spec.ts`:
+    - bổ sung mock `domainStates` cho `/settings/center`,
+    - sửa mock CRM + assertions theo UI thật của `/modules/crm` (`CrmCustomersBoard`),
+    - xác nhận action visibility theo role:
+      - STAFF: không có create/update/delete action,
+      - MANAGER: có create/update, không có delete,
+      - ADMIN: có đầy đủ action.
+  - giữ negative check không có chuỗi lỗi 403 thô trong luồng chuẩn.
+- ADR:
+  - không phát sinh quyết định kiến trúc mới trong session này.
+- Verify theo System Stability Gate:
+  - `docker compose up -d postgres` ✅ (khắc phục trạng thái DB local trước khi verify)
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@localhost:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`12 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4302 npx playwright test apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
 
 ## Session Update 2026-04-04 21:45 +07 (Position detail dedicated page)
 - User phản hồi UX: click tên vị trí vẫn phải cuộn dài mới xem được chi tiết, yêu cầu mở tab/trang mới cho vị trí đã chọn.

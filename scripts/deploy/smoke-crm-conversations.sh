@@ -19,6 +19,7 @@ SMOKE_OA_OUTBOUND_URL="${SMOKE_OA_OUTBOUND_URL:-${ZALO_OA_OUTBOUND_URL:-}}"
 SMOKE_OA_ACCESS_TOKEN="${SMOKE_OA_ACCESS_TOKEN:-${ZALO_OA_ACCESS_TOKEN:-}}"
 SMOKE_OA_API_BASE_URL="${SMOKE_OA_API_BASE_URL:-${ZALO_OA_API_BASE_URL:-https://openapi.zalo.me/v3.0/oa}}"
 SMOKE_SKIP_OA_OUTBOUND="${SMOKE_SKIP_OA_OUTBOUND:-false}"
+SMOKE_SKIP_AI_QUALITY="${SMOKE_SKIP_AI_QUALITY:-false}"
 
 TMP_DIR="$(mktemp -d)"
 LAST_STATUS=""
@@ -151,7 +152,8 @@ http_request() {
   fi
 
   local header
-  for header in "${extra_headers[@]}"; do
+  for header in "${extra_headers[@]-}"; do
+    [ -n "$header" ] || continue
     curl_cmd+=(-H "$header")
   done
 
@@ -332,7 +334,13 @@ main() {
   log "API_BASE_URL=$API_BASE_URL"
   prepare_auth_token
   check_webhook_signature_path
-  run_ai_quality_smoke
+  local skip_ai
+  skip_ai="$(echo "$SMOKE_SKIP_AI_QUALITY" | tr '[:upper:]' '[:lower:]')"
+  if [ "$skip_ai" = "true" ]; then
+    log "SKIP AI quality check theo cấu hình SMOKE_SKIP_AI_QUALITY=true."
+  else
+    run_ai_quality_smoke
+  fi
   check_oa_outbound
   log "CRM Conversations smoke checks completed."
 }
