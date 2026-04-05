@@ -44,6 +44,7 @@ const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as 
 const SETTINGS_USER_ID_PATTERN = /^[A-Za-z0-9._-]{2,80}$/;
 const SETTINGS_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SETTINGS_FINANCE_PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
 
 type HrAppendixFieldType = (typeof HR_APPENDIX_FIELD_TYPES)[number];
 type HrAppendixFieldAggregator = (typeof HR_APPENDIX_AGGREGATORS)[number];
@@ -1413,10 +1414,16 @@ export class SettingsPolicyService {
       const passwordPolicy = this.ensureRecord(security.passwordPolicy);
       const loginPolicy = this.ensureRecord(security.loginPolicy);
       const permissionPolicy = this.ensureRecord(security.permissionPolicy);
+      const iamV2 = this.ensureRecord(security.iamV2);
       const auditViewPolicy = this.normalizeAuditViewPolicy(security.auditViewPolicy);
       const conflictPolicy = this.cleanString(permissionPolicy.conflictPolicy).toUpperCase() === 'ALLOW_OVERRIDES'
         ? 'ALLOW_OVERRIDES'
         : 'DENY_OVERRIDES';
+      const iamV2Mode = this.cleanString(iamV2.mode).toUpperCase() === 'OFF'
+        ? 'OFF'
+        : this.cleanString(iamV2.mode).toUpperCase() === 'ENFORCE'
+          ? 'ENFORCE'
+          : 'SHADOW';
       return {
         ...security,
         sessionTimeoutMinutes: this.toInt(security.sessionTimeoutMinutes, 480, 5, 1440),
@@ -1426,6 +1433,13 @@ export class SettingsPolicyService {
           conflictPolicy,
           superAdminIds: this.normalizeUserIdList(permissionPolicy.superAdminIds),
           superAdminEmails: this.normalizeEmailList(permissionPolicy.superAdminEmails)
+        },
+        iamV2: {
+          enabled: this.toBool(iamV2.enabled, false),
+          mode: iamV2Mode,
+          enforcementModules: this.normalizeIamV2EnforcementModules(iamV2.enforcementModules),
+          protectAdminCore: this.toBool(iamV2.protectAdminCore, true),
+          denySelfElevation: this.toBool(iamV2.denySelfElevation, true)
         },
         passwordPolicy: {
           ...passwordPolicy,
@@ -1549,9 +1563,29 @@ export class SettingsPolicyService {
         errors.push('sessionTimeoutMinutes phải trong [5..1440].');
       }
       const permissionPolicy = this.ensureRecord(value.permissionPolicy);
+      const iamV2 = this.ensureRecord(value.iamV2);
       const conflictPolicy = this.cleanString(permissionPolicy.conflictPolicy).toUpperCase();
       if (conflictPolicy && conflictPolicy !== 'DENY_OVERRIDES' && conflictPolicy !== 'ALLOW_OVERRIDES') {
         errors.push('permissionPolicy.conflictPolicy chỉ nhận DENY_OVERRIDES hoặc ALLOW_OVERRIDES.');
+      }
+      const iamV2Mode = this.cleanString(iamV2.mode).toUpperCase();
+      if (iamV2Mode && iamV2Mode !== 'OFF' && iamV2Mode !== 'SHADOW' && iamV2Mode !== 'ENFORCE') {
+        errors.push('iamV2.mode chỉ nhận OFF hoặc SHADOW hoặc ENFORCE.');
+      }
+      const iamV2EnforcementModules = this.toStringArray(iamV2.enforcementModules);
+      const iamV2AllModules = iamV2EnforcementModules.some((item) => this.isIamV2AllModulesToken(item));
+      const invalidIamV2Modules = iamV2EnforcementModules
+        .map((item) => item.toLowerCase())
+        .filter((item) => !this.isIamV2AllModulesToken(item))
+        .filter((item) => !RUNTIME_TOGGLABLE_MODULES.has(item));
+      if (invalidIamV2Modules.length > 0) {
+        errors.push(`iamV2.enforcementModules có module không hợp lệ: ${invalidIamV2Modules.join(', ')}.`);
+      }
+      if (iamV2AllModules && iamV2EnforcementModules.length > 1) {
+        warnings.push('iamV2.enforcementModules chứa token ALL, các module cụ thể sẽ bị bỏ qua.');
+      }
+      if (this.toBool(iamV2.enabled, false) && iamV2Mode === 'OFF') {
+        warnings.push('iamV2.enabled=true nhưng iamV2.mode=OFF, enforcement sẽ không chạy.');
       }
       const invalidLegacySuperAdminIds = this.collectInvalidUserIds(value.superAdminIds);
       if (invalidLegacySuperAdminIds.length > 0) {
@@ -2301,6 +2335,18 @@ export class SettingsPolicyService {
     }
 
     return normalized;
+  }
+
+  private normalizeIamV2EnforcementModules(value: unknown) {
+    const requested = this.toStringArray(value).map((item) => item.toLowerCase());
+    if (requested.some((item) => this.isIamV2AllModulesToken(item))) {
+      return [] as string[];
+    }
+    return this.normalizeEnabledModules(requested, { includeAuditFallback: false });
+  }
+
+  private isIamV2AllModulesToken(value: string) {
+    return IAM_V2_ALL_MODULE_TOKENS.has(String(value ?? '').trim().toLowerCase());
   }
 
   private hashJson(value: unknown) {

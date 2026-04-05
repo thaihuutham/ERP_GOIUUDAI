@@ -6,6 +6,7 @@ import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
+import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
 import { ERP_MODULES } from '@erp/shared';
 import { GroupedSidebar } from './settings-center/grouped-sidebar';
@@ -1670,6 +1671,7 @@ function toSettingsFriendlyError(error: unknown, fallbackMessage: string) {
 
 export function SettingsCenter() {
   const { role } = useUserRole();
+  const { canAction } = useAccessPolicy();
   const [center, setCenter] = useState<CenterPayload | null>(null);
   const [selectedDomain, setSelectedDomain] = useState<DomainKey>('org_profile');
   const [advancedMode, setAdvancedMode] = useState<boolean>(resolveDefaultAdvancedMode(role));
@@ -1789,7 +1791,7 @@ export function SettingsCenter() {
     () => mapFieldErrors(getDomainFields(selectedDomain), validationErrors),
     [selectedDomain, validationErrors]
   );
-  const canManagePositionCatalog = normalizedRole === 'ADMIN';
+  const canManagePositionCatalog = canAction('settings', 'UPDATE');
   const filteredPositions = useMemo(() => {
     const keyword = positionSearch.trim().toLowerCase();
     if (!keyword) {
@@ -1916,7 +1918,7 @@ export function SettingsCenter() {
     ]);
 
     const iamItems = normalizeListPayload(iamPayload);
-    const orgRows = Array.isArray(orgPayload.items) ? (orgPayload.items as Record<string, unknown>[]) : [];
+    const orgRows = normalizeListPayload(orgPayload);
     const orgRoots = Array.isArray(orgPayload.tree) ? (orgPayload.tree as Record<string, unknown>[]) : [];
     const positionItems = normalizePositionRows(positionPayload);
 

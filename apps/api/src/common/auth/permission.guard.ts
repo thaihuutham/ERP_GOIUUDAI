@@ -4,19 +4,45 @@ import { Reflector } from '@nestjs/core';
 import { PermissionAction, PermissionEffect } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AUTH_USER_CONTEXT_KEY } from '../request/request.constants';
+import { AUTH_USER_CONTEXT_KEY, IAM_SCOPE_CONTEXT_KEY } from '../request/request.constants';
 import { TENANT_CONTEXT_KEY } from '../tenant/tenant.constants';
 import { resolveTenantRuntimeConfig } from '../tenant/tenant-context.util';
 import { IS_PUBLIC_KEY } from './auth.constants';
 import { AuthUser } from './auth-user.type';
 import { resolveModuleKeyFromPath, resolvePermissionActionFromRequest } from './permission.util';
+import { IamAccessService } from '../../modules/iam/iam-access.service';
+import { IamShadowLogService } from '../../modules/iam/iam-shadow-log.service';
+import { IamScopeService } from '../../modules/iam/iam-scope.service';
 
 type PermissionPolicyRuntime = {
   enabled: boolean;
   conflictPolicy: string;
   superAdminIds: Set<string>;
   superAdminEmails: Set<string>;
+  iamV2: {
+    enabled: boolean;
+    mode: 'OFF' | 'SHADOW' | 'ENFORCE';
+    enforcementModules: Set<string>;
+    protectAdminCore: boolean;
+    denySelfElevation: boolean;
+  };
 };
+
+type LegacyPermissionDecision = {
+  allowed: boolean;
+  reason: string;
+};
+
+type IamScopeContext = {
+  enabled: boolean;
+  mode: 'OFF' | 'SHADOW' | 'ENFORCE';
+  companyWide: boolean;
+  actorIds: string[];
+  employeeIds: string[];
+  orgUnitIds: string[];
+};
+
+const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
 
 @Injectable()
 export class PermissionGuard implements CanActivate {
@@ -27,7 +53,10 @@ export class PermissionGuard implements CanActivate {
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(ConfigService) private readonly config: ConfigService,
     @Inject(ClsService) private readonly cls: ClsService,
-    @Inject(PrismaService) private readonly prisma: PrismaService
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(IamAccessService) private readonly iamAccess: IamAccessService,
+    @Inject(IamShadowLogService) private readonly iamShadowLog: IamShadowLogService,
+    @Inject(IamScopeService) private readonly iamScopeService: IamScopeService
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -37,12 +66,14 @@ export class PermissionGuard implements CanActivate {
       context.getClass()
     ]);
     if (isPublic) {
+      this.setIamScopeContext(null);
       return true;
     }
 
     const defaultAuthEnabled = runtime.singleTenantMode ? 'false' : 'true';
     const authEnabled = this.config.get<string>('AUTH_ENABLED', defaultAuthEnabled).toLowerCase() === 'true';
     if (!authEnabled) {
+      this.setIamScopeContext(null);
       return true;
     }
 
@@ -55,6 +86,7 @@ export class PermissionGuard implements CanActivate {
     const path = String(request.originalUrl ?? request.url ?? '');
     const moduleKey = resolveModuleKeyFromPath(path);
     if (!moduleKey || moduleKey === 'auth' || moduleKey === 'health') {
+      this.setIamScopeContext(null);
       return true;
     }
 
@@ -64,61 +96,106 @@ export class PermissionGuard implements CanActivate {
     const role = this.cleanString(authUser.role).toUpperCase();
     if (!userId) {
       // JwtAuthGuard + @Roles will handle authorization fallback.
+      this.setIamScopeContext(null);
       return true;
     }
     if (role === 'ADMIN') {
+      this.setIamScopeContext({
+        enabled: true,
+        mode: 'ENFORCE',
+        companyWide: true,
+        actorIds: [userId],
+        employeeIds: [],
+        orgUnitIds: []
+      });
       return true;
     }
 
     const tenantId = this.cleanString(this.cls.get(TENANT_CONTEXT_KEY)) || this.prisma.getTenantId();
     const policy = await this.getPermissionPolicy(tenantId);
-    if (!policy.enabled) {
-      return true;
-    }
 
     if (policy.superAdminIds.has(userId) || (email && policy.superAdminEmails.has(email))) {
+      this.setIamScopeContext({
+        enabled: true,
+        mode: 'ENFORCE',
+        companyWide: true,
+        actorIds: [userId],
+        employeeIds: [],
+        orgUnitIds: []
+      });
       return true;
     }
 
     const action = resolvePermissionActionFromRequest(request.method, path);
     const positionId = await this.resolvePositionId(authUser);
+    const legacyDecision = await this.resolveLegacyDecision({
+      policy,
+      userId,
+      positionId,
+      moduleKey,
+      action
+    });
 
-    const [positionRules, userOverrides] = await Promise.all([
-      positionId
-        ? this.prisma.client.positionPermissionRule.findMany({
-            where: {
-              positionId,
-              moduleKey,
-              action
-            }
-          })
-        : Promise.resolve([]),
-      this.prisma.client.userPermissionOverride.findMany({
-        where: {
+    const shouldApplyIamV2 = this.shouldApplyIamV2ForModule(policy, moduleKey);
+    if (shouldApplyIamV2) {
+      const iamDecision = await this.iamAccess.resolveActionDecision(
+        {
+          tenantId,
           userId,
-          moduleKey,
-          action
-        }
-      })
-    ]);
+          role,
+          email,
+          employeeId: this.cleanString(authUser.employeeId),
+          positionId
+        },
+        moduleKey,
+        action
+      );
 
-    const effectiveRules = [...positionRules, ...userOverrides];
-    if (effectiveRules.length === 0) {
-      // No explicit granular policy => fallback to existing @Roles behavior.
-      return true;
+      if (policy.iamV2.mode === 'ENFORCE') {
+        if (!iamDecision.allowed) {
+          this.setIamScopeContext(null);
+          throw new ForbiddenException(`Bạn không có quyền ${action} cho module ${moduleKey}.`);
+        }
+        const scopeAccess = await this.iamScopeService.resolveScopeAccess({
+          tenantId,
+          userId,
+          role,
+          email,
+          employeeId: this.cleanString(authUser.employeeId),
+          positionId
+        });
+        this.setIamScopeContext({
+          enabled: true,
+          mode: 'ENFORCE',
+          companyWide: scopeAccess.companyWide,
+          actorIds: scopeAccess.actorIds,
+          employeeIds: scopeAccess.employeeIds,
+          orgUnitIds: scopeAccess.orgUnitIds
+        });
+        return true;
+      }
+
+      this.iamShadowLog.logLegacyVsIam({
+        tenantId,
+        userId,
+        moduleKey,
+        action,
+        path,
+        legacyAllowed: legacyDecision.allowed,
+        iamAllowed: iamDecision.allowed,
+        mode: 'SHADOW',
+        reasonLegacy: legacyDecision.reason,
+        reasonIam: iamDecision.reason
+      });
+      this.setIamScopeContext(null);
     }
 
-    const hasDeny = effectiveRules.some((rule) => rule.effect === PermissionEffect.DENY);
-    if (hasDeny) {
+    if (!legacyDecision.allowed) {
+      this.setIamScopeContext(null);
       throw new ForbiddenException(`Bạn không có quyền ${action} cho module ${moduleKey}.`);
     }
-
-    const hasAllow = effectiveRules.some((rule) => rule.effect === PermissionEffect.ALLOW);
-    if (hasAllow) {
-      return true;
-    }
-
-    throw new ForbiddenException(`Bạn không có quyền ${action} cho module ${moduleKey}.`);
+    this.setIamScopeContext(null);
+    return true;
   }
 
   private async resolvePositionId(authUser: AuthUser) {
@@ -152,6 +229,7 @@ export class PermissionGuard implements CanActivate {
 
     const payload = this.ensureRecord(row?.settingValue);
     const permissionPolicy = this.ensureRecord(payload.permissionPolicy);
+    const iamV2Policy = this.ensureRecord(payload.iamV2);
     const legacySuperAdminIds = this.toStringArray(payload.superAdminIds);
     const policySuperAdminIds = this.toStringArray(permissionPolicy.superAdminIds);
     const policySuperAdminEmails = this.toStringArray(permissionPolicy.superAdminEmails).map((item) => item.toLowerCase());
@@ -160,12 +238,33 @@ export class PermissionGuard implements CanActivate {
     const enabled = enabledFromEnv
       ? this.toBool(enabledFromEnv, false)
       : this.toBool(permissionPolicy.enabled, false);
+    const iamV2ModeRaw = this.cleanString(iamV2Policy.mode).toUpperCase();
+    const iamV2Mode = iamV2ModeRaw === 'OFF'
+      ? 'OFF'
+      : iamV2ModeRaw === 'ENFORCE'
+        ? 'ENFORCE'
+        : 'SHADOW';
+    const iamV2EnabledFromEnv = this.config.get<string>('IAM_V2_ENABLED');
+    const iamV2Enabled = iamV2EnabledFromEnv
+      ? this.toBool(iamV2EnabledFromEnv, false)
+      : this.toBool(iamV2Policy.enabled, false);
+    const enforcementModuleList = this.toStringArray(iamV2Policy.enforcementModules).map((item) => item.toLowerCase());
+    const enforcementModules = enforcementModuleList.some((item) => IAM_V2_ALL_MODULE_TOKENS.has(item))
+      ? new Set<string>()
+      : new Set(enforcementModuleList);
 
     const value: PermissionPolicyRuntime = {
       enabled,
       conflictPolicy: this.cleanString(permissionPolicy.conflictPolicy).toUpperCase() || 'DENY_OVERRIDES',
       superAdminIds: new Set([...legacySuperAdminIds, ...policySuperAdminIds].map((item) => item.trim()).filter(Boolean)),
-      superAdminEmails: new Set(policySuperAdminEmails.filter(Boolean))
+      superAdminEmails: new Set(policySuperAdminEmails.filter(Boolean)),
+      iamV2: {
+        enabled: iamV2Enabled,
+        mode: iamV2Mode,
+        enforcementModules,
+        protectAdminCore: this.toBool(iamV2Policy.protectAdminCore, true),
+        denySelfElevation: this.toBool(iamV2Policy.denySelfElevation, true)
+      }
     };
 
     this.policyCache.set(tenantId, {
@@ -174,6 +273,93 @@ export class PermissionGuard implements CanActivate {
     });
 
     return value;
+  }
+
+  private shouldApplyIamV2ForModule(policy: PermissionPolicyRuntime, moduleKey: string) {
+    if (!policy.iamV2.enabled || policy.iamV2.mode === 'OFF') {
+      return false;
+    }
+    if (policy.iamV2.enforcementModules.size === 0) {
+      return true;
+    }
+    return policy.iamV2.enforcementModules.has(moduleKey.toLowerCase());
+  }
+
+  private async resolveLegacyDecision(params: {
+    policy: PermissionPolicyRuntime;
+    userId: string;
+    positionId: string;
+    moduleKey: string;
+    action: PermissionAction;
+  }): Promise<LegacyPermissionDecision> {
+    if (!params.policy.enabled) {
+      return {
+        allowed: true,
+        reason: 'POLICY_DISABLED'
+      };
+    }
+
+    const [positionRules, userOverrides] = await Promise.all([
+      params.positionId
+        ? this.prisma.client.positionPermissionRule.findMany({
+            where: {
+              positionId: params.positionId,
+              moduleKey: params.moduleKey,
+              action: params.action
+            }
+          })
+        : Promise.resolve([]),
+      this.prisma.client.userPermissionOverride.findMany({
+        where: {
+          userId: params.userId,
+          moduleKey: params.moduleKey,
+          action: params.action
+        }
+      })
+    ]);
+
+    const effectiveRules = [...positionRules, ...userOverrides];
+    if (effectiveRules.length === 0) {
+      return {
+        allowed: true,
+        reason: 'NO_RULES'
+      };
+    }
+
+    const hasAllow = effectiveRules.some((rule) => rule.effect === PermissionEffect.ALLOW);
+    const hasDeny = effectiveRules.some((rule) => rule.effect === PermissionEffect.DENY);
+
+    if (hasAllow && hasDeny) {
+      if (params.policy.conflictPolicy === 'ALLOW_OVERRIDES') {
+        return {
+          allowed: true,
+          reason: 'ALLOW_OVERRIDES'
+        };
+      }
+      return {
+        allowed: false,
+        reason: 'DENY_OVERRIDES'
+      };
+    }
+
+    if (hasDeny) {
+      return {
+        allowed: false,
+        reason: 'DENY_RULE'
+      };
+    }
+
+    if (hasAllow) {
+      return {
+        allowed: true,
+        reason: 'ALLOW_RULE'
+      };
+    }
+
+    return {
+      allowed: false,
+      reason: 'NO_ALLOW'
+    };
   }
 
   private ensureRecord(value: unknown): Record<string, unknown> {
@@ -208,5 +394,9 @@ export class PermissionGuard implements CanActivate {
       }
     }
     return fallback;
+  }
+
+  private setIamScopeContext(value: IamScopeContext | null) {
+    this.cls.set(IAM_SCOPE_CONTEXT_KEY, value);
   }
 }

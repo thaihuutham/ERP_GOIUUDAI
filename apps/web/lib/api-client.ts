@@ -13,6 +13,8 @@ export type ApiRequestOptions = {
   skipAuth?: boolean;
 };
 
+type UnknownRecord = Record<string, unknown>;
+
 function buildUrl(path: string, query?: ApiRequestOptions['query']) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const url = new URL(`${API_BASE_URL}${normalizedPath}`);
@@ -112,6 +114,34 @@ function safeJsonParse(value: string) {
   }
 }
 
+function isRecord(value: unknown): value is UnknownRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function unwrapCustomFieldsEntity(value: unknown): UnknownRecord | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const base = isRecord(value.base) ? value.base : null;
+  const customFields = isRecord(value.customFields) ? value.customFields : null;
+
+  if (!base && !customFields) {
+    return value;
+  }
+
+  const normalized: UnknownRecord = {
+    ...(customFields ?? {}),
+    ...(base ?? {})
+  };
+
+  if (normalized.id === undefined && value.id !== undefined) {
+    normalized.id = value.id;
+  }
+
+  return normalized;
+}
+
 function extractApiErrorMessage(payload: unknown): string | null {
   if (!payload) {
     return null;
@@ -155,14 +185,19 @@ function extractApiErrorMessage(payload: unknown): string | null {
 }
 
 export function normalizeListPayload(payload: unknown): Record<string, unknown>[] {
+  const normalizeRows = (rows: unknown[]) =>
+    rows
+      .map((item) => unwrapCustomFieldsEntity(item))
+      .filter((item): item is Record<string, unknown> => item !== null);
+
   if (Array.isArray(payload)) {
-    return payload as Record<string, unknown>[];
+    return normalizeRows(payload);
   }
 
-  if (payload && typeof payload === 'object') {
+  if (isRecord(payload)) {
     const objectPayload = payload as Record<string, unknown>;
     if (Array.isArray(objectPayload.items)) {
-      return objectPayload.items as Record<string, unknown>[];
+      return normalizeRows(objectPayload.items);
     }
   }
 
@@ -170,9 +205,9 @@ export function normalizeListPayload(payload: unknown): Record<string, unknown>[
 }
 
 export function normalizeObjectPayload(payload: unknown): Record<string, unknown> | null {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+  if (!isRecord(payload)) {
     return null;
   }
 
-  return payload as Record<string, unknown>;
+  return unwrapCustomFieldsEntity(payload);
 }

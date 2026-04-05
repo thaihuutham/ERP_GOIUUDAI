@@ -12,12 +12,11 @@ import {
   CheckCircle2,
   Trash2
 } from 'lucide-react';
-import { FormEvent, useEffect, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
@@ -126,9 +125,12 @@ function buildInitialPaymentForm(): PaymentFormState {
 }
 
 export function FinanceOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'finance');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('finance');
+  const canCreate = canAction('finance', 'CREATE');
+  const canApprove = canAction('finance', 'APPROVE');
+  const canUpdate = canAction('finance', 'UPDATE');
+  const canDelete = canAction('finance', 'DELETE');
 
   const [invoices, setInvoices] = useState<FinanceInvoice[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -158,7 +160,7 @@ export function FinanceOperationsBoard() {
       const payload = await apiRequest<any>('/finance/invoices', {
         query: { q: search, status: status !== 'ALL' ? status : undefined, limit: 200 }
       });
-      setInvoices(Array.isArray(payload) ? payload : payload?.items || []);
+      setInvoices(normalizeListPayload(payload) as FinanceInvoice[]);
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải hóa đơn');
@@ -181,7 +183,7 @@ export function FinanceOperationsBoard() {
     setIsLoadingAllocations(true);
     try {
       const payload = await apiRequest<any>(`/finance/invoices/${invoiceId}/allocations`);
-      setAllocations(Array.isArray(payload) ? payload : []);
+      setAllocations(normalizeListPayload(payload) as PaymentAllocation[]);
       setErrorMessage(null);
     } catch (error) {
       setAllocations([]);
@@ -322,61 +324,68 @@ export function FinanceOperationsBoard() {
     return normalized;
   };
 
-  const bulkActions: StandardTableBulkAction<FinanceInvoice>[] = canMutate
-    ? [
-        {
-          key: 'bulk-issue-invoices',
-          label: 'Issue',
-          tone: 'primary',
-          execute: async (selectedRows) =>
-            runFinanceBulkAction('Phát hành hóa đơn', selectedRows, async (invoice) => {
-              if (String(invoice.status || '').toUpperCase() !== 'DRAFT') {
-                throw new Error(`Hóa đơn ${invoice.invoiceNo || invoice.id.slice(-8)} không ở trạng thái DRAFT.`);
-              }
-              await apiRequest(`/finance/invoices/${invoice.id}/issue`, {
-                method: 'POST',
-                body: { note: 'Bulk issue từ Operations Board' }
-              });
-            })
-        },
-        {
-          key: 'bulk-approve-invoices',
-          label: 'Approve',
-          tone: 'ghost',
-          execute: async (selectedRows) =>
-            runFinanceBulkAction('Phê duyệt hóa đơn', selectedRows, async (invoice) => {
-              if (String(invoice.status || '').toUpperCase() !== 'PENDING') {
-                throw new Error(`Hóa đơn ${invoice.invoiceNo || invoice.id.slice(-8)} không ở trạng thái PENDING.`);
-              }
-              await apiRequest(`/finance/invoices/${invoice.id}/approve`, {
-                method: 'POST',
-                body: { note: 'Bulk approve từ Operations Board' }
-              });
-            })
-        },
-        {
-          key: 'bulk-archive-invoices',
-          label: 'Archive',
-          tone: 'danger',
-          confirmMessage: (rows) => `Lưu trữ ${rows.length} hóa đơn đã chọn?`,
-          execute: async (selectedRows) =>
-            runFinanceBulkAction('Lưu trữ hóa đơn', selectedRows, async (invoice) => {
-              await apiRequest(`/finance/invoices/${invoice.id}`, {
-                method: 'DELETE'
-              });
-            })
-        }
-      ]
-    : [];
+  const bulkActions = useMemo<StandardTableBulkAction<FinanceInvoice>[]>(() => {
+    const actions: StandardTableBulkAction<FinanceInvoice>[] = [];
+
+    if (canApprove) {
+      actions.push({
+        key: 'bulk-issue-invoices',
+        label: 'Issue',
+        tone: 'primary',
+        execute: async (selectedRows) =>
+          runFinanceBulkAction('Phát hành hóa đơn', selectedRows, async (invoice) => {
+            if (String(invoice.status || '').toUpperCase() !== 'DRAFT') {
+              throw new Error(`Hóa đơn ${invoice.invoiceNo || invoice.id.slice(-8)} không ở trạng thái DRAFT.`);
+            }
+            await apiRequest(`/finance/invoices/${invoice.id}/issue`, {
+              method: 'POST',
+              body: { note: 'Bulk issue từ Operations Board' }
+            });
+          })
+      });
+      actions.push({
+        key: 'bulk-approve-invoices',
+        label: 'Approve',
+        tone: 'ghost',
+        execute: async (selectedRows) =>
+          runFinanceBulkAction('Phê duyệt hóa đơn', selectedRows, async (invoice) => {
+            if (String(invoice.status || '').toUpperCase() !== 'PENDING') {
+              throw new Error(`Hóa đơn ${invoice.invoiceNo || invoice.id.slice(-8)} không ở trạng thái PENDING.`);
+            }
+            await apiRequest(`/finance/invoices/${invoice.id}/approve`, {
+              method: 'POST',
+              body: { note: 'Bulk approve từ Operations Board' }
+            });
+          })
+      });
+    }
+
+    if (canDelete) {
+      actions.push({
+        key: 'bulk-archive-invoices',
+        label: 'Archive',
+        tone: 'danger',
+        confirmMessage: (rows) => `Lưu trữ ${rows.length} hóa đơn đã chọn?`,
+        execute: async (selectedRows) =>
+          runFinanceBulkAction('Lưu trữ hóa đơn', selectedRows, async (invoice) => {
+            await apiRequest(`/finance/invoices/${invoice.id}`, {
+              method: 'DELETE'
+            });
+          })
+      });
+    }
+
+    return actions;
+  }, [canApprove, canDelete]);
 
   if (!canView) {
-    return <div style={{ padding: '2rem', textAlign: 'center' }}>Hạn chế quyền truy cập.</div>;
+    return null;
   }
 
   const normalizedInvoiceStatus = String(selectedInvoice?.status || '').toUpperCase();
-  const canIssueInvoice = canMutate && normalizedInvoiceStatus === 'DRAFT';
-  const canApproveInvoice = canMutate && normalizedInvoiceStatus === 'PENDING';
-  const canAllocatePayment = canMutate && normalizedInvoiceStatus === 'APPROVED';
+  const canIssueInvoice = canApprove && normalizedInvoiceStatus === 'DRAFT';
+  const canApproveInvoice = canApprove && normalizedInvoiceStatus === 'PENDING';
+  const canAllocatePayment = canUpdate && normalizedInvoiceStatus === 'APPROVED';
 
   const outstandingAmount = selectedInvoice
     ? Math.max(0, toNumber(selectedInvoice.totalAmount) - toNumber(selectedInvoice.paidAmount))
@@ -384,7 +393,7 @@ export function FinanceOperationsBoard() {
 
   const handleCreateInvoice = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canCreate) return;
 
     const totalAmount = Number(createInvoiceForm.totalAmount);
     if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
@@ -477,7 +486,7 @@ export function FinanceOperationsBoard() {
   };
 
   const handleArchiveInvoice = async () => {
-    if (!selectedInvoice || !canMutate || isArchivingInvoice) return;
+    if (!selectedInvoice || !canDelete || isArchivingInvoice) return;
     if (!window.confirm(`Lưu trữ hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}?`)) {
       return;
     }
@@ -561,16 +570,16 @@ export function FinanceOperationsBoard() {
         </div>
         <div className="toolbar-right">
           <button className="btn btn-ghost" onClick={() => { loadInvoices(); loadAging(); }}><RefreshCw size={16} /> Làm mới</button>
-          <button
-            className="btn btn-primary"
-            disabled={!canMutate}
-            onClick={() => {
-              if (!canMutate) return;
-              setIsCreatePanelOpen(true);
-            }}
-          >
-            <Plus size={16} /> Tạo hóa đơn
-          </button>
+          {canCreate && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setIsCreatePanelOpen(true);
+              }}
+            >
+              <Plus size={16} /> Tạo hóa đơn
+            </button>
+          )}
         </div>
       </div>
 
@@ -680,41 +689,45 @@ export function FinanceOperationsBoard() {
                 <History size={16} /> Xem audit log
               </a>
 
-              <button
-                className="btn btn-danger"
-                disabled={!canMutate || isArchivingInvoice || normalizedInvoiceStatus === 'ARCHIVED'}
-                onClick={handleArchiveInvoice}
-              >
-                <Trash2 size={16} /> {isArchivingInvoice ? 'Đang lưu trữ...' : 'Lưu trữ hóa đơn'}
-              </button>
-
-              <form onSubmit={handleAllocatePayment} style={{ display: 'grid', gap: '0.5rem', padding: '0.75rem', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.2rem' }}>Ghi nhận thanh toán</label>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={paymentForm.allocatedAmount}
-                  onChange={(event) => setPaymentForm((prev) => ({ ...prev, allocatedAmount: event.target.value }))}
-                  placeholder="Số tiền"
-                  disabled={!canAllocatePayment || isAllocatingPayment}
-                />
-                <input
-                  value={paymentForm.paymentRef}
-                  onChange={(event) => setPaymentForm((prev) => ({ ...prev, paymentRef: event.target.value }))}
-                  placeholder="Mã tham chiếu thanh toán"
-                  disabled={!canAllocatePayment || isAllocatingPayment}
-                />
-                <input
-                  value={paymentForm.note}
-                  onChange={(event) => setPaymentForm((prev) => ({ ...prev, note: event.target.value }))}
-                  placeholder="Ghi chú"
-                  disabled={!canAllocatePayment || isAllocatingPayment}
-                />
-                <button className="btn btn-ghost" type="submit" disabled={!canAllocatePayment || isAllocatingPayment}>
-                  {isAllocatingPayment ? 'Đang ghi nhận...' : 'Ghi nhận thanh toán'}
+              {canDelete && normalizedInvoiceStatus !== 'ARCHIVED' && (
+                <button
+                  className="btn btn-danger"
+                  disabled={isArchivingInvoice}
+                  onClick={handleArchiveInvoice}
+                >
+                  <Trash2 size={16} /> {isArchivingInvoice ? 'Đang lưu trữ...' : 'Lưu trữ hóa đơn'}
                 </button>
-              </form>
+              )}
+
+              {canAllocatePayment && (
+                <form onSubmit={handleAllocatePayment} style={{ display: 'grid', gap: '0.5rem', padding: '0.75rem', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.2rem' }}>Ghi nhận thanh toán</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={paymentForm.allocatedAmount}
+                    onChange={(event) => setPaymentForm((prev) => ({ ...prev, allocatedAmount: event.target.value }))}
+                    placeholder="Số tiền"
+                    disabled={isAllocatingPayment}
+                  />
+                  <input
+                    value={paymentForm.paymentRef}
+                    onChange={(event) => setPaymentForm((prev) => ({ ...prev, paymentRef: event.target.value }))}
+                    placeholder="Mã tham chiếu thanh toán"
+                    disabled={isAllocatingPayment}
+                  />
+                  <input
+                    value={paymentForm.note}
+                    onChange={(event) => setPaymentForm((prev) => ({ ...prev, note: event.target.value }))}
+                    placeholder="Ghi chú"
+                    disabled={isAllocatingPayment}
+                  />
+                  <button className="btn btn-ghost" type="submit" disabled={isAllocatingPayment}>
+                    {isAllocatingPayment ? 'Đang ghi nhận...' : 'Ghi nhận thanh toán'}
+                  </button>
+                </form>
+              )}
             </div>
           </div>
         )}

@@ -36,6 +36,7 @@ import { ConversationQualityModule } from './modules/conversation-quality/conver
 import { AuthModule } from './modules/auth/auth.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
+import { IamModule } from './modules/iam/iam.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { AssistantModule } from './modules/assistant/assistant.module';
     AuthModule,
     AuditModule,
     AssistantModule,
+    IamModule,
     NotificationsModule,
     ConversationsModule,
     ZaloModule,

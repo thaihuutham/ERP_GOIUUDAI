@@ -10,7 +10,7 @@ import {
   type AssistantScopeType,
   type AssistantSourceType
 } from '../../lib/assistant-api';
-import { apiRequest } from '../../lib/api-client';
+import { apiRequest, normalizeListPayload } from '../../lib/api-client';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../../lib/bulk-actions';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from '../ui/standard-data-table';
@@ -122,7 +122,7 @@ export function AssistantKnowledgeBoard() {
 
       setOrgOptions(flattenOrgTree(orgPayload.tree ?? []));
       setUserOptions(
-        (usersPayload.items ?? []).map((user) => ({
+        (normalizeListPayload(usersPayload) as UserOption[]).map((user) => ({
           id: user.id,
           label: `${user.employee?.fullName || user.email} (${user.role ?? 'USER'})`
         }))
@@ -148,7 +148,7 @@ export function AssistantKnowledgeBoard() {
             : sourceFilterIsActive === 'true',
         limit: 100
       });
-      setSources(payload.items ?? []);
+      setSources(payload.items);
     } catch (error) {
       setSources([]);
       setKnowledgeError(error instanceof Error ? error.message : 'Không thể tải danh sách nguồn tri thức.');
@@ -167,7 +167,7 @@ export function AssistantKnowledgeBoard() {
         scopeType: (documentFilterScopeType || undefined) as AssistantScopeType | undefined,
         limit: 100
       });
-      setDocuments(payload.items ?? []);
+      setDocuments(payload.items);
     } catch (error) {
       setDocuments([]);
       setKnowledgeError(error instanceof Error ? error.message : 'Không thể tải tài liệu tri thức.');

@@ -20,11 +20,10 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import type { BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 import { Badge, statusToBadge } from './ui/badge';
@@ -84,9 +83,9 @@ function toDateTime(value: any) {
 
 
 export function ScmOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'scm');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('scm');
+  const canCreate = canAction('scm', 'CREATE');
 
   const [activeTab, setActiveTab] = useState<'PO' | 'VENDORS' | 'SHIPMENTS'>('PO');
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -108,9 +107,9 @@ export function ScmOperationsBoard() {
         apiRequest<any>('/scm/vendors', { query: { q: search, limit: 100 } }),
         apiRequest<any>('/scm/shipments', { query: { q: search, limit: 100 } }),
       ]);
-      setPurchaseOrders(Array.isArray(poData) ? poData : poData?.items || []);
-      setVendors(Array.isArray(vendorData) ? vendorData : vendorData?.items || []);
-      setShipments(Array.isArray(shipData) ? shipData : shipData?.items || []);
+      setPurchaseOrders(normalizeListPayload(poData) as PurchaseOrder[]);
+      setVendors(normalizeListPayload(vendorData) as Vendor[]);
+      setShipments(normalizeListPayload(shipData) as Shipment[]);
     } catch (e) {
     } finally {
       setIsLoading(false);
@@ -121,7 +120,7 @@ export function ScmOperationsBoard() {
     setIsLoadingDetails(true);
     try {
       const data = await apiRequest<any>(`/scm/purchase-orders/${id}/receipts`);
-      setReceipts(Array.isArray(data) ? data : data?.items || []);
+      setReceipts(normalizeListPayload(data) as PurchaseReceipt[]);
     } catch (e) {
     } finally {
       setIsLoadingDetails(false);
@@ -154,7 +153,7 @@ export function ScmOperationsBoard() {
     { key: 'status', label: 'Trạng thái', render: (v) => <Badge variant={statusToBadge(v.status)}>{v.status}</Badge> },
   ];
 
-  if (!canView) return <div style={{ padding: '2rem', textAlign: 'center' }}>Hạn chế truy cập module SCM.</div>;
+  if (!canView) return null;
 
   return (
     <div className="scm-board">
@@ -217,9 +216,11 @@ export function ScmOperationsBoard() {
         </div>
         <div className="toolbar-right">
           <button className="btn btn-ghost" onClick={() => loadData()}><RefreshCw size={16} /> Đồng bộ</button>
-          <button className="btn btn-primary">
-            <Plus size={16} /> {activeTab === 'PO' ? 'Tạo PO' : 'Thêm nhà cung cấp'}
-          </button>
+          {canCreate && (
+            <button className="btn btn-primary">
+              <Plus size={16} /> {activeTab === 'PO' ? 'Tạo PO' : 'Thêm nhà cung cấp'}
+            </button>
+          )}
         </div>
       </div>
 

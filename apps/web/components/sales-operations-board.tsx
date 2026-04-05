@@ -16,11 +16,10 @@ import {
   Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 import { Badge, statusToBadge } from './ui';
@@ -134,9 +133,11 @@ function makeInitialCreateOrderForm(): CreateOrderFormState {
 }
 
 export function SalesOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'sales');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('sales');
+  const canCreate = canAction('sales', 'CREATE');
+  const canApprove = canAction('sales', 'APPROVE');
+  const canDelete = canAction('sales', 'DELETE');
 
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
@@ -164,8 +165,8 @@ export function SalesOperationsBoard() {
         apiRequest<any>('/sales/orders', { query: { q: search, limit: 200 } }),
         apiRequest<any>('/sales/approvals')
       ]);
-      setOrders(Array.isArray(ordersPayload?.items) ? ordersPayload.items : []);
-      setApprovals(Array.isArray(approvalsPayload) ? approvalsPayload : []);
+      setOrders(normalizeListPayload(ordersPayload) as SalesOrder[]);
+      setApprovals(normalizeListPayload(approvalsPayload) as ApprovalRecord[]);
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không thể tải dữ liệu đơn hàng');
@@ -298,85 +299,95 @@ export function SalesOperationsBoard() {
     return normalized;
   };
 
-  const bulkActions: StandardTableBulkAction<SalesOrder>[] = canMutate
-    ? [
-        {
-          key: 'bulk-approve-orders',
-          label: 'Approve',
-          tone: 'primary',
-          execute: async (selectedRows) =>
-            runSalesBulkAction('Duyệt đơn hàng', selectedRows, async (order) => {
-              if (String(order.status || '').toUpperCase() !== 'PENDING') {
-                throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} không ở trạng thái PENDING.`);
-              }
-              await apiRequest(`/sales/orders/${order.id}/approve`, {
-                method: 'POST',
-                body: { note: 'Bulk approve từ Operations Board' }
-              });
-            })
-        },
-        {
-          key: 'bulk-reject-orders',
-          label: 'Reject',
-          tone: 'danger',
-          confirmMessage: (rows) => `Từ chối ${rows.length} đơn hàng đã chọn?`,
-          execute: async (selectedRows) =>
-            runSalesBulkAction('Từ chối đơn hàng', selectedRows, async (order) => {
-              if (String(order.status || '').toUpperCase() !== 'PENDING') {
-                throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} không ở trạng thái PENDING.`);
-              }
-              await apiRequest(`/sales/orders/${order.id}/reject`, {
-                method: 'POST',
-                body: { note: 'Bulk reject từ Operations Board' }
-              });
-            })
-        },
-        {
-          key: 'bulk-create-invoice',
-          label: 'Create invoice',
-          tone: 'ghost',
-          execute: async (selectedRows) =>
-            runSalesBulkAction('Xuất hóa đơn từ đơn hàng', selectedRows, async (order) => {
-              const isApproved = String(order.status || '').toUpperCase() === 'APPROVED';
-              const hasInvoice = Boolean(order.invoices?.[0]);
-              if (!isApproved || hasInvoice) {
-                throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} chưa hợp lệ để tạo invoice.`);
-              }
-              await apiRequest('/finance/invoices/from-order', {
-                method: 'POST',
-                body: { orderId: order.id }
-              });
-            })
-        },
-        {
-          key: 'bulk-archive-orders',
-          label: 'Archive',
-          tone: 'danger',
-          confirmMessage: (rows) => `Lưu trữ ${rows.length} đơn hàng đã chọn?`,
-          execute: async (selectedRows) =>
-            runSalesBulkAction('Lưu trữ đơn hàng', selectedRows, async (order) => {
-              await apiRequest(`/sales/orders/${order.id}`, {
-                method: 'DELETE'
-              });
-            })
-        }
-      ]
-    : [];
+  const bulkActions = useMemo<StandardTableBulkAction<SalesOrder>[]>(() => {
+    const actions: StandardTableBulkAction<SalesOrder>[] = [];
+
+    if (canApprove) {
+      actions.push({
+        key: 'bulk-approve-orders',
+        label: 'Approve',
+        tone: 'primary',
+        execute: async (selectedRows) =>
+          runSalesBulkAction('Duyệt đơn hàng', selectedRows, async (order) => {
+            if (String(order.status || '').toUpperCase() !== 'PENDING') {
+              throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} không ở trạng thái PENDING.`);
+            }
+            await apiRequest(`/sales/orders/${order.id}/approve`, {
+              method: 'POST',
+              body: { note: 'Bulk approve từ Operations Board' }
+            });
+          })
+      });
+      actions.push({
+        key: 'bulk-reject-orders',
+        label: 'Reject',
+        tone: 'danger',
+        confirmMessage: (rows) => `Từ chối ${rows.length} đơn hàng đã chọn?`,
+        execute: async (selectedRows) =>
+          runSalesBulkAction('Từ chối đơn hàng', selectedRows, async (order) => {
+            if (String(order.status || '').toUpperCase() !== 'PENDING') {
+              throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} không ở trạng thái PENDING.`);
+            }
+            await apiRequest(`/sales/orders/${order.id}/reject`, {
+              method: 'POST',
+              body: { note: 'Bulk reject từ Operations Board' }
+            });
+          })
+      });
+    }
+
+    if (canCreate) {
+      actions.push({
+        key: 'bulk-create-invoice',
+        label: 'Create invoice',
+        tone: 'ghost',
+        execute: async (selectedRows) =>
+          runSalesBulkAction('Xuất hóa đơn từ đơn hàng', selectedRows, async (order) => {
+            const isApproved = String(order.status || '').toUpperCase() === 'APPROVED';
+            const hasInvoice = Boolean(order.invoices?.[0]);
+            if (!isApproved || hasInvoice) {
+              throw new Error(`Đơn ${order.orderNo || order.id.slice(-8)} chưa hợp lệ để tạo invoice.`);
+            }
+            await apiRequest('/finance/invoices/from-order', {
+              method: 'POST',
+              body: { orderId: order.id }
+            });
+          })
+      });
+    }
+
+    if (canDelete) {
+      actions.push({
+        key: 'bulk-archive-orders',
+        label: 'Archive',
+        tone: 'danger',
+        confirmMessage: (rows) => `Lưu trữ ${rows.length} đơn hàng đã chọn?`,
+        execute: async (selectedRows) =>
+          runSalesBulkAction('Lưu trữ đơn hàng', selectedRows, async (order) => {
+            await apiRequest(`/sales/orders/${order.id}`, {
+              method: 'DELETE'
+            });
+          })
+      });
+    }
+
+    return actions;
+  }, [canApprove, canCreate, canDelete]);
 
   if (!canView) {
-    return <div style={{ padding: '2rem', textAlign: 'center' }}>Không có quyền truy cập module bán hàng.</div>;
+    return null;
   }
 
   const selectedInvoiceRef = selectedOrder?.invoices?.[0] ?? null;
-  const canApproveOrReject = canMutate && String(selectedOrder?.status || '').toUpperCase() === 'PENDING';
+  const canApproveOrReject = canApprove && String(selectedOrder?.status || '').toUpperCase() === 'PENDING';
   const canExportInvoice =
-    canMutate
+    canCreate
     && String(selectedOrder?.status || '').toUpperCase() === 'APPROVED'
     && !selectedInvoiceRef;
 
   const handleCreateOrder = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canCreate) return;
 
     const normalizedItems = createOrderForm.items
       .map((item) => ({
@@ -500,7 +511,7 @@ export function SalesOperationsBoard() {
   };
 
   const handleArchiveOrder = async () => {
-    if (!selectedOrder || !canMutate || isArchivingOrder) return;
+    if (!selectedOrder || !canDelete || isArchivingOrder) return;
     if (!window.confirm(`Lưu trữ đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}?`)) {
       return;
     }
@@ -574,16 +585,16 @@ export function SalesOperationsBoard() {
         </div>
         <div className="toolbar-right">
           <button className="btn btn-ghost" onClick={loadData}><RefreshCw size={16} /> Refresh</button>
-          <button
-            className="btn btn-primary"
-            disabled={!canMutate}
-            onClick={() => {
-              if (!canMutate) return;
-              setIsCreatePanelOpen(true);
-            }}
-          >
-            <Plus size={16} /> Tạo đơn hàng
-          </button>
+          {canCreate && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setIsCreatePanelOpen(true);
+              }}
+            >
+              <Plus size={16} /> Tạo đơn hàng
+            </button>
+          )}
         </div>
       </div>
 
@@ -740,13 +751,15 @@ export function SalesOperationsBoard() {
               <a className="btn btn-ghost" href={buildAuditObjectHref('Order', selectedOrder.id)}>
                 <History size={16} /> Xem audit log
               </a>
-              <button
-                className="btn btn-danger"
-                disabled={!canMutate || isArchivingOrder || String(selectedOrder.status || '').toUpperCase() === 'ARCHIVED'}
-                onClick={handleArchiveOrder}
-              >
-                <Trash2 size={16} /> {isArchivingOrder ? 'Đang lưu trữ...' : 'Lưu trữ đơn hàng'}
-              </button>
+              {canDelete && String(selectedOrder.status || '').toUpperCase() !== 'ARCHIVED' && (
+                <button
+                  className="btn btn-danger"
+                  disabled={isArchivingOrder}
+                  onClick={handleArchiveOrder}
+                >
+                  <Trash2 size={16} /> {isArchivingOrder ? 'Đang lưu trữ...' : 'Lưu trữ đơn hàng'}
+                </button>
+              )}
             </div>
           </div>
         )}

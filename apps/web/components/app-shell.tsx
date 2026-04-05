@@ -22,7 +22,6 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { ERP_MODULES } from '@erp/shared';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -33,11 +32,12 @@ import {
 } from '../lib/assistant-routes';
 import { HR_SECTION_DEFINITIONS, HR_SECTION_MAP, type HrSectionKey } from '../lib/hr-sections';
 import { apiRequest } from '../lib/api-client';
-import { getVisibleModuleCards, moduleCards } from '../lib/modules';
-import { canAccessModule, USER_ROLES } from '../lib/rbac';
+import { moduleCards } from '../lib/modules';
+import { USER_ROLES } from '../lib/rbac';
 import { SIDEBAR_GROUPS, type SidebarNavItemConfig } from '../lib/sidebar-config';
 import { setRuntimeLocale } from '../lib/runtime-format';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
+import { useAccessPolicy } from './access-policy-context';
 import { Breadcrumb } from './ui/breadcrumb';
 import { useUserRole } from './user-role-context';
 
@@ -67,7 +67,7 @@ const ICON_MAP: Record<string, any> = {
   notifications: Bell,
 };
 
-const RUNTIME_TOGGLABLE_MODULES = ERP_MODULES.filter((moduleKey) => moduleKey !== 'settings');
+const ACCESS_REDIRECT_NOTICE_KEY = 'erp_access_redirect_notice';
 
 function getCurrentModuleTitle(pathname: string) {
   if (pathname === '/') {
@@ -101,12 +101,6 @@ function getCurrentModuleTitle(pathname: string) {
 
   const key = match[1];
   return moduleCards.find((item) => item.key === key)?.title ?? SYSTEM_PROFILE.systemName;
-}
-
-function resolveModuleFromPath(pathname: string) {
-  const match = pathname.match(/^\/modules\/([^/]+)/);
-  if (!match) return null;
-  return String(match[1] ?? '').toLowerCase() || null;
 }
 
 type RuntimeSettingsPayload = {
@@ -152,6 +146,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     logout,
     changePassword
   } = useUserRole();
+  const { canModule, canRoute, isReady: accessPolicyReady } = useAccessPolicy();
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -164,32 +159,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [runtimePayload, setRuntimePayload] = useState<RuntimeSettingsPayload | null>(null);
-  const [runtimeLoaded, setRuntimeLoaded] = useState(false);
+  const [accessRedirectNotice, setAccessRedirectNotice] = useState<string | null>(null);
 
   const currentTitle = useMemo(() => getCurrentModuleTitle(pathname), [pathname]);
-  const enabledModuleSet = useMemo(() => {
-    const modules = Array.isArray(runtimePayload?.enabledModules)
-      ? runtimePayload?.enabledModules
-      : RUNTIME_TOGGLABLE_MODULES;
-    return new Set(modules.map((item) => String(item).toLowerCase()));
-  }, [runtimePayload?.enabledModules]);
   const visibleModules = useMemo(
-    () =>
-      getVisibleModuleCards(role).filter((item) => item.key === 'settings' || enabledModuleSet.has(item.key)),
-    [role, enabledModuleSet]
+    () => moduleCards.filter((item) => canModule(item.key)),
+    [canModule]
   );
   const visibleModulesByKey = useMemo(
     () => new Map(visibleModules.map((item) => [item.key, item])),
     [visibleModules]
   );
-  const showZaloAutomation = useMemo(
-    () => canAccessModule(role, 'crm') && enabledModuleSet.has('crm'),
-    [role, enabledModuleSet]
-  );
+  const showZaloAutomation = useMemo(() => canRoute('/modules/crm/conversations'), [canRoute]);
   const isHrPath = pathname.startsWith('/modules/hr');
   const isAssistantPath = pathname.startsWith('/modules/assistant');
   const assistantRouteKey = useMemo(() => resolveAssistantRouteFromPath(pathname), [pathname]);
-  const assistantRoutes = useMemo(() => getAllowedAssistantRoutes(role), [role]);
+  const assistantRoutes = useMemo(
+    () => getAllowedAssistantRoutes(role).filter((route) => canRoute(route.href)),
+    [role, canRoute]
+  );
 
 
 
@@ -325,7 +313,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       return visibleModulesByKey.has(item.moduleKey);
     }
     if (item.type === 'custom' && item.requiresFlag === 'zaloAutomation') {
-      return showZaloAutomation;
+      return showZaloAutomation && canRoute(item.href);
     }
     return true;
   };
@@ -358,6 +346,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setGlobalSearch(new URLSearchParams(window.location.search).get('q') ?? '');
+
+    const notice = window.sessionStorage.getItem(ACCESS_REDIRECT_NOTICE_KEY);
+    if (notice) {
+      setAccessRedirectNotice(notice);
+      window.sessionStorage.removeItem(ACCESS_REDIRECT_NOTICE_KEY);
+    } else {
+      setAccessRedirectNotice(null);
+    }
   }, [pathname]);
 
   const handleGlobalSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -437,7 +433,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         const payload = await apiRequest<RuntimeSettingsPayload>('/settings/runtime');
         if (!mounted) return;
         setRuntimePayload(payload);
-        setRuntimeLoaded(true);
 
         if (payload.locale) {
           setRuntimeLocale({
@@ -457,8 +452,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           }
         }
       } catch {
-        if (!mounted) return;
-        setRuntimeLoaded(true);
+        // Keep default runtime formatting when settings runtime is unavailable.
       }
     };
 
@@ -469,13 +463,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [ready, authEnabled, isAuthenticated]);
 
   useEffect(() => {
-    if (!runtimeLoaded) return;
-    const moduleKey = resolveModuleFromPath(pathname);
-    if (!moduleKey) return;
-    if (moduleKey === 'settings') return;
-    if (enabledModuleSet.has(moduleKey)) return;
-    router.replace(`/modules/settings?blocked=${encodeURIComponent(moduleKey)}`);
-  }, [runtimeLoaded, pathname, enabledModuleSet, router]);
+    if (!accessPolicyReady) return;
+    if (canRoute(pathname)) return;
+    if (pathname === '/') return;
+
+    const message = 'Trang bạn mở không thuộc phạm vi quyền truy cập. Hệ thống đã chuyển về Tổng quan.';
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(ACCESS_REDIRECT_NOTICE_KEY, message);
+    }
+    router.replace('/');
+  }, [accessPolicyReady, canRoute, pathname, router]);
 
   if (authEnabled && !ready) {
     return (
@@ -715,6 +712,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
 
         <Breadcrumb />
+        {accessRedirectNotice && (
+          <div className="banner banner-warning" style={{ margin: '0 1.5rem 0.8rem' }}>
+            {accessRedirectNotice}
+          </div>
+        )}
         <main className="app-content">{children}</main>
       </section>
     </div>

@@ -10,7 +10,7 @@ import {
   type AssistantDispatchChannel,
   type AssistantScopeType
 } from '../../lib/assistant-api';
-import { apiRequest } from '../../lib/api-client';
+import { apiRequest, normalizeListPayload } from '../../lib/api-client';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../../lib/bulk-actions';
 import { SidePanel } from '../ui/side-panel';
@@ -123,7 +123,7 @@ export function AssistantChannelsBoard() {
 
       setOrgOptions(flattenOrgTree(orgPayload.tree ?? []));
       setUserOptions(
-        (usersPayload.items ?? []).map((user) => ({
+        (normalizeListPayload(usersPayload) as UserOption[]).map((user) => ({
           id: user.id,
           label: `${user.employee?.fullName || user.email} (${user.role ?? 'USER'})`
         }))
@@ -150,7 +150,7 @@ export function AssistantChannelsBoard() {
             : channelFilterActive === 'true',
         limit: 100
       });
-      setChannels(payload.items ?? []);
+      setChannels(payload.items);
     } catch (error) {
       setChannels([]);
       setFeedbackError(error instanceof Error ? error.message : 'Không thể tải danh sách kênh phân phối.');

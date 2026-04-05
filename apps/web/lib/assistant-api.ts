@@ -1,4 +1,4 @@
-import { apiRequest } from './api-client';
+import { apiRequest, normalizeListPayload, normalizeObjectPayload } from './api-client';
 
 export const ASSISTANT_SCOPE_OPTIONS = ['company', 'branch', 'department', 'self'] as const;
 export type AssistantScopeType = (typeof ASSISTANT_SCOPE_OPTIONS)[number];
@@ -159,6 +159,17 @@ export type AssistantListResponse<T> = {
   count: number;
 };
 
+function normalizeAssistantListResponse<T>(payload: unknown): AssistantListResponse<T> {
+  const normalizedObject = normalizeObjectPayload(payload);
+  const items = normalizeListPayload(payload) as T[];
+  const rawCount = normalizedObject?.count;
+  const count = typeof rawCount === 'number' && Number.isFinite(rawCount) ? rawCount : items.length;
+  return {
+    items,
+    count
+  };
+}
+
 function buildListQuery(query: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== '')
@@ -180,14 +191,14 @@ export const assistantApi = {
   },
 
   listKnowledgeSources(query?: { q?: string; sourceType?: AssistantSourceType; isActive?: boolean; limit?: number }) {
-    return apiRequest<AssistantListResponse<AssistantKnowledgeSource>>('/assistant/knowledge/sources', {
+    return apiRequest<unknown>('/assistant/knowledge/sources', {
       query: buildListQuery({
         q: query?.q,
         sourceType: query?.sourceType,
         isActive: query?.isActive === undefined ? undefined : String(query.isActive),
         limit: query?.limit
       })
-    });
+    }).then((payload) => normalizeAssistantListResponse<AssistantKnowledgeSource>(payload));
   },
 
   createKnowledgeSource(payload: {
@@ -224,24 +235,24 @@ export const assistantApi = {
   },
 
   listKnowledgeDocuments(query?: { q?: string; sourceId?: string; scopeType?: AssistantScopeType; limit?: number }) {
-    return apiRequest<AssistantListResponse<AssistantKnowledgeDocument>>('/assistant/knowledge/documents', {
+    return apiRequest<unknown>('/assistant/knowledge/documents', {
       query: buildListQuery({
         q: query?.q,
         sourceId: query?.sourceId,
         scopeType: query?.scopeType,
         limit: query?.limit
       })
-    });
+    }).then((payload) => normalizeAssistantListResponse<AssistantKnowledgeDocument>(payload));
   },
 
   listRuns(query?: { status?: string; runType?: AssistantRunType; limit?: number }) {
-    return apiRequest<AssistantListResponse<AssistantReportRun>>('/assistant/reports/runs', {
+    return apiRequest<unknown>('/assistant/reports/runs', {
       query: buildListQuery({
         status: query?.status,
         runType: query?.runType,
         limit: query?.limit
       })
-    });
+    }).then((payload) => normalizeAssistantListResponse<AssistantReportRun>(payload));
   },
 
   createRun(payload: {
@@ -288,7 +299,7 @@ export const assistantApi = {
     isActive?: boolean;
     limit?: number;
   }) {
-    return apiRequest<AssistantListResponse<AssistantDispatchChannel>>('/assistant/channels', {
+    return apiRequest<unknown>('/assistant/channels', {
       query: buildListQuery({
         q: query?.q,
         channelType: query?.channelType,
@@ -296,7 +307,7 @@ export const assistantApi = {
         isActive: query?.isActive === undefined ? undefined : String(query.isActive),
         limit: query?.limit
       })
-    });
+    }).then((payload) => normalizeAssistantListResponse<AssistantDispatchChannel>(payload));
   },
 
   createChannel(payload: {

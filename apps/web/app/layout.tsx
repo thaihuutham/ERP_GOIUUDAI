@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { AppShell } from '../components/app-shell';
+import { AccessPolicyProvider } from '../components/access-policy-context';
 import { UserRoleProvider } from '../components/user-role-context';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 
@@ -15,7 +16,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="vi" suppressHydrationWarning>
       <body suppressHydrationWarning>
         <UserRoleProvider>
-          <AppShell>{children}</AppShell>
+          <AccessPolicyProvider>
+            <AppShell>{children}</AppShell>
+          </AccessPolicyProvider>
         </UserRoleProvider>
       </body>
     </html>

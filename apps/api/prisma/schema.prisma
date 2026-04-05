@@ -26,6 +26,24 @@ enum PermissionEffect {
   DENY
 }
 
+enum IamSubjectType {
+  USER
+  POSITION
+  TEMPLATE
+}
+
+enum IamScopeMode {
+  SELF
+  SUBTREE
+  UNIT_FULL
+}
+
+enum IamGrantReason {
+  WORKFLOW_ASSIGNMENT
+  MANUAL_OVERRIDE
+  SYSTEM_SYNC
+}
+
 enum OrgUnitType {
   COMPANY
   BRANCH
@@ -394,6 +412,128 @@ model UserPermissionOverride {
   @@index([tenant_Id])
   @@index([tenant_Id, userId])
   @@index([tenant_Id, moduleKey, action])
+}
+
+model IamActionGrant {
+  id          String           @id @default(cuid())
+  tenant_Id   String
+  subjectType IamSubjectType
+  subjectId   String
+  moduleKey   String
+  action      PermissionAction
+  effect      PermissionEffect
+  priority    Int              @default(100)
+  createdBy   String?
+  updatedBy   String?
+  reason      String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, subjectType, subjectId, moduleKey, action])
+  @@index([tenant_Id, moduleKey, action])
+  @@map("iam_action_grants")
+}
+
+model IamCapabilityGrant {
+  id            String           @id @default(cuid())
+  tenant_Id     String
+  subjectType   IamSubjectType
+  subjectId     String
+  capabilityKey String
+  effect        PermissionEffect
+  priority      Int              @default(100)
+  createdBy     String?
+  updatedBy     String?
+  reason        String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, subjectType, subjectId, capabilityKey])
+  @@map("iam_capability_grants")
+}
+
+model IamUserScopeOverride {
+  id            String       @id @default(cuid())
+  tenant_Id     String
+  userId        String
+  scopeMode     IamScopeMode
+  rootOrgUnitId String?
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  reason        String?
+  createdBy     String?
+  updatedBy     String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([tenant_Id, userId])
+  @@index([tenant_Id, scopeMode])
+  @@index([tenant_Id, rootOrgUnitId])
+  @@map("iam_user_scope_override")
+}
+
+model IamPermissionCeiling {
+  id            String            @id @default(cuid())
+  tenant_Id     String
+  actorUserId   String
+  moduleKey     String?
+  action        PermissionAction?
+  capabilityKey String?
+  effect        PermissionEffect  @default(ALLOW)
+  priority      Int               @default(100)
+  reason        String?
+  createdBy     String?
+  updatedBy     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, actorUserId])
+  @@index([tenant_Id, actorUserId, moduleKey, action])
+  @@index([tenant_Id, actorUserId, capabilityKey])
+  @@map("iam_permission_ceiling")
+}
+
+model IamResolvedScopeMember {
+  id           String   @id @default(cuid())
+  tenant_Id    String
+  userId       String
+  scopeVersion Int      @default(1)
+  employeeIds  String[] @default([])
+  orgUnitIds   String[] @default([])
+  computedAt   DateTime @default(now())
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenant_Id, userId])
+  @@index([tenant_Id, expiresAt])
+  @@map("iam_resolved_scope_members")
+}
+
+model IamRecordAccessGrant {
+  id          String             @id @default(cuid())
+  tenant_Id   String
+  actorUserId String
+  recordType  String
+  recordId    String
+  grantReason IamGrantReason     @default(WORKFLOW_ASSIGNMENT)
+  actions     PermissionAction[] @default([])
+  expiresAt   DateTime?
+  sourceRef   String?
+  reason      String?
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, actorUserId, recordType, recordId])
+  @@index([tenant_Id, recordType, recordId])
+  @@index([tenant_Id, expiresAt])
+  @@map("iam_record_access_grants")
 }
 
 model WorkShift {

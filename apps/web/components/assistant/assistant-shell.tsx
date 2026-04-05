@@ -5,12 +5,11 @@ import { usePathname } from 'next/navigation';
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { assistantApi, type AssistantAccess } from '../../lib/assistant-api';
 import {
-  canAccessAssistantRoute,
   getAllowedAssistantRoutes,
   resolveAssistantRouteFromPath,
   type AssistantRouteKey
 } from '../../lib/assistant-routes';
-import { canAccessModule } from '../../lib/rbac';
+import { useAccessPolicy } from '../access-policy-context';
 import { useUserRole } from '../user-role-context';
 
 type AssistantShellContextValue = {
@@ -38,12 +37,16 @@ type AssistantShellProps = {
 export function AssistantShell({ children }: AssistantShellProps) {
   const pathname = usePathname();
   const { role } = useUserRole();
+  const { canModule, canRoute } = useAccessPolicy();
   const [access, setAccess] = useState<AssistantAccess | null>(null);
   const [accessLoading, setAccessLoading] = useState(true);
   const [accessError, setAccessError] = useState<string | null>(null);
 
   const activeRoute = useMemo(() => resolveAssistantRouteFromPath(pathname), [pathname]);
-  const allowedRoutes = useMemo(() => getAllowedAssistantRoutes(role), [role]);
+  const allowedRoutes = useMemo(
+    () => getAllowedAssistantRoutes(role).filter((route) => canRoute(route.href)),
+    [role, canRoute]
+  );
 
   const loadAccess = async () => {
     setAccessLoading(true);
@@ -63,38 +66,12 @@ export function AssistantShell({ children }: AssistantShellProps) {
     void loadAccess();
   }, []);
 
-  if (!canAccessModule(role, 'assistant')) {
-    return (
-      <article className="module-workbench">
-        <header className="module-header">
-          <div>
-            <h1>Truy cập bị giới hạn</h1>
-            <p>Vai trò hiện tại không có quyền vào phân hệ Trợ lý AI.</p>
-          </div>
-          <ul>
-            <li>Vai trò hiện tại: {role}</li>
-            <li>Chỉ ADMIN/MANAGER/STAFF được vào phân hệ này.</li>
-          </ul>
-        </header>
-      </article>
-    );
+  if (!canModule('assistant')) {
+    return null;
   }
 
-  if (activeRoute && !canAccessAssistantRoute(role, activeRoute)) {
-    return (
-      <article className="module-workbench">
-        <header className="module-header">
-          <div>
-            <h1>Truy cập bị giới hạn</h1>
-            <p>Bạn không có quyền truy cập route con `{activeRoute}` trong Trợ lý AI.</p>
-          </div>
-          <ul>
-            <li>Vai trò hiện tại: {role}</li>
-            <li>STAFF chỉ được vào: Phiên chạy AI, Phạm vi truy cập, Proxy dữ liệu.</li>
-          </ul>
-        </header>
-      </article>
-    );
+  if (activeRoute && !canRoute(`/modules/assistant/${activeRoute}`)) {
+    return null;
   }
 
   return (

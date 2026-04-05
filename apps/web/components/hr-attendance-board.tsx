@@ -4,7 +4,8 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from '
 import { Ban, RefreshCw, Undo2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { readStoredAuthSession } from '../lib/auth-session';
-import { apiRequest } from '../lib/api-client';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
 
 type AttendanceMethod = 'REMOTE_TRACKED' | 'OFFICE_EXCEL' | 'EXEMPT';
@@ -217,20 +218,12 @@ async function parseOfficeXlsx(file: File): Promise<OfficeImportRow[]> {
 }
 
 function normalizeAttendanceList(payload: unknown): AttendanceRow[] {
-  if (Array.isArray(payload)) {
-    return payload as AttendanceRow[];
-  }
-  if (payload && typeof payload === 'object') {
-    const record = payload as Record<string, unknown>;
-    if (Array.isArray(record.items)) {
-      return record.items as AttendanceRow[];
-    }
-  }
-  return [];
+  return normalizeListPayload(payload) as AttendanceRow[];
 }
 
 export function HrAttendanceBoard() {
-  const { role, authEnabled, logout } = useUserRole();
+  const { authEnabled, logout } = useUserRole();
+  const { canAction } = useAccessPolicy();
   const [selectedMonth, setSelectedMonth] = useState<number>(() => new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [monthlyData, setMonthlyData] = useState<AttendanceMonthlyPayload | null>(null);
@@ -253,7 +246,7 @@ export function HrAttendanceBoard() {
   const inactivityTimerRef = useRef<number | null>(null);
   const handlingInactivityRef = useRef(false);
 
-  const canManageAttendance = role === 'ADMIN';
+  const canManageAttendance = canAction('hr', 'APPROVE');
   const monthOptions = useMemo(
     () =>
       Array.from({ length: 12 }, (_, index) => ({

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 
 type PermissionActionKey = 'VIEW' | 'CREATE' | 'UPDATE' | 'DELETE' | 'APPROVE';
 type PermissionEffectValue = '' | 'ALLOW' | 'DENY';
@@ -156,7 +156,7 @@ function normalizePositionEmployees(payload: Record<string, unknown>): PositionE
 }
 
 export function SettingsPositionDetailPage({ positionId }: { positionId: string }) {
-  const { role } = useUserRole();
+  const { canAction } = useAccessPolicy();
   const [position, setPosition] = useState<PositionSummaryItem | null>(null);
   const [positionMatrix, setPositionMatrix] = useState<PermissionMatrix>(() => createEmptyPermissionMatrix());
   const [positionEmployees, setPositionEmployees] = useState<PositionEmployeeItem[]>([]);
@@ -169,7 +169,7 @@ export function SettingsPositionDetailPage({ positionId }: { positionId: string 
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const canSavePermissions = String(role ?? '').trim().toUpperCase() === 'ADMIN';
+  const canSavePermissions = canAction('settings', 'UPDATE');
 
   const reason = useMemo(() => {
     const note = reasonNote.trim();
@@ -333,6 +333,7 @@ export function SettingsPositionDetailPage({ positionId }: { positionId: string 
                         <td key={`position-detail-${moduleKey}-${action}`}>
                           <select
                             value={positionMatrix[moduleKey]?.[action] ?? ''}
+                            disabled={!canSavePermissions}
                             onChange={(event) =>
                               setPositionMatrix((current) => ({
                                 ...current,
@@ -355,44 +356,48 @@ export function SettingsPositionDetailPage({ positionId }: { positionId: string 
               </table>
             </div>
 
-            <section style={{ marginTop: '0.7rem', border: '1px dashed #dbe9df', borderRadius: '8px', padding: '0.55rem' }}>
-              <div className="field">
-                <label htmlFor="position-reason-template">Lý do thay đổi</label>
-                <select
-                  id="position-reason-template"
-                  value={reasonTemplate}
-                  onChange={(event) => setReasonTemplate(event.target.value)}
-                >
-                  {REASON_TEMPLATES.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field" style={{ marginTop: '0.45rem' }}>
-                <label htmlFor="position-reason-note">Ghi chú thêm</label>
-                <input
-                  id="position-reason-note"
-                  value={reasonNote}
-                  onChange={(event) => setReasonNote(event.target.value)}
-                  placeholder="Ví dụ: Điều chỉnh theo tổ chức mới quý 2"
-                />
-              </div>
-              <div style={{ marginTop: '0.55rem', display: 'flex', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.78rem', color: canSavePermissions ? 'var(--muted)' : '#b45309' }}>
-                  {canSavePermissions ? 'Chỉ lưu các ô đã chọn ALLOW/DENY.' : 'Bạn chỉ có quyền xem. Cần ADMIN để lưu thay đổi.'}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleSavePermissions}
-                  disabled={busy || !canSavePermissions}
-                >
-                  Lưu quyền theo vị trí
-                </button>
-              </div>
-            </section>
+            {canSavePermissions ? (
+              <section style={{ marginTop: '0.7rem', border: '1px dashed #dbe9df', borderRadius: '8px', padding: '0.55rem' }}>
+                <div className="field">
+                  <label htmlFor="position-reason-template">Lý do thay đổi</label>
+                  <select
+                    id="position-reason-template"
+                    value={reasonTemplate}
+                    onChange={(event) => setReasonTemplate(event.target.value)}
+                  >
+                    {REASON_TEMPLATES.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field" style={{ marginTop: '0.45rem' }}>
+                  <label htmlFor="position-reason-note">Ghi chú thêm</label>
+                  <input
+                    id="position-reason-note"
+                    value={reasonNote}
+                    onChange={(event) => setReasonNote(event.target.value)}
+                    placeholder="Ví dụ: Điều chỉnh theo tổ chức mới quý 2"
+                  />
+                </div>
+                <div style={{ marginTop: '0.55rem', display: 'flex', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Chỉ lưu các ô đã chọn ALLOW/DENY.</span>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSavePermissions}
+                    disabled={busy}
+                  >
+                    Lưu quyền theo vị trí
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <p style={{ marginTop: '0.7rem', color: 'var(--muted)', fontSize: '0.82rem' }}>
+                Bạn đang ở chế độ xem theo policy hiện tại.
+              </p>
+            )}
           </>
         ) : (
           <div className="table-wrap" style={{ marginTop: '0.65rem' }}>

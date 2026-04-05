@@ -12,7 +12,7 @@ import {
 } from '../../lib/assistant-api';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../../lib/bulk-actions';
-import { useUserRole } from '../user-role-context';
+import { useAccessPolicy } from '../access-policy-context';
 import { SidePanel } from '../ui/side-panel';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from '../ui/standard-data-table';
 import { Badge, statusToBadge } from '../ui/badge';
@@ -42,8 +42,9 @@ function artifactDispatchAttempts(artifacts: AssistantReportArtifact[] = []) {
 
 
 export function AssistantRunsBoard() {
-  const { role } = useUserRole();
-  const canApproveOrReject = role === 'MANAGER' || role === 'ADMIN';
+  const { canAction } = useAccessPolicy();
+  const canCreateRun = canAction('assistant', 'CREATE');
+  const canApproveOrReject = canAction('assistant', 'APPROVE');
 
   const [runs, setRuns] = useState<AssistantReportRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(true);
@@ -82,7 +83,7 @@ export function AssistantRunsBoard() {
         runType: (runTypeFilter || undefined) as AssistantRunType | undefined,
         limit: limitFilter
       });
-      setRuns(payload.items ?? []);
+      setRuns(payload.items);
     } catch (error) {
       setRuns([]);
       setRunsError(error instanceof Error ? error.message : 'Không thể tải danh sách phiên chạy.');
@@ -112,6 +113,10 @@ export function AssistantRunsBoard() {
 
   const onCreateRun = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canCreateRun) {
+      setCreateError('Vai trò hiện tại không có quyền tạo phiên chạy.');
+      return;
+    }
     if (createBusy) {
       return;
     }
@@ -276,14 +281,15 @@ export function AssistantRunsBoard() {
   return (
     <section className="feature-panel" style={{ display: 'grid', gap: '1rem' }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(320px, 1fr)', gap: '0.9rem' }}>
-        <form
-          onSubmit={onCreateRun}
-          style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.8rem', display: 'grid', gap: '0.6rem' }}
-        >
-          <div>
-            <h2 style={{ fontSize: '1.05rem', marginBottom: '0.2rem' }}>Tạo phiên chạy mới</h2>
-            <p className="muted">Thiết lập nhanh phiên tổng hợp báo cáo AI.</p>
-          </div>
+        {canCreateRun ? (
+          <form
+            onSubmit={onCreateRun}
+            style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.8rem', display: 'grid', gap: '0.6rem' }}
+          >
+            <div>
+              <h2 style={{ fontSize: '1.05rem', marginBottom: '0.2rem' }}>Tạo phiên chạy mới</h2>
+              <p className="muted">Thiết lập nhanh phiên tổng hợp báo cáo AI.</p>
+            </div>
 
           <label>
             Loại phiên chạy
@@ -326,10 +332,10 @@ export function AssistantRunsBoard() {
             <span>Gửi ngay artifact chat sau khi tạo phiên</span>
           </label>
 
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="submit" className="btn btn-primary" disabled={createBusy}>
-              {createBusy ? 'Đang tạo...' : 'Tạo phiên'}
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button type="submit" className="btn btn-primary" disabled={createBusy}>
+                {createBusy ? 'Đang tạo...' : 'Tạo phiên'}
+              </button>
             <button type="button" className="btn btn-ghost" onClick={() => void loadRuns()} disabled={runsLoading}>
               Làm mới danh sách
             </button>
@@ -337,7 +343,13 @@ export function AssistantRunsBoard() {
 
           {createMessage && <p className="banner banner-success">{createMessage}</p>}
           {createError && <p className="banner banner-error">{createError}</p>}
-        </form>
+          </form>
+        ) : (
+          <div style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.8rem' }}>
+            <h2 style={{ fontSize: '1.05rem', marginBottom: '0.2rem' }}>Tạo phiên chạy mới</h2>
+            <p className="muted">Vai trò hiện tại chỉ có quyền xem lịch sử phiên chạy.</p>
+          </div>
+        )}
 
         <div style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.8rem', display: 'grid', gap: '0.6rem' }}>
           <div>

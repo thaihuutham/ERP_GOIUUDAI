@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 
 const ENTITY_OPTIONS = [
   { value: 'CUSTOMER', label: 'Khách hàng (CRM)' },
@@ -293,8 +293,9 @@ function validateRow(row: DraftFieldRow): string | null {
 }
 
 export function SettingsCustomFieldsPage() {
-  const { role } = useUserRole();
-  const isAdmin = role === 'ADMIN';
+  const { canAction } = useAccessPolicy();
+  const canEdit = canAction('settings', 'UPDATE');
+  const canPublish = canAction('settings', 'APPROVE') || canEdit;
 
   const [entityType, setEntityType] = useState<EntityType>('CUSTOMER');
   const [rows, setRows] = useState<DraftFieldRow[]>([]);
@@ -324,7 +325,7 @@ export function SettingsCustomFieldsPage() {
       ]);
       setRows((schemaPayload.draft ?? []).map((item, index) => mapApiRowToDraftField(item, index)));
       setPublishedInfo(schemaPayload.published ?? null);
-      setHistoryItems(Array.isArray(historyPayload.items) ? historyPayload.items : []);
+      setHistoryItems(normalizeListPayload(historyPayload));
       setMessage(null);
     } catch (loadError) {
       const text = loadError instanceof Error ? loadError.message : 'Không tải được dữ liệu custom fields.';
@@ -380,18 +381,18 @@ export function SettingsCustomFieldsPage() {
   };
 
   const handleAddRow = () => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     setRows((current) => [...current, createEmptyRow()]);
   };
 
   const handleRemoveNewRow = (rowId: string) => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     setRows((current) => current.filter((row) => row.id !== rowId || row.persisted));
   };
 
   const handleSaveDraft = async () => {
-    if (!isAdmin) {
-      setError('Bạn không có quyền lưu draft custom fields.');
+    if (!canEdit) {
+      setError('Bạn đang ở chế độ chỉ xem, chưa thể lưu draft custom fields.');
       return;
     }
 
@@ -466,8 +467,8 @@ export function SettingsCustomFieldsPage() {
   };
 
   const handlePublish = async () => {
-    if (!isAdmin) {
-      setError('Bạn không có quyền publish custom fields.');
+    if (!canPublish) {
+      setError('Bạn đang ở chế độ chỉ xem, chưa thể publish custom fields.');
       return;
     }
 
@@ -513,9 +514,9 @@ export function SettingsCustomFieldsPage() {
         </div>
       </header>
 
-      {!isAdmin && (
+      {!canEdit && (
         <p className="banner banner-warning">
-          Bạn đang ở chế độ chỉ đọc. Chỉ `ADMIN` mới được lưu draft hoặc publish schema custom fields.
+          Bạn đang ở chế độ chỉ đọc theo policy hiện tại.
         </p>
       )}
       {error && <p className="banner banner-error">{error}</p>}
@@ -551,12 +552,16 @@ export function SettingsCustomFieldsPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-ghost" onClick={handleAddRow} disabled={!isAdmin || saving || publishing}>
-            + Thêm trường
-          </button>
-          <button type="button" className="btn btn-primary" onClick={handleSaveDraft} disabled={!isAdmin || saving || publishing}>
-            {saving ? 'Đang lưu...' : 'Lưu draft'}
-          </button>
+          {canEdit ? (
+            <button type="button" className="btn btn-ghost" onClick={handleAddRow} disabled={saving || publishing}>
+              + Thêm trường
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button type="button" className="btn btn-primary" onClick={handleSaveDraft} disabled={saving || publishing}>
+              {saving ? 'Đang lưu...' : 'Lưu draft'}
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -574,7 +579,7 @@ export function SettingsCustomFieldsPage() {
                   <strong style={{ fontSize: '0.9rem' }}>
                     #{index + 1} · {row.fieldKey || '(field mới)'} {row.persisted ? '' : '· mới'}
                   </strong>
-                  {!row.persisted && isAdmin && (
+                  {!row.persisted && canEdit && (
                     <button type="button" className="btn btn-ghost" onClick={() => handleRemoveNewRow(row.id)}>
                       Bỏ field mới
                     </button>
@@ -590,7 +595,7 @@ export function SettingsCustomFieldsPage() {
                       onChange={(event) =>
                         updateRow(row.id, (current) => ({ ...current, fieldKey: event.target.value.trim().toLowerCase() }))
                       }
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                   </div>
                   <div className="field">
@@ -598,7 +603,7 @@ export function SettingsCustomFieldsPage() {
                     <input
                       value={row.label}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, label: event.target.value }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                   </div>
                   <div className="field">
@@ -611,7 +616,7 @@ export function SettingsCustomFieldsPage() {
                           fieldType: event.target.value as FieldType
                         }))
                       }
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     >
                       {FIELD_TYPE_OPTIONS.map((option) => (
                         <option key={option} value={option}>
@@ -625,7 +630,7 @@ export function SettingsCustomFieldsPage() {
                     <select
                       value={row.status}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, status: event.target.value as FieldStatus }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     >
                       {STATUS_OPTIONS.map((option) => (
                         <option key={option} value={option}>
@@ -639,7 +644,7 @@ export function SettingsCustomFieldsPage() {
                     <input
                       value={row.description}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, description: event.target.value }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                   </div>
                   <div className="field">
@@ -647,7 +652,7 @@ export function SettingsCustomFieldsPage() {
                     <input
                       value={row.defaultValueText}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, defaultValueText: event.target.value }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                   </div>
                   <div className="field" style={{ gridColumn: 'span 2' }}>
@@ -680,7 +685,7 @@ export function SettingsCustomFieldsPage() {
                                           }))
                                         }
                                         placeholder="gold"
-                                        disabled={!isAdmin}
+                                        disabled={!canEdit}
                                       />
                                     </td>
                                     <td>
@@ -693,7 +698,7 @@ export function SettingsCustomFieldsPage() {
                                           }))
                                         }
                                         placeholder="Gold"
-                                        disabled={!isAdmin}
+                                        disabled={!canEdit}
                                       />
                                     </td>
                                     <td>
@@ -707,7 +712,7 @@ export function SettingsCustomFieldsPage() {
                                             order: Number(event.target.value) > 0 ? Math.trunc(Number(event.target.value)) : current.order
                                           }))
                                         }
-                                        disabled={!isAdmin}
+                                        disabled={!canEdit}
                                       />
                                     </td>
                                     <td>
@@ -715,7 +720,7 @@ export function SettingsCustomFieldsPage() {
                                         type="button"
                                         className="btn btn-ghost"
                                         onClick={() => removeOptionRow(row.id, option.id)}
-                                        disabled={!isAdmin}
+                                        disabled={!canEdit}
                                       >
                                         Xóa
                                       </button>
@@ -731,7 +736,7 @@ export function SettingsCustomFieldsPage() {
                             type="button"
                             className="btn btn-ghost"
                             onClick={() => addOptionRow(row.id)}
-                            disabled={!isAdmin}
+                            disabled={!canEdit}
                           >
                             + Thêm option
                           </button>
@@ -749,7 +754,7 @@ export function SettingsCustomFieldsPage() {
                       onChange={(event) =>
                         updateRow(row.id, (current) => ({ ...current, relationEntityType: event.target.value as EntityType | '' }))
                       }
-                      disabled={!isAdmin || row.fieldType !== 'RELATION'}
+                      disabled={!canEdit || row.fieldType !== 'RELATION'}
                     >
                       <option value="">-- Chọn thực thể --</option>
                       {ENTITY_OPTIONS.map((option) => (
@@ -765,7 +770,7 @@ export function SettingsCustomFieldsPage() {
                       value={row.formulaExpression}
                       placeholder="quantity * unitPrice"
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, formulaExpression: event.target.value }))}
-                      disabled={!isAdmin || row.fieldType !== 'FORMULA'}
+                      disabled={!canEdit || row.fieldType !== 'FORMULA'}
                     />
                   </div>
                 </div>
@@ -776,7 +781,7 @@ export function SettingsCustomFieldsPage() {
                       type="checkbox"
                       checked={row.required}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, required: event.target.checked }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                     <span>required</span>
                   </label>
@@ -785,7 +790,7 @@ export function SettingsCustomFieldsPage() {
                       type="checkbox"
                       checked={row.filterable}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, filterable: event.target.checked }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                     <span>filterable</span>
                   </label>
@@ -794,7 +799,7 @@ export function SettingsCustomFieldsPage() {
                       type="checkbox"
                       checked={row.searchable}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, searchable: event.target.checked }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                     <span>searchable</span>
                   </label>
@@ -803,7 +808,7 @@ export function SettingsCustomFieldsPage() {
                       type="checkbox"
                       checked={row.reportable}
                       onChange={(event) => updateRow(row.id, (current) => ({ ...current, reportable: event.target.checked }))}
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                     />
                     <span>reportable</span>
                   </label>
@@ -824,13 +829,15 @@ export function SettingsCustomFieldsPage() {
               value={publishNote}
               onChange={(event) => setPublishNote(event.target.value)}
               placeholder="Ví dụ: bổ sung field đánh giá ưu tiên đơn hàng"
-              disabled={!isAdmin || publishing}
+              disabled={!canPublish || publishing}
             />
           </div>
           <div className="field" style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button type="button" className="btn btn-primary" onClick={handlePublish} disabled={!isAdmin || publishing || saving}>
-              {publishing ? 'Đang publish...' : 'Publish version mới'}
-            </button>
+            {canPublish ? (
+              <button type="button" className="btn btn-primary" onClick={handlePublish} disabled={publishing || saving}>
+                {publishing ? 'Đang publish...' : 'Publish version mới'}
+              </button>
+            ) : null}
           </div>
         </div>
       </section>

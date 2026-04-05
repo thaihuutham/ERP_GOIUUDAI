@@ -21,11 +21,10 @@ import {
   Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 import { Badge, statusToBadge } from './ui/badge';
@@ -86,9 +85,10 @@ function toDateTime(value: any) {
 
 
 export function HrOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'hr');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('hr');
+  const canApprove = canAction('hr', 'APPROVE');
+  const canDelete = canAction('hr', 'DELETE');
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -109,7 +109,7 @@ export function HrOperationsBoard() {
     setIsLoading(true);
     try {
       const payload = await apiRequest<any>('/hr/employees', { query: { q: search, limit: 100 } });
-      setEmployees(Array.isArray(payload) ? payload : payload?.items || []);
+      setEmployees(normalizeListPayload(payload) as Employee[]);
       setErrorMessage(null);
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : 'Không thể tải danh sách nhân sự');
@@ -126,9 +126,9 @@ export function HrOperationsBoard() {
         apiRequest<any>('/hr/leave-requests', { query: { employeeId: id, limit: 10 } }),
         apiRequest<any>('/hr/payrolls', { query: { employeeId: id, limit: 5 } }),
       ]);
-      setAttendance(Array.isArray(att) ? att : att?.items || []);
-      setLeaves(Array.isArray(lve) ? lve : lve?.items || []);
-      setPayrolls(Array.isArray(pay) ? pay : pay?.items || []);
+      setAttendance(normalizeListPayload(att) as AttendanceRow[]);
+      setLeaves(normalizeListPayload(lve) as LeaveRequest[]);
+      setPayrolls(normalizeListPayload(pay) as Payroll[]);
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : 'Không thể tải chi tiết nhân sự');
     } finally {
@@ -137,7 +137,7 @@ export function HrOperationsBoard() {
   };
 
   const handleArchiveEmployee = async () => {
-    if (!selectedEmployee || !canMutate || isArchivingEmployee) return;
+    if (!selectedEmployee || !canDelete || isArchivingEmployee) return;
     if (!window.confirm(`Lưu trữ nhân viên ${selectedEmployee.fullName || selectedEmployee.id}?`)) {
       return;
     }
@@ -176,7 +176,7 @@ export function HrOperationsBoard() {
     { key: 'joinDate', label: 'Ngày vào', render: (e) => toDateTime(e.joinDate) },
   ];
 
-  const bulkActions: StandardTableBulkAction<Employee>[] = canMutate
+  const bulkActions: StandardTableBulkAction<Employee>[] = canDelete
     ? [
         {
           key: 'bulk-archive-employees',
@@ -223,7 +223,7 @@ export function HrOperationsBoard() {
       ]
     : [];
 
-  if (!canView) return <div style={{ padding: '2rem', textAlign: 'center' }}>Hạn chế truy cập module nhân sự.</div>;
+  if (!canView) return null;
 
   return (
     <div className="hr-board">
@@ -371,16 +371,22 @@ export function HrOperationsBoard() {
 
             {/* Footer Actions */}
             <div style={{ display: 'flex', gap: '1rem', paddingTop: '1.5rem', borderTop: '1px solid var(--line)' }}>
-              <button className="btn btn-primary" style={{ flex: 1 }}><CheckCircle2 size={16} /> Phê duyệt phép</button>
+              {canApprove && (
+                <button className="btn btn-primary" style={{ flex: 1 }}>
+                  <CheckCircle2 size={16} /> Phê duyệt phép
+                </button>
+              )}
               <button className="btn btn-ghost" style={{ flex: 1 }}><FileText size={16} /> Bảng lương</button>
-              <button
-                className="btn btn-danger"
-                style={{ flex: 1 }}
-                onClick={handleArchiveEmployee}
-                disabled={!canMutate || isArchivingEmployee || String(selectedEmployee.status || '').toUpperCase() === 'ARCHIVED'}
-              >
-                <Trash2 size={16} /> {isArchivingEmployee ? 'Đang lưu trữ...' : 'Lưu trữ nhân viên'}
-              </button>
+              {canDelete && String(selectedEmployee.status || '').toUpperCase() !== 'ARCHIVED' && (
+                <button
+                  className="btn btn-danger"
+                  style={{ flex: 1 }}
+                  onClick={handleArchiveEmployee}
+                  disabled={isArchivingEmployee}
+                >
+                  <Trash2 size={16} /> {isArchivingEmployee ? 'Đang lưu trữ...' : 'Lưu trữ nhân viên'}
+                </button>
+              )}
             </div>
           </div>
         )}

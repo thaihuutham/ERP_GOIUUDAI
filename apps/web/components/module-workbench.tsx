@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, RefreshCw, Filter, FileText, LayoutDashboard, ChevronRight, Database, Edit2, Trash2, CheckCircle2 } from 'lucide-react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
-import { canRunAction, type UserRole } from '../lib/rbac';
+import { inferPermissionActionFromRequest } from '../lib/access-policy';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import {
   formatBulkSummary,
@@ -20,6 +20,7 @@ import type {
   ModuleFeature
 } from '../lib/module-ui';
 import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import {
   StandardDataTable,
   ColumnDefinition,
@@ -203,7 +204,8 @@ function ActionForm({
   );
 }
 
-function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; moduleKey: string; role: UserRole }) {
+function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKey: string }) {
+  const { canAction } = useAccessPolicy();
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -290,10 +292,13 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
     }
   };
 
+  const canExecuteFeatureAction = (action: FeatureAction) =>
+    canAction(moduleKey, inferPermissionActionFromRequest(action.method, action.endpoint));
+
   const updateAction = feature.actions.find((action) =>
     (action.method === 'PATCH' || action.method === 'PUT') &&
     (action.endpoint.includes(':id') || action.endpoint.includes(':code')) &&
-    canRunAction({ role, moduleKey, action })
+    canExecuteFeatureAction(action)
   );
 
   const tableRows = rows as TableRow[];
@@ -315,7 +320,7 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
 
   const createAction = feature.actions.find((action) => action.method === 'POST' && !action.endpoint.includes(':id'));
   const rowActions = feature.actions.filter(
-    (action) => action !== createAction && canRunAction({ role, moduleKey, action })
+    (action) => action !== createAction && canExecuteFeatureAction(action)
   );
 
   const bulkActionCandidates = useMemo(
@@ -572,7 +577,7 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
            )}
         </div>
         <div className="toolbar-right">
-          {createAction && canRunAction({ role, moduleKey, action: createAction }) && (
+          {createAction && canExecuteFeatureAction(createAction) && (
             <button className="btn btn-primary" onClick={() => setActiveAction(createAction)}>
               <Plus size={16} /> {createAction.label}
             </button>
@@ -684,7 +689,6 @@ function FeaturePanel({ feature, moduleKey, role }: { feature: ModuleFeature; mo
 }
 
 export function ModuleWorkbench({ module }: { module: ModuleDefinition }) {
-  const { role } = useUserRole();
   const [activeFeatureKey, setActiveFeatureKey] = useState(module.features[0]?.key ?? '');
 
   const activeFeature = module.features.find((f) => f.key === activeFeatureKey) ?? module.features[0];
@@ -734,7 +738,7 @@ export function ModuleWorkbench({ module }: { module: ModuleDefinition }) {
       </div>
 
       <div style={{ minHeight: '600px' }}>
-        {activeFeature && <FeaturePanel key={activeFeature.key} feature={activeFeature} moduleKey={module.key} role={role} />}
+        {activeFeature && <FeaturePanel key={activeFeature.key} feature={activeFeature} moduleKey={module.key} />}
       </div>
     </article>
   );

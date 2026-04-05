@@ -379,6 +379,58 @@ describe('SettingsPolicyService', () => {
     expect(assistantPolicy.allowedModules).toEqual(['sales', 'finance']);
   });
 
+  it('normalizes access_security.iamV2 with safe defaults', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('access_security', {
+      iamV2: {
+        mode: '',
+        enforcementModules: ['CRM', 'sales', 'crm']
+      }
+    }, {
+      reason: 'normalize iam v2 defaults'
+    });
+
+    const accessSecurity = result.data as Record<string, unknown>;
+    const iamV2 = (accessSecurity.iamV2 ?? {}) as Record<string, unknown>;
+
+    expect(iamV2.enabled).toBe(false);
+    expect(iamV2.mode).toBe('SHADOW');
+    expect(iamV2.enforcementModules).toEqual(['crm', 'sales']);
+    expect(iamV2.protectAdminCore).toBe(true);
+    expect(iamV2.denySelfElevation).toBe(true);
+  });
+
+  it('treats access_security.iamV2.enforcementModules token ALL as entire-system scope', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('access_security', {
+      iamV2: {
+        enabled: true,
+        mode: 'ENFORCE',
+        enforcementModules: ['ALL', 'crm', 'sales']
+      }
+    }, {
+      reason: 'enable iam v2 for all modules'
+    });
+
+    const accessSecurity = result.data as Record<string, unknown>;
+    const iamV2 = (accessSecurity.iamV2 ?? {}) as Record<string, unknown>;
+
+    expect(iamV2.enabled).toBe(true);
+    expect(iamV2.mode).toBe('ENFORCE');
+    expect(iamV2.enforcementModules).toEqual([]);
+    expect(result.validation.warnings).toEqual([]);
+  });
+
   it('normalizes managed lists for access_security and finance_controls', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();

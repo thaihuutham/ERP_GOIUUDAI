@@ -16,11 +16,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 import { Badge, statusToBadge } from './ui/badge';
@@ -143,9 +142,11 @@ function readSelectedTags(event: ChangeEvent<HTMLSelectElement>) {
 }
 
 export function CrmCustomersBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'crm');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('crm');
+  const canCreate = canAction('crm', 'CREATE');
+  const canUpdate = canAction('crm', 'UPDATE');
+  const canDelete = canAction('crm', 'DELETE');
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
@@ -195,8 +196,7 @@ export function CrmCustomersBoard() {
       const payload = await apiRequest<any>('/crm/customers', {
         query: { q: search, status: status !== 'ALL' ? status : undefined, limit: FETCH_LIMIT }
       });
-      const data = Array.isArray(payload) ? payload : (payload as any)?.items || [];
-      setCustomers(data);
+      setCustomers(normalizeListPayload(payload) as Customer[]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải dữ liệu');
     } finally {
@@ -247,7 +247,7 @@ export function CrmCustomersBoard() {
 
   const handleCreateCustomer = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canCreate) return;
     setIsCreating(true);
     try {
       await apiRequest('/crm/customers', {
@@ -275,7 +275,7 @@ export function CrmCustomersBoard() {
   };
 
   const handleSaveCustomer = async (id: string | number, values: Partial<Customer>) => {
-    if (!canMutate) return;
+    if (!canUpdate) return;
     try {
       await apiRequest(`/crm/customers/${id}`, {
         method: 'PATCH',
@@ -290,7 +290,7 @@ export function CrmCustomersBoard() {
   };
 
   const handleSaveDetailProfile = async () => {
-    if (!selectedCustomer || !canMutate) return;
+    if (!selectedCustomer || !canUpdate) return;
     setIsSavingDetail(true);
     try {
       await apiRequest(`/crm/customers/${selectedCustomer.id}`, {
@@ -318,7 +318,7 @@ export function CrmCustomersBoard() {
   };
 
   const handleArchiveCustomer = async () => {
-    if (!selectedCustomer || !canMutate || isArchivingCustomer) return;
+    if (!selectedCustomer || !canDelete || isArchivingCustomer) return;
     if (!window.confirm(`Lưu trữ khách hàng ${selectedCustomer.fullName || selectedCustomer.id}?`)) {
       return;
     }
@@ -448,61 +448,68 @@ export function CrmCustomersBoard() {
     return normalized;
   };
 
-  const bulkActions: StandardTableBulkAction<Customer>[] = canMutate
-    ? [
-        {
-          key: 'bulk-status-active',
-          label: 'Set ACTIVE',
-          tone: 'primary',
-          execute: async () =>
-            runCustomerBulkAction('Set trạng thái ACTIVE', async (customerId) => {
-              await apiRequest(`/crm/customers/${customerId}`, {
-                method: 'PATCH',
-                body: { status: 'ACTIVE' }
-              });
-            })
-        },
-        {
-          key: 'bulk-status-inactive',
-          label: 'Set INACTIVE',
-          tone: 'ghost',
-          execute: async () =>
-            runCustomerBulkAction('Set trạng thái INACTIVE', async (customerId) => {
-              await apiRequest(`/crm/customers/${customerId}`, {
-                method: 'PATCH',
-                body: { status: 'INACTIVE' }
-              });
-            })
-        },
-        {
-          key: 'bulk-status-draft',
-          label: 'Set DRAFT',
-          tone: 'ghost',
-          execute: async () =>
-            runCustomerBulkAction('Set trạng thái DRAFT', async (customerId) => {
-              await apiRequest(`/crm/customers/${customerId}`, {
-                method: 'PATCH',
-                body: { status: 'DRAFT' }
-              });
-            })
-        },
-        {
-          key: 'bulk-archive-customers',
-          label: 'Archive',
-          tone: 'danger',
-          confirmMessage: (rows) => `Lưu trữ ${rows.length} khách hàng đã chọn?`,
-          execute: async () =>
-            runCustomerBulkAction('Lưu trữ khách hàng', async (customerId) => {
-              await apiRequest(`/crm/customers/${customerId}`, {
-                method: 'DELETE'
-              });
-            })
-        }
-      ]
-    : [];
+  const bulkActions = useMemo<StandardTableBulkAction<Customer>[]>(() => {
+    const actions: StandardTableBulkAction<Customer>[] = [];
+
+    if (canUpdate) {
+      actions.push({
+        key: 'bulk-status-active',
+        label: 'Set ACTIVE',
+        tone: 'primary',
+        execute: async () =>
+          runCustomerBulkAction('Set trạng thái ACTIVE', async (customerId) => {
+            await apiRequest(`/crm/customers/${customerId}`, {
+              method: 'PATCH',
+              body: { status: 'ACTIVE' }
+            });
+          })
+      });
+      actions.push({
+        key: 'bulk-status-inactive',
+        label: 'Set INACTIVE',
+        tone: 'ghost',
+        execute: async () =>
+          runCustomerBulkAction('Set trạng thái INACTIVE', async (customerId) => {
+            await apiRequest(`/crm/customers/${customerId}`, {
+              method: 'PATCH',
+              body: { status: 'INACTIVE' }
+            });
+          })
+      });
+      actions.push({
+        key: 'bulk-status-draft',
+        label: 'Set DRAFT',
+        tone: 'ghost',
+        execute: async () =>
+          runCustomerBulkAction('Set trạng thái DRAFT', async (customerId) => {
+            await apiRequest(`/crm/customers/${customerId}`, {
+              method: 'PATCH',
+              body: { status: 'DRAFT' }
+            });
+          })
+      });
+    }
+
+    if (canDelete) {
+      actions.push({
+        key: 'bulk-archive-customers',
+        label: 'Archive',
+        tone: 'danger',
+        confirmMessage: (rows) => `Lưu trữ ${rows.length} khách hàng đã chọn?`,
+        execute: async () =>
+          runCustomerBulkAction('Lưu trữ khách hàng', async (customerId) => {
+            await apiRequest(`/crm/customers/${customerId}`, {
+              method: 'DELETE'
+            });
+          })
+      });
+    }
+
+    return actions;
+  }, [canUpdate, canDelete]);
 
   if (!canView) {
-    return <div style={{ padding: '2rem', textAlign: 'center' }}>Bạn không có quyền truy cập module này.</div>;
+    return null;
   }
 
   return (
@@ -540,16 +547,16 @@ export function CrmCustomersBoard() {
           <button className="btn btn-ghost">
             <Upload size={16} /> Import
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              if (!canMutate) return;
-              setIsCreatePanelOpen(true);
-            }}
-            disabled={!canMutate}
-          >
-            <Plus size={16} /> Khách hàng
-          </button>
+          {canCreate && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setIsCreatePanelOpen(true);
+              }}
+            >
+              <Plus size={16} /> Khách hàng
+            </button>
+          )}
         </div>
       </div>
 
@@ -560,7 +567,7 @@ export function CrmCustomersBoard() {
         storageKey={CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY}
         isLoading={isLoading}
         onRowClick={(c) => setSelectedCustomer(c)}
-        editableKeys={canMutate ? ['fullName', 'phone', 'email', 'customerStage', 'status'] : []}
+        editableKeys={canUpdate ? ['fullName', 'phone', 'email', 'customerStage', 'status'] : []}
         onSaveRow={handleSaveCustomer}
         enableRowSelection
         selectedRowIds={selectedRowIds}
@@ -722,7 +729,7 @@ export function CrmCustomersBoard() {
                     className="btn btn-primary"
                     style={{ flex: 1 }}
                     onClick={handleSaveDetailProfile}
-                    disabled={isSavingDetail || !canMutate}
+                    disabled={isSavingDetail}
                   >
                     {isSavingDetail ? 'Đang lưu...' : 'Lưu hồ sơ'}
                   </button>
@@ -740,29 +747,31 @@ export function CrmCustomersBoard() {
                 </>
               ) : (
                 <>
-                  <button
-                    className="btn btn-primary"
-                    style={{ flex: 1 }}
-                    onClick={() => {
-                      if (!canMutate) return;
-                      setDetailForm(buildDetailForm(selectedCustomer));
-                      setIsDetailEditing(true);
-                    }}
-                    disabled={!canMutate}
-                  >
-                    Chỉnh sửa hồ sơ
-                  </button>
+                  {canUpdate && (
+                    <button
+                      className="btn btn-primary"
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        setDetailForm(buildDetailForm(selectedCustomer));
+                        setIsDetailEditing(true);
+                      }}
+                    >
+                      Chỉnh sửa hồ sơ
+                    </button>
+                  )}
                   <button className="btn btn-ghost" style={{ flex: 1 }} disabled>
                     Gửi thông báo
                   </button>
-                  <button
-                    className="btn btn-danger"
-                    style={{ flex: 1 }}
-                    onClick={handleArchiveCustomer}
-                    disabled={!canMutate || isArchivingCustomer || String(selectedCustomer.status || '').toUpperCase() === 'ARCHIVED'}
-                  >
-                    <Trash2 size={16} /> {isArchivingCustomer ? 'Đang lưu trữ...' : 'Lưu trữ'}
-                  </button>
+                  {canDelete && String(selectedCustomer.status || '').toUpperCase() !== 'ARCHIVED' && (
+                    <button
+                      className="btn btn-danger"
+                      style={{ flex: 1 }}
+                      onClick={handleArchiveCustomer}
+                      disabled={isArchivingCustomer}
+                    >
+                      <Trash2 size={16} /> {isArchivingCustomer ? 'Đang lưu trữ...' : 'Lưu trữ'}
+                    </button>
+                  )}
                 </>
               )}
               <a

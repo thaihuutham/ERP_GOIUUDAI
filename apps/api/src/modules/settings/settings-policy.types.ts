@@ -97,6 +97,13 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       superAdminIds: [],
       superAdminEmails: []
     },
+    iamV2: {
+      enabled: false,
+      mode: 'SHADOW',
+      enforcementModules: [],
+      protectAdminCore: true,
+      denySelfElevation: true
+    },
     passwordPolicy: {
       minLength: 8,
       requireUppercase: true,

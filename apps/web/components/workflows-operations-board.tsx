@@ -2,11 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, FileText, GitBranch, RefreshCw, SendHorizonal, ShieldAlert } from 'lucide-react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { SidePanel } from './ui/side-panel';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 
@@ -220,13 +219,7 @@ function workflowActionLabel(action: WorkflowTaskAction) {
 }
 
 function normalizeList<T>(payload: unknown): T[] {
-  if (Array.isArray(payload)) {
-    return payload as T[];
-  }
-  if (payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown[] }).items)) {
-    return (payload as { items: T[] }).items;
-  }
-  return [];
+  return normalizeListPayload(payload) as T[];
 }
 
 function toStatusBadgeClass(status: string) {
@@ -295,8 +288,8 @@ function buildDefinitionJson(draft: BuilderDraft) {
 }
 
 export function WorkflowsOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'workflows');
+  const { canModule } = useAccessPolicy();
+  const canView = canModule('workflows');
 
   const [activeTab, setActiveTab] = useState<TabKey>('inbox');
   const [actorId, setActorId] = useState('manager_1');
@@ -878,16 +871,7 @@ export function WorkflowsOperationsBoard() {
   );
 
   if (!canView) {
-    return (
-      <article className="module-workbench">
-        <header className="module-header">
-          <div>
-            <h1>Truy cập bị giới hạn</h1>
-            <p>Bạn chưa có quyền vào phân hệ Quy trình.</p>
-          </div>
-        </header>
-      </article>
-    );
+    return null;
   }
 
   return (

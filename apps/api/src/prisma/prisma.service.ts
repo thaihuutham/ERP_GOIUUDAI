@@ -6,9 +6,10 @@ import { AuditOperationType, Prisma, PrismaClient } from '@prisma/client';
 import { AUDIT_ACTION_CONTEXT_KEY, AUDIT_REQUEST_CONTEXT_KEY } from '../common/audit/audit.constants';
 import { AppendAuditLogInput, AuditActionContext, AuditRequestContext } from '../common/audit/audit.types';
 import { computeChangedFields, createAuditHash, maskSensitiveFields } from '../common/audit/audit.util';
-import { AUTH_USER_CONTEXT_KEY } from '../common/request/request.constants';
+import { AUTH_USER_CONTEXT_KEY, IAM_SCOPE_CONTEXT_KEY } from '../common/request/request.constants';
 import { TENANT_CONTEXT_KEY } from '../common/tenant/tenant.constants';
 import { createTenantPrismaExtension } from './tenant-prisma.extension';
+import { createIamScopePrismaExtension } from './iam-scope-prisma.extension';
 
 const AUDIT_WRITE_OPERATIONS = new Set([
   'create',
@@ -48,10 +49,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     this.auditModelDenylist = this.buildAuditModelDenylist();
 
     const resolveTenantId = () => this.cls.get(TENANT_CONTEXT_KEY) ?? this.config.get<string>('DEFAULT_TENANT_ID', 'GOIUUDAI');
+    const resolveIamScope = () => this.cls.get(IAM_SCOPE_CONTEXT_KEY);
 
     this.client = this.baseClient
       .$extends(this.createAuditPrismaExtension())
-      .$extends(createTenantPrismaExtension(resolveTenantId)) as PrismaClient;
+      .$extends(createTenantPrismaExtension(resolveTenantId))
+      .$extends(createIamScopePrismaExtension(resolveIamScope)) as PrismaClient;
   }
 
   private createAuditPrismaExtension() {

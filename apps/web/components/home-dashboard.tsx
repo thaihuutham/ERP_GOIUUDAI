@@ -17,9 +17,10 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
-import { getVisibleModuleCards } from '../lib/modules';
+import { moduleCards } from '../lib/modules';
 import { formatRuntimeCurrency } from '../lib/runtime-format';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
+import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
 import { StatCard, SimpleAreaChart, SimplePieChart, Badge, Skeleton } from './ui';
 import { useSmartPolling } from '../lib/use-smart-polling';
@@ -322,6 +323,7 @@ function formatMetricValue(value: number | undefined, formatter?: (value: number
 
 export function HomeDashboard() {
   const { role } = useUserRole();
+  const { canModule, canRoute } = useAccessPolicy();
   const [overviewState, setOverviewState] = useState<WidgetState<Overview | null>>(() =>
     createWidgetState<Overview | null>(null)
   );
@@ -336,7 +338,14 @@ export function HomeDashboard() {
   );
   const reportsRuntimeCacheRef = useRef<{ enabled: boolean; checkedAt: number } | null>(null);
 
-  const visibleModules = useMemo(() => getVisibleModuleCards(role), [role]);
+  const canViewReports = canModule('reports');
+  const canViewWorkflows = canModule('workflows');
+  const canViewAudit = canModule('audit');
+  const visibleModules = useMemo(
+    () =>
+      moduleCards.filter((module) => canModule(module.key) && canRoute(`/modules/${module.key}`)),
+    [canModule, canRoute]
+  );
   const reportsNotice = overviewState.status === 'disabled' ? REPORTS_DISABLED_NOTICE : null;
 
   const fetchReportsEnabled = useCallback(async (force = false) => {
@@ -370,6 +379,16 @@ export function HomeDashboard() {
         : prev
     );
 
+    if (!canViewReports) {
+      setOverviewState((prev) => ({
+        ...prev,
+        status: 'disabled',
+        data: null,
+        error: null
+      }));
+      return;
+    }
+
     const reportsEnabled = await fetchReportsEnabled(true);
     if (!reportsEnabled) {
       setOverviewState((prev) => ({
@@ -402,7 +421,7 @@ export function HomeDashboard() {
         };
       });
     }
-  }, [fetchReportsEnabled]);
+  }, [canViewReports, fetchReportsEnabled]);
 
   const loadSalesWidget = useCallback(async () => {
     setSalesState((prev) =>
@@ -414,6 +433,16 @@ export function HomeDashboard() {
           }
         : prev
     );
+
+    if (!canViewReports) {
+      setSalesState((prev) => ({
+        ...prev,
+        status: 'disabled',
+        data: null,
+        error: null
+      }));
+      return;
+    }
 
     if (overviewState.status === 'disabled') {
       setSalesState((prev) => ({
@@ -458,7 +487,7 @@ export function HomeDashboard() {
         };
       });
     }
-  }, [fetchReportsEnabled, overviewState.status]);
+  }, [canViewReports, fetchReportsEnabled, overviewState.status]);
 
   const loadTasksWidget = useCallback(async () => {
     setTasksState((prev) =>
@@ -470,6 +499,16 @@ export function HomeDashboard() {
           }
         : prev
     );
+
+    if (!canViewWorkflows) {
+      setTasksState({
+        status: 'disabled',
+        data: [],
+        error: null,
+        lastUpdatedAt: new Date().toISOString()
+      });
+      return;
+    }
 
     try {
       const payload = await apiRequest('/workflows/inbox', { query: { limit: 5 } });
@@ -491,12 +530,12 @@ export function HomeDashboard() {
         };
       });
     }
-  }, []);
+  }, [canViewWorkflows]);
 
   const loadActivitiesWidget = useCallback(async () => {
-    if (role === 'STAFF') {
+    if (!canViewAudit) {
       setActivitiesState({
-        status: 'ready',
+        status: 'disabled',
         data: [],
         error: null,
         lastUpdatedAt: new Date().toISOString()
@@ -534,7 +573,7 @@ export function HomeDashboard() {
         };
       });
     }
-  }, [role]);
+  }, [canViewAudit]);
 
   useSmartPolling(loadOverviewWidget, POLL_INTERVALS.overview);
   useSmartPolling(loadSalesWidget, POLL_INTERVALS.sales);
@@ -653,47 +692,49 @@ export function HomeDashboard() {
             )}
           </div>
           
-          <div className="quick-tasks-panel">
-            <div className="dashboard-widget-header">
-              <h3><ListTodo size={16} /> Việc cần làm nhanh</h3>
-              {tasksStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(tasksState.status)}`}>{tasksStatusLabel}</span>}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.2rem' }}>
-              {tasksState.status === 'loading' && tasksState.data.length === 0 && (
-                <>
-                  <Skeleton height="42px" />
-                  <Skeleton height="42px" />
-                  <Skeleton height="42px" />
-                </>
-              )}
-              {(tasksState.status === 'error' || tasksState.status === 'disabled') && tasksState.data.length === 0 && (
-                <p className="dashboard-widget-note is-error">Không thể tải danh sách công việc.</p>
-              )}
-              {tasksState.status !== 'loading' && tasksState.data.length === 0 && tasksState.status !== 'error' && tasksState.status !== 'disabled' && (
-                <p className="dashboard-widget-note">Không có công việc chờ duyệt.</p>
-              )}
-              {tasksState.data.map((task) => (
-                <div key={task.id} className="quick-task-item">
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    {task.status === 'completed' ? (
-                      <CheckCircle2 size={14} color="var(--success)" />
-                    ) : task.status === 'urgent' ? (
-                      <AlertCircle size={14} color="var(--danger)" />
-                    ) : (
-                      <Clock size={14} color="var(--text-muted)" />
-                    )}
-                    <span style={{ fontWeight: 500 }}>{task.title}</span>
+          {canViewWorkflows ? (
+            <div className="quick-tasks-panel">
+              <div className="dashboard-widget-header">
+                <h3><ListTodo size={16} /> Việc cần làm nhanh</h3>
+                {tasksStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(tasksState.status)}`}>{tasksStatusLabel}</span>}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.2rem' }}>
+                {tasksState.status === 'loading' && tasksState.data.length === 0 && (
+                  <>
+                    <Skeleton height="42px" />
+                    <Skeleton height="42px" />
+                    <Skeleton height="42px" />
+                  </>
+                )}
+                {(tasksState.status === 'error' || tasksState.status === 'disabled') && tasksState.data.length === 0 && (
+                  <p className="dashboard-widget-note is-error">Không thể tải danh sách công việc.</p>
+                )}
+                {tasksState.status !== 'loading' && tasksState.data.length === 0 && tasksState.status !== 'error' && tasksState.status !== 'disabled' && (
+                  <p className="dashboard-widget-note">Không có công việc chờ duyệt.</p>
+                )}
+                {tasksState.data.map((task) => (
+                  <div key={task.id} className="quick-task-item">
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {task.status === 'completed' ? (
+                        <CheckCircle2 size={14} color="var(--success)" />
+                      ) : task.status === 'urgent' ? (
+                        <AlertCircle size={14} color="var(--danger)" />
+                      ) : (
+                        <Clock size={14} color="var(--text-muted)" />
+                      )}
+                      <span style={{ fontWeight: 500 }}>{task.title}</span>
+                    </div>
+                    <Badge variant={task.status === 'urgent' ? 'danger' : task.status === 'completed' ? 'success' : 'neutral'}>
+                      {task.module}
+                    </Badge>
                   </div>
-                  <Badge variant={task.status === 'urgent' ? 'danger' : task.status === 'completed' ? 'success' : 'neutral'}>
-                    {task.module}
-                  </Badge>
-                </div>
-              ))}
+                ))}
+              </div>
+              {tasksState.status === 'stale' && tasksState.error && (
+                <p className="dashboard-widget-note is-stale">{tasksState.error}</p>
+              )}
             </div>
-            {tasksState.status === 'stale' && tasksState.error && (
-              <p className="dashboard-widget-note is-stale">{tasksState.error}</p>
-            )}
-          </div>
+          ) : null}
         </div>
       </section>
 
@@ -728,23 +769,23 @@ export function HomeDashboard() {
             {activitiesStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(activitiesState.status)}`}>{activitiesStatusLabel}</span>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {role === 'STAFF' && (
+            {!canViewAudit && (
               <p className="dashboard-widget-note">Feed audit chỉ hiển thị cho MANAGER/ADMIN theo policy bảo mật.</p>
             )}
-            {role !== 'STAFF' && activitiesState.status === 'loading' && activitiesState.data.length === 0 && (
+            {canViewAudit && activitiesState.status === 'loading' && activitiesState.data.length === 0 && (
               <>
                 <Skeleton height="28px" />
                 <Skeleton height="28px" />
                 <Skeleton height="28px" />
               </>
             )}
-            {role !== 'STAFF' && (activitiesState.status === 'error' || activitiesState.status === 'disabled') && activitiesState.data.length === 0 && (
+            {canViewAudit && (activitiesState.status === 'error' || activitiesState.status === 'disabled') && activitiesState.data.length === 0 && (
               <p className="dashboard-widget-note is-error">Không thể tải activity feed.</p>
             )}
-            {role !== 'STAFF' && activitiesState.status !== 'loading' && activitiesState.data.length === 0 && activitiesState.status !== 'error' && activitiesState.status !== 'disabled' && (
+            {canViewAudit && activitiesState.status !== 'loading' && activitiesState.data.length === 0 && activitiesState.status !== 'error' && activitiesState.status !== 'disabled' && (
               <p className="dashboard-widget-note">Chưa có hoạt động mới.</p>
             )}
-            {role !== 'STAFF' && activitiesState.data.map((activity) => (
+            {canViewAudit && activitiesState.data.map((activity) => (
               <div key={activity.id} className="activity-item">
                 <div className="activity-dot" style={{ backgroundColor: activity.color }} />
                 <span>{activity.text}</span>
@@ -752,7 +793,7 @@ export function HomeDashboard() {
               </div>
             ))}
           </div>
-          {role !== 'STAFF' && activitiesState.status === 'stale' && activitiesState.error && (
+          {canViewAudit && activitiesState.status === 'stale' && activitiesState.error && (
             <p className="dashboard-widget-note is-stale">{activitiesState.error}</p>
           )}
         </div>

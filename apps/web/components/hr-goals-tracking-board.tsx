@@ -17,7 +17,7 @@ import {
   Users,
   XCircle
 } from 'lucide-react';
-import { apiRequest } from '../lib/api-client';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { SidePanel } from './ui/side-panel';
 
 type GoalStatus = 'DRAFT' | 'PENDING' | 'ACTIVE' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -293,7 +293,7 @@ export function HrGoalsTrackingBoard() {
     setIsTimelineLoading(true);
     try {
       const payload = await apiRequest<TimelineItem[]>(`/hr/goals/${goalId}/timeline`);
-      setTimeline(Array.isArray(payload) ? payload : []);
+      setTimeline(normalizeListPayload(payload) as TimelineItem[]);
     } catch {
       setTimeline([]);
     } finally {

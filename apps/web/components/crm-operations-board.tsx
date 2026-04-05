@@ -2,10 +2,9 @@
 
 import Link from 'next/link';
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { Badge, statusToBadge } from './ui';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -417,16 +416,7 @@ function formatTaxonomyLabel(value: string) {
 }
 
 function normalizeArray<T>(payload: unknown): T[] {
-  if (Array.isArray(payload)) {
-    return payload as T[];
-  }
-  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const mapped = payload as Record<string, unknown>;
-    if (Array.isArray(mapped.items)) {
-      return mapped.items as T[];
-    }
-  }
-  return [];
+  return normalizeListPayload(payload) as T[];
 }
 
 function parseTagsInput(raw: string) {
@@ -456,9 +446,12 @@ function readSelectedOptions(event: ChangeEvent<HTMLSelectElement>) {
 
 
 export function CrmOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'crm');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('crm');
+  const canCreate = canAction('crm', 'CREATE');
+  const canUpdate = canAction('crm', 'UPDATE');
+  const canDelete = canAction('crm', 'DELETE');
+  const canApprove = canAction('crm', 'APPROVE');
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
@@ -955,7 +948,7 @@ export function CrmOperationsBoard() {
 
   const onCreateCustomer = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canCreate) return;
 
     setErrorMessage(null);
     setResultMessage(null);
@@ -1003,7 +996,7 @@ export function CrmOperationsBoard() {
 
   const onUpdateCustomer = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate || !selectedCustomer) return;
+    if (!canUpdate || !selectedCustomer) return;
 
     setErrorMessage(null);
     setResultMessage(null);
@@ -1035,7 +1028,7 @@ export function CrmOperationsBoard() {
 
   const onCreateInteraction = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canCreate) return;
 
     setErrorMessage(null);
     setResultMessage(null);
@@ -1084,7 +1077,7 @@ export function CrmOperationsBoard() {
 
   const onCreatePaymentRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canCreate) return;
 
     setErrorMessage(null);
     setResultMessage(null);
@@ -1139,7 +1132,7 @@ export function CrmOperationsBoard() {
   };
 
   const onMarkPaid = async (paymentRequestId: string) => {
-    if (!canMutate) return;
+    if (!canApprove) return;
 
     setErrorMessage(null);
     setResultMessage(null);
@@ -1156,7 +1149,7 @@ export function CrmOperationsBoard() {
 
   const onMergeCustomers = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canMutate) return;
+    if (!canDelete) return;
 
     setErrorMessage(null);
     setResultMessage(null);
@@ -1239,7 +1232,7 @@ export function CrmOperationsBoard() {
   };
 
   const onApplyCustomerBulkAction = async () => {
-    if (!canMutate || customerBulkAction === 'NONE' || selectedCustomerIds.length === 0) {
+    if (!canUpdate || customerBulkAction === 'NONE' || selectedCustomerIds.length === 0) {
       return;
     }
 
@@ -1289,6 +1282,9 @@ export function CrmOperationsBoard() {
     event.target.value = '';
 
     if (!file) {
+      return;
+    }
+    if (!canCreate) {
       return;
     }
     if (!file.name.toLowerCase().endsWith('.csv')) {
@@ -1376,20 +1372,7 @@ export function CrmOperationsBoard() {
   };
 
   if (!canView) {
-    return (
-      <article className="module-workbench">
-        <header className="module-header">
-          <div>
-            <h1>CRM Operations Board</h1>
-            <p>Bạn không có quyền truy cập phân hệ CRM với vai trò hiện tại.</p>
-          </div>
-          <ul>
-            <li>Vai trò hiện tại: {role}</li>
-            <li>Đổi role ở toolbar để mô phỏng quyền.</li>
-          </ul>
-        </header>
-      </article>
-    );
+    return null;
   }
 
   return (
@@ -1413,7 +1396,6 @@ export function CrmOperationsBoard() {
 
       {errorMessage ? <p className="banner banner-error">{errorMessage}</p> : null}
       {resultMessage ? <p className="banner banner-success">{resultMessage}</p> : null}
-      {!canMutate ? <p className="banner banner-warning">Vai trò `{role}` chỉ có quyền xem trong module này.</p> : null}
 
       <section className="crm-grid">
         <section className="panel-surface crm-panel">
@@ -1426,26 +1408,29 @@ export function CrmOperationsBoard() {
 
           <div className="crm-customer-toolbar">
             <div className="action-buttons">
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!canMutate}
-                onClick={() => {
-                  const target = document.getElementById('crm-create-name');
-                  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  target?.focus();
-                }}
-              >
-                + Khách hàng mới
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                disabled={!canMutate || isImportingCustomers}
-                onClick={() => importFileInputRef.current?.click()}
-              >
-                {isImportingCustomers ? 'Đang nhập...' : 'Nhập khách hàng'}
-              </button>
+              {canCreate ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const target = document.getElementById('crm-create-name');
+                    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    target?.focus();
+                  }}
+                >
+                  + Khách hàng mới
+                </button>
+              ) : null}
+              {canCreate ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={isImportingCustomers}
+                  onClick={() => importFileInputRef.current?.click()}
+                >
+                  {isImportingCustomers ? 'Đang nhập...' : 'Nhập khách hàng'}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -1553,14 +1538,16 @@ export function CrmOperationsBoard() {
                 <option value="ACTIVE">Đặt ACTIVE</option>
                 <option value="INACTIVE">Đặt INACTIVE</option>
               </select>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                disabled={!canMutate || customerBulkAction === 'NONE' || selectedCustomerIds.length === 0 || isApplyingBulkAction}
-                onClick={() => void onApplyCustomerBulkAction()}
-              >
-                {isApplyingBulkAction ? 'Đang xử lý...' : 'Áp dụng'}
-              </button>
+              {canUpdate ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={customerBulkAction === 'NONE' || selectedCustomerIds.length === 0 || isApplyingBulkAction}
+                  onClick={() => void onApplyCustomerBulkAction()}
+                >
+                  {isApplyingBulkAction ? 'Đang xử lý...' : 'Áp dụng'}
+                </button>
+              ) : null}
               <button type="button" className="btn btn-ghost" onClick={onExportCustomers}>
                 Xuất Excel
               </button>
@@ -1698,8 +1685,9 @@ export function CrmOperationsBoard() {
             </div>
           </div>
 
-          <form className="form-grid" onSubmit={onCreateCustomer}>
-            <h3>Tạo khách hàng</h3>
+          {canCreate ? (
+            <form className="form-grid" onSubmit={onCreateCustomer}>
+              <h3>Tạo khách hàng</h3>
             <div className="field">
               <label htmlFor="crm-create-code">Code</label>
               <input id="crm-create-code" value={createCustomerForm.code} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, code: event.target.value }))} />
@@ -1772,14 +1760,16 @@ export function CrmOperationsBoard() {
                 ))}
               </select>
             </div>
-            <div className="action-buttons">
-              <button type="submit" className="btn btn-primary" disabled={!canMutate}>Tạo khách hàng</button>
-            </div>
-          </form>
+              <div className="action-buttons">
+                <button type="submit" className="btn btn-primary">Tạo khách hàng</button>
+              </div>
+            </form>
+          ) : null}
 
-          <form className="form-grid" onSubmit={onUpdateCustomer}>
-            <h3>Cập nhật khách hàng đang chọn</h3>
-            <p className="muted">Customer ID: {selectedCustomer ? selectedCustomer.id : '--'}</p>
+          {canUpdate ? (
+            <form className="form-grid" onSubmit={onUpdateCustomer}>
+              <h3>Cập nhật khách hàng đang chọn</h3>
+              <p className="muted">Customer ID: {selectedCustomer ? selectedCustomer.id : '--'}</p>
             <div className="field">
               <label htmlFor="crm-update-name">Họ tên</label>
               <input id="crm-update-name" value={updateCustomerForm.fullName} onChange={(event) => setUpdateCustomerForm((prev) => ({ ...prev, fullName: event.target.value }))} />
@@ -1864,10 +1854,11 @@ export function CrmOperationsBoard() {
                 ))}
               </select>
             </div>
-            <div className="action-buttons">
-              <button type="submit" className="btn btn-primary" disabled={!canMutate || !selectedCustomer}>Cập nhật khách hàng</button>
-            </div>
-          </form>
+              <div className="action-buttons">
+                <button type="submit" className="btn btn-primary" disabled={!selectedCustomer}>Cập nhật khách hàng</button>
+              </div>
+            </form>
+          ) : null}
         </section>
 
         <section className="panel-surface crm-panel">
@@ -1887,8 +1878,9 @@ export function CrmOperationsBoard() {
             </div>
           </div>
 
-          <form className="form-grid" onSubmit={onCreateInteraction}>
-            <h3>Tạo interaction</h3>
+          {canCreate ? (
+            <form className="form-grid" onSubmit={onCreateInteraction}>
+              <h3>Tạo interaction</h3>
             <div className="field">
               <label htmlFor="crm-interaction-customer-id">Customer ID</label>
               <input id="crm-interaction-customer-id" value={createInteractionForm.customerId} onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, customerId: event.target.value }))} placeholder={selectedCustomerId || 'Để trống = selected customer'} />
@@ -1975,10 +1967,11 @@ export function CrmOperationsBoard() {
               <label htmlFor="crm-interaction-content">Content</label>
               <textarea id="crm-interaction-content" required value={createInteractionForm.content} onChange={(event) => setCreateInteractionForm((prev) => ({ ...prev, content: event.target.value }))} />
             </div>
-            <div className="action-buttons">
-              <button type="submit" className="btn btn-primary" disabled={!canMutate}>Tạo interaction</button>
-            </div>
-          </form>
+              <div className="action-buttons">
+                <button type="submit" className="btn btn-primary">Tạo interaction</button>
+              </div>
+            </form>
+          ) : null}
 
           {isLoadingInteractions ? <p className="muted">Đang tải interactions...</p> : null}
           {!isLoadingInteractions && interactions.length === 0 ? <p className="muted">Chưa có interaction phù hợp.</p> : null}
@@ -2076,17 +2069,18 @@ export function CrmOperationsBoard() {
                         <td>{toDateTime(item.sentAt)}</td>
                         <td>{toDateTime(item.paidAt)}</td>
                         <td>
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            disabled={!canMutate || item.status === 'DA_THANH_TOAN'}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void onMarkPaid(item.id);
-                            }}
-                          >
-                            Mark paid
-                          </button>
+                          {canApprove && item.status !== 'DA_THANH_TOAN' ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void onMarkPaid(item.id);
+                              }}
+                            >
+                              Mark paid
+                            </button>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -2095,9 +2089,10 @@ export function CrmOperationsBoard() {
               </div>
             ) : null}
 
-            <form className="form-grid" onSubmit={onCreatePaymentRequest}>
-              <h3>Tạo payment request</h3>
-              <p className="muted">Payment đang chọn: {selectedPaymentRequest ? selectedPaymentRequest.id : '--'}</p>
+            {canCreate ? (
+              <form className="form-grid" onSubmit={onCreatePaymentRequest}>
+                <h3>Tạo payment request</h3>
+                <p className="muted">Payment đang chọn: {selectedPaymentRequest ? selectedPaymentRequest.id : '--'}</p>
               <div className="field">
                 <label htmlFor="crm-payment-customer-id">Customer ID</label>
                 <input id="crm-payment-customer-id" value={createPaymentRequestForm.customerId} onChange={(event) => setCreatePaymentRequestForm((prev) => ({ ...prev, customerId: event.target.value }))} placeholder={selectedCustomerId || 'Để trống = selected customer'} />
@@ -2146,10 +2141,11 @@ export function CrmOperationsBoard() {
                 <label htmlFor="crm-payment-note">Note</label>
                 <textarea id="crm-payment-note" value={createPaymentRequestForm.note} onChange={(event) => setCreatePaymentRequestForm((prev) => ({ ...prev, note: event.target.value }))} />
               </div>
-              <div className="action-buttons">
-                <button type="submit" className="btn btn-primary" disabled={!canMutate}>Tạo payment request</button>
-              </div>
-            </form>
+                <div className="action-buttons">
+                  <button type="submit" className="btn btn-primary">Tạo payment request</button>
+                </div>
+              </form>
+            ) : null}
           </section>
 
           <section className="panel-surface">
@@ -2187,8 +2183,9 @@ export function CrmOperationsBoard() {
               </div>
             ) : null}
 
-            <form className="form-grid" onSubmit={onMergeCustomers}>
-              <h3>Merge customers</h3>
+            {canDelete ? (
+              <form className="form-grid" onSubmit={onMergeCustomers}>
+                <h3>Merge customers</h3>
               <div className="field">
                 <label htmlFor="crm-merge-primary">Primary customer ID</label>
                 <input id="crm-merge-primary" required value={mergeForm.primaryCustomerId} onChange={(event) => setMergeForm((prev) => ({ ...prev, primaryCustomerId: event.target.value }))} />
@@ -2205,10 +2202,11 @@ export function CrmOperationsBoard() {
                 <label htmlFor="crm-merge-note">Note</label>
                 <textarea id="crm-merge-note" value={mergeForm.note} onChange={(event) => setMergeForm((prev) => ({ ...prev, note: event.target.value }))} />
               </div>
-              <div className="action-buttons">
-                <button type="submit" className="btn btn-primary" disabled={!canMutate}>Gộp khách hàng</button>
-              </div>
-            </form>
+                <div className="action-buttons">
+                  <button type="submit" className="btn btn-primary">Gộp khách hàng</button>
+                </div>
+              </form>
+            ) : null}
           </section>
         </section>
       </section>

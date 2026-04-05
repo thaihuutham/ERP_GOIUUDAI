@@ -8,6 +8,23 @@ import { RuntimeSettingsService } from '../src/common/settings/runtime-settings.
 import { ScmService } from '../src/modules/scm/scm.service';
 import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
+function unwrapEntityResponse(body: unknown) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return body as Record<string, unknown>;
+  }
+  const record = body as Record<string, unknown>;
+  const base = record.base;
+  if (!base || typeof base !== 'object' || Array.isArray(base)) {
+    return record;
+  }
+  return {
+    ...(base as Record<string, unknown>),
+    id: record.id,
+    schemaVersion: record.schemaVersion,
+    customFields: record.customFields
+  };
+}
+
 describe('SCM API flow integration', () => {
   let app: INestApplication;
   let scmService: ScmService;
@@ -107,25 +124,28 @@ describe('SCM API flow integration', () => {
         poNo: 'PO-API-001',
         totalAmount: 100
       });
+    const createdPo = unwrapEntityResponse(createRes.body);
 
     expect(createRes.status).toBe(201);
-    expect(createRes.body.lifecycleStatus).toBe('DRAFT');
+    expect(createdPo.lifecycleStatus).toBe('DRAFT');
 
     const submitRes = await request(app.getHttpServer())
       .post('/api/v1/scm/purchase-orders/po_api_1/submit')
       .set('authorization', `Bearer ${managerToken}`)
       .send({ note: 'submit for approval' });
+    const submittedPo = unwrapEntityResponse(submitRes.body);
 
     expect(submitRes.status).toBe(201);
-    expect(submitRes.body.lifecycleStatus).toBe('SUBMITTED');
+    expect(submittedPo.lifecycleStatus).toBe('SUBMITTED');
 
     const approveRes = await request(app.getHttpServer())
       .post('/api/v1/scm/purchase-orders/po_api_1/approve')
       .set('authorization', `Bearer ${managerToken}`)
       .send({ note: 'approved' });
+    const approvedPo = unwrapEntityResponse(approveRes.body);
 
     expect(approveRes.status).toBe(201);
-    expect(approveRes.body.lifecycleStatus).toBe('APPROVED');
+    expect(approvedPo.lifecycleStatus).toBe('APPROVED');
 
     const receiveRes = await request(app.getHttpServer())
       .post('/api/v1/scm/purchase-orders/po_api_1/receive')
@@ -143,10 +163,11 @@ describe('SCM API flow integration', () => {
       .post('/api/v1/scm/purchase-orders/po_api_1/close')
       .set('authorization', `Bearer ${managerToken}`)
       .send({ note: 'close po' });
+    const closedPo = unwrapEntityResponse(closeRes.body);
 
     expect(closeRes.status).toBe(201);
-    expect(closeRes.body.lifecycleStatus).toBe('CLOSED');
-    expect(closeRes.body.status).toBe('ARCHIVED');
+    expect(closedPo.lifecycleStatus).toBe('CLOSED');
+    expect(closedPo.status).toBe('ARCHIVED');
   });
 
   it('executes shipment lifecycle flow: create -> ship -> deliver', async () => {

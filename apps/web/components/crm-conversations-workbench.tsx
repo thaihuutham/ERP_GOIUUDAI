@@ -2,11 +2,10 @@
 
 import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { Badge, statusToBadge } from './ui';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
@@ -226,9 +225,10 @@ async function copyToClipboard(value: string) {
 }
 
 export function CrmConversationsWorkbench() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'crm');
-  const canMutate = role === 'MANAGER' || role === 'ADMIN';
+  const { canModule, canAction } = useAccessPolicy();
+  const canView = canModule('crm');
+  const canCreate = canAction('crm', 'CREATE');
+  const canApprove = canAction('crm', 'APPROVE');
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
@@ -295,7 +295,7 @@ export function CrmConversationsWorkbench() {
       const payload = await apiRequest<ZaloAccount[]>('/zalo/accounts', {
         query: { accountType: 'ALL' }
       });
-      setZaloAccounts(Array.isArray(payload) ? payload : []);
+      setZaloAccounts(normalizeListPayload(payload) as ZaloAccount[]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách tài khoản Zalo.');
     }
@@ -313,7 +313,7 @@ export function CrmConversationsWorkbench() {
         }
       });
 
-      const nextThreads = Array.isArray(payload?.items) ? payload.items : [];
+      const nextThreads = normalizeListPayload(payload) as ThreadRow[];
       setThreads(nextThreads);
       setSelectedThreadId((prev) => {
         if (prev && nextThreads.some((item) => item.id === prev)) {
@@ -337,7 +337,7 @@ export function CrmConversationsWorkbench() {
           limit: 120
         }
       });
-      setMessages(Array.isArray(payload?.items) ? payload.items : []);
+      setMessages(normalizeListPayload(payload) as MessageRow[]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không tải được tin nhắn.');
     } finally {
@@ -362,7 +362,7 @@ export function CrmConversationsWorkbench() {
     setIsLoadingJobs(true);
     try {
       const payload = await apiRequest<ConversationQualityJob[]>('/conversation-quality/jobs');
-      const rows = Array.isArray(payload) ? payload : [];
+      const rows = normalizeListPayload(payload) as ConversationQualityJob[];
       setJobs(rows);
       setSelectedJobId((prev) => {
         if (prev && rows.some((item) => item.id === prev)) {
@@ -385,7 +385,7 @@ export function CrmConversationsWorkbench() {
           jobId: jobId || undefined
         }
       });
-      const rows = Array.isArray(payload) ? payload : [];
+      const rows = normalizeListPayload(payload) as RunListRow[];
       setRuns(rows);
       setSelectedRunId((prev) => {
         if (prev && rows.some((item) => item.id === prev)) {
@@ -491,6 +491,10 @@ export function CrmConversationsWorkbench() {
       setErrorMessage('Nội dung gửi không được để trống.');
       return;
     }
+    if (!canCreate) {
+      setErrorMessage('Vai trò hiện tại không có quyền gửi phản hồi.');
+      return;
+    }
 
     try {
       if (selectedThread.channel === 'ZALO_PERSONAL' && selectedThread.channelAccountId) {
@@ -535,7 +539,7 @@ export function CrmConversationsWorkbench() {
   const onCreateJob = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clearNotice();
-    if (!canMutate) {
+    if (!canCreate) {
       setErrorMessage('Vai trò hiện tại không có quyền tạo lịch đánh giá.');
       return;
     }
@@ -571,7 +575,7 @@ export function CrmConversationsWorkbench() {
 
   const onRunJobNow = async (jobId: string) => {
     clearNotice();
-    if (!canMutate) {
+    if (!canApprove) {
       setErrorMessage('Vai trò hiện tại không có quyền chạy lịch.');
       return;
     }
@@ -590,7 +594,7 @@ export function CrmConversationsWorkbench() {
 
   const onBulkRunJobsNow = async () => {
     clearNotice();
-    if (!canMutate) {
+    if (!canApprove) {
       setErrorMessage('Vai trò hiện tại không có quyền chạy lịch.');
       return;
     }
@@ -653,20 +657,7 @@ export function CrmConversationsWorkbench() {
   };
 
   if (!canView) {
-    return (
-      <article className="module-workbench">
-        <header className="module-header">
-          <div>
-            <h1>Hội thoại khách hàng CRM</h1>
-            <p>Bạn không có quyền truy cập phân hệ CRM với vai trò hiện tại.</p>
-          </div>
-          <ul>
-            <li>Vai trò hiện tại: {role}</li>
-            <li>Đổi role ở toolbar để mô phỏng quyền.</li>
-          </ul>
-        </header>
-      </article>
-    );
+    return null;
   }
 
   return (
@@ -692,7 +683,6 @@ export function CrmConversationsWorkbench() {
 
       {errorMessage ? <p className="banner banner-error">{errorMessage}</p> : null}
       {resultMessage ? <p className="banner banner-success">{resultMessage}</p> : null}
-      {!canMutate ? <p className="banner banner-warning">Vai trò `{role}` chỉ có quyền xem trong module này.</p> : null}
 
       <section className="crm-grid">
         <section className="panel-surface crm-panel">
@@ -935,14 +925,16 @@ export function CrmConversationsWorkbench() {
               />
             </div>
             <div className="action-buttons">
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={!canMutate || !selectedThreadId}
-                data-testid="conversation-send-button"
-              >
-                Gửi tin nhắn
-              </button>
+              {canCreate && (
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!selectedThreadId}
+                  data-testid="conversation-send-button"
+                >
+                  Gửi tin nhắn
+                </button>
+              )}
             </div>
           </form>
 
@@ -1016,8 +1008,9 @@ export function CrmConversationsWorkbench() {
             <Badge variant={statusToBadge(selectedJob?.lastRunStatus)}>{selectedJob?.lastRunStatus || '--'}</Badge>
           </div>
 
-          <form className="form-grid" onSubmit={onCreateJob}>
-            <h3>Tạo lịch đánh giá</h3>
+          {canCreate && (
+            <form className="form-grid" onSubmit={onCreateJob}>
+              <h3>Tạo lịch đánh giá</h3>
             <div className="field">
               <label htmlFor="qc-job-name">Tên lịch</label>
               <input
@@ -1117,12 +1110,13 @@ export function CrmConversationsWorkbench() {
                 placeholder="Điều kiện bỏ qua..."
               />
             </div>
-            <div className="action-buttons">
-              <button type="submit" className="btn btn-primary" disabled={!canMutate}>
-                Tạo lịch
-              </button>
-            </div>
-          </form>
+              <div className="action-buttons">
+                <button type="submit" className="btn btn-primary">
+                  Tạo lịch
+                </button>
+              </div>
+            </form>
+          )}
 
           <section className="panel-surface">
             <div className="crm-panel-head">
@@ -1150,14 +1144,16 @@ export function CrmConversationsWorkbench() {
                 >
                   Sao chép ID
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => void onBulkRunJobsNow()}
-                  disabled={selectedJobIds.length === 0 || !canMutate}
-                >
-                  Chạy ngay mục đã chọn
-                </button>
+                {canApprove && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void onBulkRunJobsNow()}
+                    disabled={selectedJobIds.length === 0}
+                  >
+                    Chạy ngay mục đã chọn
+                  </button>
+                )}
               </div>
             </div>
             {isLoadingJobs ? <p className="muted">Đang tải lịch đánh giá...</p> : null}
@@ -1179,7 +1175,7 @@ export function CrmConversationsWorkbench() {
                       <th>Chu kỳ</th>
                       <th>Trạng thái gần nhất</th>
                       <th>Lần chạy kế tiếp</th>
-                      <th>Thao tác</th>
+                      {canApprove && <th>Thao tác</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1216,20 +1212,21 @@ export function CrmConversationsWorkbench() {
                           </Badge>
                         </td>
                         <td>{toDateTime(job.nextRunAt)}</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            disabled={!canMutate}
-                            data-testid={`run-now-${job.id}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void onRunJobNow(job.id);
-                            }}
-                          >
-                            Chạy ngay
-                          </button>
-                        </td>
+                        {canApprove && (
+                          <td>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              data-testid={`run-now-${job.id}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void onRunJobNow(job.id);
+                              }}
+                            >
+                              Chạy ngay
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

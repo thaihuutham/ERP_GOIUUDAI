@@ -2,11 +2,10 @@
 
 import { CalendarClock, Filter, RefreshCw, Search } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../lib/api-client';
-import { canAccessModule } from '../lib/rbac';
+import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import type { BulkRowId } from '../lib/bulk-actions';
-import { useUserRole } from './user-role-context';
+import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, type ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 
@@ -190,8 +189,8 @@ function toAuditFriendlyError(error: unknown, fallbackMessage: string) {
 }
 
 export function AuditOperationsBoard() {
-  const { role } = useUserRole();
-  const canView = canAccessModule(role, 'audit');
+  const { canModule } = useAccessPolicy();
+  const canView = canModule('audit');
 
   const [filters, setFilters] = useState<FilterState>(createInitialFilters());
   const [rows, setRows] = useState<AuditLogRow[]>([]);
@@ -213,7 +212,7 @@ export function AuditOperationsBoard() {
 
     try {
       const payload = await apiRequest<AuditActionsPayload>('/audit/actions');
-      setActionItems(Array.isArray(payload.items) ? payload.items : []);
+      setActionItems(normalizeListPayload(payload) as AuditActionItem[]);
     } catch (error) {
       setErrorMessage(toAuditFriendlyError(error, 'Không thể tải danh mục hành động audit.'));
     }
@@ -264,7 +263,7 @@ export function AuditOperationsBoard() {
         }
       });
 
-      const fetchedRows = Array.isArray(payload.items) ? payload.items : [];
+      const fetchedRows = normalizeListPayload(payload) as AuditLogRow[];
       setRows((prev) => (append ? mergeRowsById(prev, fetchedRows) : fetchedRows));
       setPageInfo(payload.pageInfo ?? null);
     } catch (error) {
@@ -383,7 +382,7 @@ export function AuditOperationsBoard() {
   );
 
   if (!canView) {
-    return <div className="banner banner-error">Bạn không có quyền truy cập phân hệ Audit.</div>;
+    return null;
   }
 
   return (

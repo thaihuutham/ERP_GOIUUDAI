@@ -17,6 +17,7 @@ const ASSISTANT_MODULE_KEY = 'assistant';
 const HR_APPENDIX_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] as const;
 const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as const;
 const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
+const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
 
 type CacheEntry = {
   value: Record<string, unknown>;
@@ -152,7 +153,7 @@ export class RuntimeSettingsService {
 
     const mappedModule = this.mapApiModuleKey(moduleKey);
     const org = await this.getDomain('org_profile');
-    const enabledModules = this.normalizeEnabledModules(org.enabledModules);
+    const enabledModules = this.normalizeEnabledModules(org.enabledModules, { includeAuditFallback: true });
     if (enabledModules.length === 0) {
       return true;
     }
@@ -165,7 +166,7 @@ export class RuntimeSettingsService {
       this.getDomain('locale_calendar')
     ]);
 
-    const enabledModules = this.normalizeEnabledModules(org.enabledModules);
+    const enabledModules = this.normalizeEnabledModules(org.enabledModules, { includeAuditFallback: true });
     const branding = this.toRecord(org.branding);
     const documentLayout = this.toRecord(org.documentLayout);
 
@@ -204,6 +205,7 @@ export class RuntimeSettingsService {
     const passwordPolicy = this.toRecord(domain.passwordPolicy);
     const loginPolicy = this.toRecord(domain.loginPolicy);
     const permissionPolicy = this.toRecord(domain.permissionPolicy);
+    const iamV2 = this.toRecord(domain.iamV2);
     const auditViewPolicy = this.toRecord(domain.auditViewPolicy);
     const auditGroups = this.toRecord(auditViewPolicy.groups);
     const directorGroup = this.toRecord(auditGroups.DIRECTOR);
@@ -219,6 +221,14 @@ export class RuntimeSettingsService {
         return normalized;
       }
       return fallback;
+    };
+
+    const normalizeIamV2Mode = (value: unknown): 'OFF' | 'SHADOW' | 'ENFORCE' => {
+      const mode = this.readString(value, 'SHADOW').toUpperCase();
+      if (mode === 'OFF' || mode === 'SHADOW' || mode === 'ENFORCE') {
+        return mode;
+      }
+      return 'SHADOW';
     };
 
     return {
@@ -240,6 +250,16 @@ export class RuntimeSettingsService {
         conflictPolicy: this.readString(permissionPolicy.conflictPolicy, 'DENY_OVERRIDES').toUpperCase(),
         superAdminIds: this.toStringArray(permissionPolicy.superAdminIds),
         superAdminEmails: this.toStringArray(permissionPolicy.superAdminEmails).map((item) => item.toLowerCase())
+      },
+      iamV2: {
+        enabled: this.toBool(iamV2.enabled, false),
+        mode: normalizeIamV2Mode(iamV2.mode),
+        enforcementModules: this.normalizeEnabledModules(iamV2.enforcementModules, {
+          includeAuditFallback: false,
+          allowAllToken: true
+        }),
+        protectAdminCore: this.toBool(iamV2.protectAdminCore, true),
+        denySelfElevation: this.toBool(iamV2.denySelfElevation, true)
       },
       auditViewPolicy: {
         enabled: this.toBool(auditViewPolicy.enabled, true),
@@ -664,10 +684,21 @@ export class RuntimeSettingsService {
     return value.map((item) => String(item ?? '').trim()).filter(Boolean);
   }
 
-  private normalizeEnabledModules(value: unknown) {
+  private normalizeEnabledModules(
+    value: unknown,
+    options: {
+      includeAuditFallback?: boolean;
+      allowAllToken?: boolean;
+    } = {}
+  ) {
+    const includeAuditFallback = options.includeAuditFallback === true;
+    const allowAllToken = options.allowAllToken === true;
+    const requested = this.toStringArray(value).map((item) => item.toLowerCase());
+    if (allowAllToken && requested.some((item) => IAM_V2_ALL_MODULE_TOKENS.has(item))) {
+      return [] as string[];
+    }
     const normalized: string[] = [];
-    for (const moduleKey of this.toStringArray(value)) {
-      const lowered = moduleKey.toLowerCase();
+    for (const lowered of requested) {
       if (!RUNTIME_TOGGLABLE_MODULES.has(lowered)) {
         continue;
       }
@@ -675,11 +706,10 @@ export class RuntimeSettingsService {
         normalized.push(lowered);
       }
     }
-    // Backward compatibility: org_profile.enabledModules created before audit/assistant module rollout.
-    if (RUNTIME_TOGGLABLE_MODULES.has(AUDIT_MODULE_KEY) && !normalized.includes(AUDIT_MODULE_KEY)) {
+    if (includeAuditFallback && RUNTIME_TOGGLABLE_MODULES.has(AUDIT_MODULE_KEY) && !normalized.includes(AUDIT_MODULE_KEY)) {
       normalized.push(AUDIT_MODULE_KEY);
     }
-    if (RUNTIME_TOGGLABLE_MODULES.has(ASSISTANT_MODULE_KEY) && !normalized.includes(ASSISTANT_MODULE_KEY)) {
+    if (includeAuditFallback && RUNTIME_TOGGLABLE_MODULES.has(ASSISTANT_MODULE_KEY) && !normalized.includes(ASSISTANT_MODULE_KEY)) {
       normalized.push(ASSISTANT_MODULE_KEY);
     }
     return normalized;
