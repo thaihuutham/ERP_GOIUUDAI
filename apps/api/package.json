@@ -28,6 +28,8 @@
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.17",
     "@nestjs/platform-express": "^11.1.17",
+    "@nestjs/platform-socket.io": "^11.1.17",
+    "@nestjs/websockets": "^11.1.17",
     "@prisma/client": "^6.19.2",
     "prisma": "^6.19.2",
     "bcryptjs": "^3.0.3",
@@ -38,6 +40,7 @@
     "nestjs-cls": "^6.1.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "socket.io": "^4.8.1",
     "zca-js": "^2.1.2"
   },
   "devDependencies": {

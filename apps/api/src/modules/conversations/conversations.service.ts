@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConversationChannel, ConversationSenderType, Prisma } from '@prisma/client';
+import { ClsService } from 'nestjs-cls';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloAccountAssignmentService } from '../zalo/zalo-account-assignment.service';
+import { ZaloAutomationRealtimeService } from '../zalo/zalo-automation-realtime.service';
 
 type ThreadFilters = {
   channel?: ConversationChannel | 'ALL';
@@ -31,7 +34,9 @@ type IngestExternalMessagePayload = {
 export class ConversationsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zaloAssignment: ZaloAccountAssignmentService
+    private readonly cls: ClsService,
+    private readonly zaloAssignment: ZaloAccountAssignmentService,
+    private readonly zaloRealtime: ZaloAutomationRealtimeService
   ) {}
 
   async listThreads(query: PaginationQueryDto, filters: ThreadFilters = {}) {
@@ -197,6 +202,10 @@ export class ConversationsService {
     }
 
     const senderType = this.parseSenderType(payload.senderType, ConversationSenderType.AGENT);
+    let senderName = this.optionalString(payload.senderName) ?? undefined;
+    if (senderType === ConversationSenderType.AGENT && !senderName) {
+      senderName = (await this.resolveCurrentSenderDisplayName()) ?? undefined;
+    }
 
     const message = await this.createOrReuseMessage({
       channel: thread.channel,
@@ -205,7 +214,7 @@ export class ConversationsService {
       externalMessageId: this.optionalString(payload.externalMessageId) ?? undefined,
       senderType,
       senderExternalId: this.optionalString(payload.senderExternalId) ?? undefined,
-      senderName: this.optionalString(payload.senderName) ?? undefined,
+      senderName,
       content: this.optionalString(payload.content) ?? '',
       contentType: this.optionalString(payload.contentType) ?? 'TEXT',
       sentAt: payload.sentAt ? this.parseDate(payload.sentAt, 'sentAt') : new Date(),
@@ -379,22 +388,57 @@ export class ConversationsService {
       }
     }
 
-    const message = await this.prisma.client.conversationMessage.create({
-      data: {
-        tenant_Id: this.prisma.getTenantId(),
-        threadId: thread.id,
-        externalMessageId: payload.externalMessageId ?? null,
-        senderType: payload.senderType,
-        senderExternalId: payload.senderExternalId ?? null,
-        senderName: payload.senderName ?? null,
-        content: payload.content ?? null,
-        contentType,
-        attachmentsJson: payload.attachmentsJson ?? undefined,
-        sentAt
+    let message;
+    try {
+      message = await this.prisma.client.conversationMessage.create({
+        data: {
+          tenant_Id: this.prisma.getTenantId(),
+          threadId: thread.id,
+          externalMessageId: payload.externalMessageId ?? null,
+          senderType: payload.senderType,
+          senderExternalId: payload.senderExternalId ?? null,
+          senderName: payload.senderName ?? null,
+          content: payload.content ?? null,
+          contentType,
+          attachmentsJson: payload.attachmentsJson ?? undefined,
+          sentAt
+        }
+      });
+    } catch (error) {
+      const isUniqueConflict =
+        error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === 'P2002'
+        && Boolean(payload.externalMessageId);
+      if (!isUniqueConflict) {
+        throw error;
       }
-    });
+      const existing = await this.prisma.client.conversationMessage.findFirst({
+        where: {
+          threadId: thread.id,
+          externalMessageId: payload.externalMessageId
+        }
+      });
+      if (existing) {
+        return existing;
+      }
+      throw error;
+    }
 
     await this.touchThreadAfterMessage(thread.id, payload.senderType, sentAt);
+
+    if (this.isZaloChannel(payload.channel) && payload.channelAccountId) {
+      const orgId = String((message as { tenant_Id?: string }).tenant_Id ?? this.prisma.getTenantId());
+      this.zaloRealtime.emitScoped({
+        orgId,
+        accountId: payload.channelAccountId,
+        event: 'chat:message',
+        payload: {
+          accountId: payload.channelAccountId,
+          conversationId: thread.id,
+          message
+        }
+      });
+    }
 
     return message;
   }
@@ -502,5 +546,72 @@ export class ConversationsService {
 
   private isZaloChannel(channel: ConversationChannel) {
     return channel === ConversationChannel.ZALO_PERSONAL || channel === ConversationChannel.ZALO_OA;
+  }
+
+  private async resolveCurrentSenderDisplayName() {
+    try {
+      const authUser = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
+      const tenantId = this.prisma.getTenantId();
+      const userId = this.cleanString(authUser.userId ?? authUser.sub);
+      let email = this.cleanString(authUser.email);
+      let employeeId = this.cleanString(authUser.employeeId);
+
+      if (!employeeId && userId) {
+        const user = await this.prisma.client.user.findFirst({
+          where: {
+            id: userId,
+            tenant_Id: tenantId
+          },
+          select: {
+            employeeId: true,
+            email: true
+          }
+        });
+        employeeId = this.cleanString(user?.employeeId);
+        if (!email) {
+          email = this.cleanString(user?.email);
+        }
+      }
+
+      if (employeeId) {
+        const employee = await this.prisma.client.employee.findFirst({
+          where: {
+            id: employeeId,
+            tenant_Id: tenantId
+          },
+          select: {
+            fullName: true,
+            email: true
+          }
+        });
+        const fullName = this.cleanString(employee?.fullName);
+        if (fullName) {
+          return fullName;
+        }
+        if (!email) {
+          email = this.cleanString(employee?.email);
+        }
+      }
+
+      if (email) {
+        return email;
+      }
+      if (userId) {
+        return userId;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private ensureRecord(value: unknown) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  }
+
+  private cleanString(value: unknown) {
+    return String(value ?? '').trim();
   }
 }

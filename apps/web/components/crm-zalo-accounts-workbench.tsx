@@ -379,7 +379,7 @@ export function CrmZaloAccountsWorkbench() {
           <h1>Quản lý tài khoản Zalo</h1>
           <p>Quản trị nhiều tài khoản Zalo, theo dõi trạng thái kết nối và phân quyền cho nhân viên.</p>
           <div className="action-buttons" style={{ marginTop: '0.6rem' }}>
-            <Link className="btn btn-ghost" href="/modules/crm/conversations">
+            <Link className="btn btn-ghost" href="/modules/zalo-automation/messages">
               Mở Inbox hội thoại
             </Link>
             <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>

@@ -324,6 +324,10 @@
 .shell-main {
   min-width: 0;
   padding: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* Toolbar */
@@ -457,7 +461,11 @@
 /* ── Content Area ──────────────────────────────── */
 
 .app-content {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 1.1rem 1.3rem 1.5rem;
   animation: fadeIn var(--duration-fast) var(--ease-smooth);
 }

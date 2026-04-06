@@ -1382,7 +1382,7 @@ export function CrmOperationsBoard() {
           <h1>CRM Operations Board</h1>
           <p>Luồng CRM thực chiến: customer 360, lịch sử tương tác, yêu cầu thanh toán và dedup hồ sơ khách hàng.</p>
           <div className="action-buttons" style={{ marginTop: '0.6rem' }}>
-            <Link className="btn btn-ghost" href="/modules/crm/conversations">
+            <Link className="btn btn-ghost" href="/modules/zalo-automation/messages">
               Mở CRM Conversations Inbox
             </Link>
           </div>

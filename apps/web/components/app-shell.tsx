@@ -91,6 +91,22 @@ function getCurrentModuleTitle(pathname: string) {
     return 'Cài đặt • Trường tùy chỉnh';
   }
 
+  if (pathname.startsWith('/modules/zalo-automation/messages')) {
+    return 'Zalo Automation • Tin nhắn';
+  }
+
+  if (pathname.startsWith('/modules/zalo-automation/accounts')) {
+    return 'Zalo Automation • Tài khoản Zalo';
+  }
+
+  if (pathname.startsWith('/modules/zalo-automation/ai-runs')) {
+    return 'Zalo Automation • AI đánh giá & Phiên chạy';
+  }
+
+  if (pathname.startsWith('/modules/zalo-automation/campaigns')) {
+    return 'Zalo Automation • Chiến dịch';
+  }
+
   if (pathname.startsWith('/modules/crm/conversations')) {
     return 'Hội thoại khách hàng';
   }
@@ -175,7 +191,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     () => new Map(visibleModules.map((item) => [item.key, item])),
     [visibleModules]
   );
-  const showZaloAutomation = useMemo(() => canRoute('/modules/crm/conversations'), [canRoute]);
+  const showZaloAutomation = useMemo(() => canRoute('/modules/zalo-automation/messages'), [canRoute]);
   const isHrPath = pathname.startsWith('/modules/hr');
   const isAssistantPath = pathname.startsWith('/modules/assistant');
   const assistantRouteKey = useMemo(() => resolveAssistantRouteFromPath(pathname), [pathname]);

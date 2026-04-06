@@ -8,6 +8,15 @@ File này là entrypoint bắt buộc cho mọi AI agent (Codex, Claude Code, Ch
 - Không đổi hành vi chức năng ERP khi đang làm việc tái cấu trúc.
 - Mọi quyết định kiến trúc mới phải ghi vào `docs/decisions/`.
 
+### 1.1 Bắt buộc dùng skill brainstorming khi yêu cầu chưa rõ
+- Với mọi nội dung có **nhiều phương án thực hiện** hoặc **còn mơ hồ/thiếu ràng buộc**, agent **bắt buộc** dùng skill [$brainstorming](/Users/mrtao/.codex/skills/skills/brainstorming/SKILL.md) trước khi sửa code.
+- Không được implement ngay khi chưa chốt rõ:
+  - mục tiêu,
+  - phạm vi và non-goals,
+  - ràng buộc kỹ thuật/phi chức năng (performance, scale, security, reliability, maintainability).
+- Trước khi thiết kế/implement, phải có bước xác nhận với user (Understanding Lock): tóm tắt hiểu biết, assumptions, câu hỏi mở.
+- Chỉ được chuyển sang code khi user đã xác nhận hướng tiếp cận.
+
 ## 2. Trình tự đọc trước khi sửa code
 1. `planning/CURRENT_TASK.md`
 2. `.agent/memory/CONTEXT_SNAPSHOT.md`

@@ -2,11 +2,15 @@ import { BadRequestException, Injectable, NotFoundException, UnauthorizedExcepti
 import { ConversationChannel, ConversationSenderType } from '@prisma/client';
 import { createHmac } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
+import { ClsService } from 'nestjs-cls';
+import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloOaOutboundWorkerService } from './zalo-oa-outbound.worker';
 import { ZaloAccountAssignmentService } from './zalo-account-assignment.service';
+import { ZaloAutomationRealtimeService } from './zalo-automation-realtime.service';
 import { ZaloPersonalPoolService } from './zalo-personal.pool.service';
 
 type AccountType = 'PERSONAL' | 'OA';
@@ -16,11 +20,13 @@ export class ZaloService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly cls: ClsService,
     private readonly conversationsService: ConversationsService,
     private readonly zaloAssignment: ZaloAccountAssignmentService,
     private readonly personalPool: ZaloPersonalPoolService,
     private readonly oaOutboundWorker: ZaloOaOutboundWorkerService,
-    private readonly runtimeSettings: RuntimeSettingsService
+    private readonly runtimeSettings: RuntimeSettingsService,
+    private readonly zaloRealtime: ZaloAutomationRealtimeService
   ) {}
 
   async listAccounts(accountType?: AccountType | 'ALL') {
@@ -38,25 +44,42 @@ export class ZaloService {
     });
 
     const permissionMap = await this.zaloAssignment.resolvePermissionMapForAccounts(accounts.map((account) => account.id));
-    return accounts.map((account) => ({
-      ...account,
-      currentPermissionLevel: permissionMap[account.id] ?? null
-    }));
+    return accounts.map((account) => {
+      const normalizedType = String(account.accountType ?? '').toUpperCase();
+      const listenerDebug = normalizedType === 'PERSONAL'
+        ? this.personalPool.getListenerDebug(account.id)
+        : null;
+      const runtimeStatus = listenerDebug?.hasApi && listenerDebug.wsStateLabel === 'OPEN'
+        ? 'CONNECTED'
+        : undefined;
+
+      return {
+        ...account,
+        status: runtimeStatus ?? account.status,
+        currentPermissionLevel: permissionMap[account.id] ?? null
+      };
+    });
   }
 
   async createAccount(payload: Record<string, unknown>) {
     const accountType = this.parseAccountType(payload.accountType, 'PERSONAL');
-    const displayName = this.optionalString(payload.displayName) ?? null;
-    const zaloUid = this.optionalString(payload.zaloUid) ?? null;
+    const displayName = this.requiredString(payload.displayName, 'Thiếu tên hiển thị tài khoản Zalo.');
+    const phone = this.requiredString(payload.phone, 'Thiếu số điện thoại tài khoản Zalo.');
+    const actor = this.resolveCurrentActorContext();
+    const requestedOwnerUserId = this.optionalString(payload.ownerUserId);
+    const ownerUserId =
+      actor.role === 'ADMIN'
+        ? (requestedOwnerUserId ?? actor.userId ?? null)
+        : (actor.userId ?? null);
 
     const created = await this.prisma.client.zaloAccount.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
         accountType,
         displayName,
-        zaloUid,
-        phone: this.optionalString(payload.phone) ?? null,
-        ownerUserId: this.optionalString(payload.ownerUserId) ?? null,
+        zaloUid: null,
+        phone,
+        ownerUserId,
         status: 'DISCONNECTED',
         metadataJson: (payload.metadataJson as any) ?? undefined
       }
@@ -87,6 +110,125 @@ export class ZaloService {
     return this.prisma.client.zaloAccount.findFirst({ where: { id } });
   }
 
+  async softDeleteAccount(id: string) {
+    const account = await this.requireAccount(id);
+
+    if (String(account.accountType).toUpperCase() === 'PERSONAL') {
+      await this.personalPool.disconnect(id);
+    } else {
+      await this.prisma.client.zaloAccount.updateMany({
+        where: { id },
+        data: {
+          status: 'DISCONNECTED'
+        }
+      });
+    }
+
+    await this.prisma.client.zaloAccount.updateMany({
+      where: { id },
+      data: {
+        status: 'INACTIVE'
+      }
+    });
+
+    this.zaloRealtime.emitScoped({
+      orgId: account.tenant_Id,
+      accountId: account.id,
+      event: 'zalo:disconnected',
+      payload: {
+        accountId: account.id,
+        reason: 'SOFT_DELETED'
+      }
+    });
+
+    return {
+      success: true,
+      message: 'Đã xóa mềm tài khoản Zalo và giữ nguyên dữ liệu hội thoại.',
+      account: await this.prisma.client.zaloAccount.findFirst({ where: { id } })
+    };
+  }
+
+  async syncContacts(id: string) {
+    const account = await this.requirePersonalAccount(id);
+    await this.zaloAssignment.assertCanChatAccount(id);
+
+    const api = this.personalPool.getConnectedApi(id);
+    if (!api) {
+      throw new BadRequestException('Tài khoản Zalo cá nhân chưa kết nối.');
+    }
+
+    if (typeof api.getAllFriends !== 'function') {
+      throw new BadRequestException('SDK zca-js hiện tại không hỗ trợ getAllFriends cho tài khoản này.');
+    }
+
+    const raw = await api.getAllFriends();
+    const contacts = this.extractContactsFromZaloPayload(raw);
+
+    let created = 0;
+    let updated = 0;
+    let skippedNoPhone = 0;
+    let skippedInvalidPhone = 0;
+
+    for (const contact of contacts) {
+      const rawPhone = this.resolveContactPhone(contact);
+      const normalizedPhone = this.normalizePhoneForSync(rawPhone);
+      if (!normalizedPhone) {
+        skippedNoPhone += 1;
+        continue;
+      }
+      if (!this.isViablePhone(normalizedPhone)) {
+        skippedInvalidPhone += 1;
+        continue;
+      }
+
+      const displayName = this.resolveContactDisplayName(contact) || `Khách ${normalizedPhone}`;
+      const existing = await this.prisma.client.customer.findFirst({
+        where: {
+          tenant_Id: account.tenant_Id,
+          phoneNormalized: normalizedPhone
+        }
+      });
+
+      if (existing) {
+        await this.prisma.client.customer.updateMany({
+          where: { id: existing.id },
+          data: {
+            fullName: displayName || existing.fullName,
+            phone: rawPhone ?? existing.phone,
+            phoneNormalized: normalizedPhone,
+            source: existing.source || 'ZALO',
+            lastContactAt: new Date()
+          }
+        });
+        updated += 1;
+      } else {
+        await this.prisma.client.customer.create({
+          data: {
+            tenant_Id: account.tenant_Id,
+            fullName: displayName,
+            phone: rawPhone ?? normalizedPhone,
+            phoneNormalized: normalizedPhone,
+            source: 'ZALO',
+            customerStage: 'MOI',
+            status: 'ACTIVE',
+            tags: ['zalo']
+          }
+        });
+        created += 1;
+      }
+    }
+
+    return {
+      success: true,
+      accountId: id,
+      totalContacts: contacts.length,
+      created,
+      updated,
+      skippedNoPhone,
+      skippedInvalidPhone
+    };
+  }
+
   async startPersonalLogin(id: string) {
     const account = await this.requirePersonalAccount(id);
     void this.personalPool.startQrLogin(account.id);
@@ -104,6 +246,18 @@ export class ZaloService {
       status: this.personalPool.getStatus(id),
       qrImage
     };
+  }
+
+  async getPersonalListenerDebug(id: string) {
+    await this.requirePersonalAccount(id);
+    await this.zaloAssignment.assertCanReadAccount(id);
+    return this.personalPool.getListenerDebug(id);
+  }
+
+  async requestPersonalOldMessages(id: string) {
+    await this.requirePersonalAccount(id);
+    await this.zaloAssignment.assertCanReadAccount(id);
+    return this.personalPool.requestOldMessages(id);
   }
 
   async reconnectPersonal(id: string) {
@@ -137,8 +291,9 @@ export class ZaloService {
     const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
     const content = this.requiredString(payload.content, 'Thiếu nội dung tin nhắn.');
     const threadType = this.optionalString(payload.threadType)?.toLowerCase() === 'group' ? 'group' : 'user';
+    const senderName = await this.resolveCurrentSenderDisplayName();
 
-    return this.personalPool.sendMessage(id, externalThreadId, content, threadType);
+    return this.personalPool.sendMessage(id, externalThreadId, content, threadType, senderName ?? undefined);
   }
 
   async sendOaMessage(id: string, payload: Record<string, unknown>) {
@@ -173,7 +328,7 @@ export class ZaloService {
       externalMessageId: delivery.externalMessageId,
       senderType: ConversationSenderType.AGENT,
       senderExternalId: this.optionalString(payload.senderExternalId) ?? account.zaloUid ?? undefined,
-      senderName: this.optionalString(payload.senderName) ?? account.displayName ?? 'Staff',
+      senderName: (await this.resolveCurrentSenderDisplayName()) ?? account.displayName ?? 'Staff',
       content,
       contentType: this.optionalString(payload.contentType) ?? 'TEXT',
       sentAt: payload.sentAt ? this.parseDate(payload.sentAt, 'sentAt') : new Date(),
@@ -364,6 +519,77 @@ export class ZaloService {
     return account;
   }
 
+  private extractContactsFromZaloPayload(payload: unknown) {
+    if (Array.isArray(payload)) {
+      return payload.filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    }
+    if (!payload || typeof payload !== 'object') {
+      return [];
+    }
+    return Object.values(payload as Record<string, unknown>)
+      .filter((row) => row && typeof row === 'object')
+      .map((row) => row as Record<string, unknown>);
+  }
+
+  private resolveContactDisplayName(contact: Record<string, unknown>) {
+    const candidates = [
+      contact.zaloName,
+      contact.zalo_name,
+      contact.displayName,
+      contact.display_name,
+      contact.fullName,
+      contact.full_name
+    ];
+    for (const candidate of candidates) {
+      const value = this.optionalString(candidate);
+      if (value) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveContactPhone(contact: Record<string, unknown>) {
+    const candidates = [
+      contact.phoneNumber,
+      contact.phone,
+      contact.phone_number,
+      contact.mobile,
+      contact.mobileNumber
+    ];
+    for (const candidate of candidates) {
+      const value = this.optionalString(candidate);
+      if (value) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private normalizePhoneForSync(rawPhone?: string) {
+    const normalized = normalizeVietnamPhone(rawPhone);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const compact = normalized.replace(/[^\d+]/g, '');
+    if (!compact) {
+      return undefined;
+    }
+
+    if (compact.startsWith('+84')) {
+      return `0${compact.slice(3)}`;
+    }
+    if (compact.startsWith('84')) {
+      return `0${compact.slice(2)}`;
+    }
+    return compact;
+  }
+
+  private isViablePhone(phone: string) {
+    return /^[0-9]{8,15}$/.test(phone);
+  }
+
   private parseAccountType(input: unknown, fallback: AccountType): AccountType {
     const candidate = String(input ?? '').trim().toUpperCase();
     if (candidate === 'PERSONAL' || candidate === 'OA') {
@@ -403,5 +629,82 @@ export class ZaloService {
       throw new BadRequestException(`${fieldName} không hợp lệ.`);
     }
     return parsed;
+  }
+
+  private async resolveCurrentSenderDisplayName() {
+    try {
+      const authUser = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
+      const tenantId = this.prisma.getTenantId();
+      const userId = this.cleanString(authUser.userId ?? authUser.sub);
+      let email = this.cleanString(authUser.email);
+      let employeeId = this.cleanString(authUser.employeeId);
+
+      if (!employeeId && userId) {
+        const user = await this.prisma.client.user.findFirst({
+          where: {
+            id: userId,
+            tenant_Id: tenantId
+          },
+          select: {
+            employeeId: true,
+            email: true
+          }
+        });
+        employeeId = this.cleanString(user?.employeeId);
+        if (!email) {
+          email = this.cleanString(user?.email);
+        }
+      }
+
+      if (employeeId) {
+        const employee = await this.prisma.client.employee.findFirst({
+          where: {
+            id: employeeId,
+            tenant_Id: tenantId
+          },
+          select: {
+            fullName: true,
+            email: true
+          }
+        });
+        const fullName = this.cleanString(employee?.fullName);
+        if (fullName) {
+          return fullName;
+        }
+        if (!email) {
+          email = this.cleanString(employee?.email);
+        }
+      }
+
+      if (email) {
+        return email;
+      }
+      if (userId) {
+        return userId;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private ensureRecord(value: unknown) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  }
+
+  private cleanString(value: unknown) {
+    return String(value ?? '').trim();
+  }
+
+  private resolveCurrentActorContext() {
+    const authUser = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
+    const userId = this.cleanString(authUser.userId ?? authUser.sub) || null;
+    const role = this.cleanString(authUser.role).toUpperCase();
+    return {
+      userId,
+      role
+    };
   }
 }

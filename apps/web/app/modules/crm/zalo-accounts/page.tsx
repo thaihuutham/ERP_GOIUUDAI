@@ -1,5 +1,5 @@
-import { CrmZaloAccountsWorkbench } from '../../../../components/crm-zalo-accounts-workbench';
+import { ZaloAutomationAccountsWorkbench } from '../../../../components/zalo-automation-accounts-workbench';
 
 export default function CrmZaloAccountsPage() {
-  return <CrmZaloAccountsWorkbench />;
+  return <ZaloAutomationAccountsWorkbench />;
 }

@@ -142,6 +142,41 @@ enum ZaloAccountPermissionLevel {
   ADMIN
 }
 
+enum ZaloCampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum ZaloCampaignSelectionPolicy {
+  PRIORITIZE_RECENT_INTERACTION
+  AVOID_PREVIOUSLY_INTERACTED_ACCOUNT
+}
+
+enum ZaloCampaignAccountStatus {
+  READY
+  PAUSED_ERROR
+  DONE
+  DISABLED
+}
+
+enum ZaloCampaignRecipientStatus {
+  PENDING
+  IN_PROGRESS
+  SENT
+  SKIPPED
+  FAILED
+}
+
+enum ZaloCampaignAttemptStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
 enum ConversationSenderType {
   AGENT
   CUSTOMER
@@ -605,6 +640,8 @@ model Customer {
 
   orders        Order[]
   interactions  CustomerInteraction[]
+  zaloCampaignRecipients ZaloCampaignRecipient[]
+  zaloCampaignAttempts ZaloCampaignMessageAttempt[]
   paymentRequests PaymentRequest[]
   primaryMergeLogs CustomerMergeLog[] @relation("primaryCustomer")
   mergedFromLogs   CustomerMergeLog[] @relation("mergedCustomer")
@@ -2381,6 +2418,9 @@ model ZaloAccount {
 
   threads      ConversationThread[]
   assignments ZaloAccountAssignment[]
+  campaignAccounts ZaloCampaignAccount[]
+  campaignRecipients ZaloCampaignRecipient[] @relation("ZaloCampaignRecipientTargetAccount")
+  campaignAttempts ZaloCampaignMessageAttempt[] @relation("ZaloCampaignAttemptAccount")
 
   @@unique([tenant_Id, zaloUid])
   @@index([tenant_Id])
@@ -2406,6 +2446,158 @@ model ZaloAccountAssignment {
   @@index([tenant_Id, userId, revokedAt])
   @@index([tenant_Id, zaloAccountId, revokedAt])
   @@map("zalo_account_assignments")
+}
+
+model ZaloCampaign {
+  id                          String                      @id @default(cuid())
+  tenant_Id                   String
+  code                        String?
+  name                        String
+  status                      ZaloCampaignStatus          @default(DRAFT)
+  timezone                    String                      @default("Asia/Ho_Chi_Minh")
+  windowMorningStartMinutes   Int                         @default(420)
+  windowMorningEndMinutes     Int                         @default(690)
+  windowAfternoonStartMinutes Int                         @default(840)
+  windowAfternoonEndMinutes   Int                         @default(1200)
+  delayMinSeconds             Int                         @default(180)
+  delayMaxSeconds             Int                         @default(300)
+  maxConsecutiveErrors        Int                         @default(3)
+  maxRecipients               Int?
+  selectionPolicy             ZaloCampaignSelectionPolicy @default(PRIORITIZE_RECENT_INTERACTION)
+  allowedVariableKeys         String[]                    @default([])
+  recipientFilterJson         Json?
+  createdBy                   String?
+  startedAt                   DateTime?
+  pausedAt                    DateTime?
+  completedAt                 DateTime?
+  canceledAt                  DateTime?
+  lastRunAt                   DateTime?
+  metadataJson                Json?
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
+
+  accounts    ZaloCampaignAccount[]
+  operators   ZaloCampaignOperator[]
+  recipients  ZaloCampaignRecipient[]
+  attempts    ZaloCampaignMessageAttempt[]
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, createdAt])
+  @@map("zalo_campaigns")
+}
+
+model ZaloCampaignAccount {
+  id                    String                  @id @default(cuid())
+  tenant_Id             String
+  campaignId            String
+  zaloAccountId         String
+  templateContent       String
+  quota                 Int
+  sentCount             Int                     @default(0)
+  dailySentCount        Int                     @default(0)
+  dailyQuotaDate        String?
+  failedCount           Int                     @default(0)
+  skippedCount          Int                     @default(0)
+  consecutiveErrorCount Int                     @default(0)
+  nextSendAt            DateTime?
+  lastSentAt            DateTime?
+  lastErrorAt           DateTime?
+  lastErrorMessage      String?
+  status                ZaloCampaignAccountStatus @default(READY)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  campaign    ZaloCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  attempts    ZaloCampaignMessageAttempt[]
+
+  @@unique([tenant_Id, campaignId, zaloAccountId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, campaignId, status, nextSendAt])
+  @@index([tenant_Id, zaloAccountId, status])
+  @@map("zalo_campaign_accounts")
+}
+
+model ZaloCampaignOperator {
+  id         String   @id @default(cuid())
+  tenant_Id  String
+  campaignId String
+  userId     String
+  assignedBy String?
+  assignedAt DateTime @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign ZaloCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, campaignId, userId, revokedAt])
+  @@index([tenant_Id, userId, revokedAt])
+  @@map("zalo_campaign_operators")
+}
+
+model ZaloCampaignRecipient {
+  id                 String                     @id @default(cuid())
+  tenant_Id          String
+  campaignId         String
+  customerId         String
+  externalThreadId   String?
+  targetAccountId    String?
+  status             ZaloCampaignRecipientStatus @default(PENDING)
+  attemptCount       Int                        @default(0)
+  lastAttemptAt      DateTime?
+  sentAt             DateTime?
+  skippedReason      String?
+  failedReason       String?
+  variablePayloadJson Json?
+  customerSnapshotJson Json?
+  messagePreview     String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  campaign      ZaloCampaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  targetAccount ZaloAccount?  @relation("ZaloCampaignRecipientTargetAccount", fields: [targetAccountId], references: [id], onDelete: SetNull)
+  attempts      ZaloCampaignMessageAttempt[]
+
+  @@unique([tenant_Id, campaignId, customerId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, campaignId, status, targetAccountId, createdAt])
+  @@index([tenant_Id, campaignId, targetAccountId, status])
+  @@map("zalo_campaign_recipients")
+}
+
+model ZaloCampaignMessageAttempt {
+  id               String                  @id @default(cuid())
+  tenant_Id        String
+  campaignId       String
+  campaignAccountId String?
+  recipientId      String?
+  customerId       String?
+  zaloAccountId    String?
+  externalThreadId String?
+  status           ZaloCampaignAttemptStatus
+  renderedContent  String?
+  missingVariables String[]                @default([])
+  errorMessage     String?
+  responseJson     Json?
+  attemptedAt      DateTime                @default(now())
+  createdAt        DateTime                @default(now())
+
+  campaign        ZaloCampaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignAccount ZaloCampaignAccount? @relation(fields: [campaignAccountId], references: [id], onDelete: SetNull)
+  recipient       ZaloCampaignRecipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+  customer        Customer?            @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  zaloAccount     ZaloAccount?         @relation("ZaloCampaignAttemptAccount", fields: [zaloAccountId], references: [id], onDelete: SetNull)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, campaignId, attemptedAt])
+  @@index([tenant_Id, recipientId, attemptedAt])
+  @@index([tenant_Id, campaignAccountId, attemptedAt])
+  @@map("zalo_campaign_message_attempts")
 }
 
 model ConversationThread {

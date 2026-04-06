@@ -23,7 +23,7 @@ export type SidebarNavItemConfig =
       title: string;
       href: string;
       iconKey: string;
-      requiresFlag: 'zaloAutomation';
+      requiresFlag?: 'zaloAutomation';
     };
 
 export type SidebarGroupConfig = {
@@ -54,24 +54,47 @@ export const SIDEBAR_GROUPS: SidebarGroupConfig[] = [
     items: [
       { type: 'module', key: 'crm', moduleKey: 'crm' },
       { type: 'module', key: 'sales', moduleKey: 'sales' },
-      { type: 'module', key: 'catalog', moduleKey: 'catalog' },
+      { type: 'module', key: 'catalog', moduleKey: 'catalog' }
+    ],
+  },
+  {
+    key: 'zalo-automation',
+    title: 'ZALO AUTOMATION',
+    accentToken: '--accent-business',
+    items: [
       {
         type: 'custom',
-        key: 'conversations',
-        title: 'Inbox hội thoại',
-        href: '/modules/crm/conversations',
+        key: 'zalo-messages',
+        title: 'Tin nhắn',
+        href: '/modules/zalo-automation/messages',
         iconKey: 'conversations',
-        requiresFlag: 'zaloAutomation',
+        requiresFlag: 'zaloAutomation'
       },
       {
         type: 'custom',
         key: 'zalo-accounts',
         title: 'Tài khoản Zalo',
-        href: '/modules/crm/zalo-accounts',
+        href: '/modules/zalo-automation/accounts',
         iconKey: 'zaloAccounts',
-        requiresFlag: 'zaloAutomation',
+        requiresFlag: 'zaloAutomation'
       },
-    ],
+      {
+        type: 'custom',
+        key: 'zalo-ai-runs',
+        title: 'AI đánh giá & Phiên chạy',
+        href: '/modules/zalo-automation/ai-runs',
+        iconKey: 'assistant',
+        requiresFlag: 'zaloAutomation'
+      },
+      {
+        type: 'custom',
+        key: 'zalo-campaigns',
+        title: 'Chiến dịch',
+        href: '/modules/zalo-automation/campaigns',
+        iconKey: 'workflows',
+        requiresFlag: 'zaloAutomation'
+      }
+    ]
   },
   {
     key: 'hr',

@@ -290,14 +290,15 @@ test.describe('Zalo account assignment flow', () => {
 
     await mockZaloAssignmentApis(page, state);
 
-    await page.goto('/modules/crm/zalo-accounts');
+    await page.goto('/modules/zalo-automation/accounts');
 
-    await expect(page.getByTestId('crm-zalo-accounts-workbench')).toBeVisible();
+    await expect(page.getByTestId('zalo-automation-accounts-workbench')).toBeVisible();
     await expect(page.getByRole('cell', { name: 'OA Retail 1' }).first()).toBeVisible();
     await expect(page.getByRole('cell', { name: 'OA Retail 2' }).first()).toBeVisible();
 
-    await page.getByRole('button', { name: 'OA Retail 1 Chọn' }).click();
-    await page.getByLabel('Nhân viên').selectOption('dev_staff');
+    await page.getByRole('row', { name: /OA Retail 1/ }).getByRole('button', { name: 'Phân quyền' }).click();
+    await expect(page.getByRole('heading', { name: 'Phân quyền tài khoản Zalo' })).toBeVisible();
+    await page.getByLabel('Nhân sự').selectOption('dev_staff');
     await page.getByLabel('Mức quyền').selectOption('READ');
     await page.getByTestId('zalo-assignment-save').click();
 
@@ -308,12 +309,12 @@ test.describe('Zalo account assignment flow', () => {
     await staffPage.addInitScript(() => {
       window.localStorage.setItem('erp_web_role', 'STAFF');
     });
-    await staffPage.goto('/modules/crm/conversations');
+    await staffPage.goto('/modules/zalo-automation/messages');
 
-    await expect(staffPage.getByTestId('crm-conversations-workbench')).toBeVisible();
-    await expect(staffPage.getByRole('cell', { name: 'Khách A' })).toBeVisible();
+    await expect(staffPage.getByTestId('zalo-automation-messages-workbench')).toBeVisible();
+    await expect(staffPage.getByRole('button', { name: /Khách A/ }).first()).toBeVisible();
     await expect(staffPage.getByText('Khách B')).toHaveCount(0);
-    await expect(staffPage.getByText('Tài khoản này đang ở mức quyền READ')).toBeVisible();
-    await expect(staffPage.getByTestId('conversation-send-button')).toBeDisabled();
+    await expect(staffPage.getByText(/Quyền hiện tại:\s*READ/i)).toBeVisible();
+    await expect(staffPage.getByTestId('zalo-message-send-button')).toBeDisabled();
   });
 });

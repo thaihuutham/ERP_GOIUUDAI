@@ -3,6 +3,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 type MockState = {
   runEvaluatedCount: number;
   runNowCalls: number;
+  lastOaSendPayload: Record<string, unknown> | null;
 };
 
 function json(route: Route, payload: unknown, status = 200) {
@@ -13,12 +14,38 @@ function json(route: Route, payload: unknown, status = 200) {
   });
 }
 
-async function mockConversationsApis(page: Page, state: MockState) {
+async function mockZaloAutomationApis(page: Page, state: MockState) {
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+
+    if (method === 'GET' && path === '/api/v1/settings/runtime') {
+      return json(route, {
+        enabledModules: [
+          'crm',
+          'sales',
+          'catalog',
+          'hr',
+          'finance',
+          'scm',
+          'assets',
+          'projects',
+          'workflows',
+          'reports',
+          'assistant',
+          'audit',
+          'notifications'
+        ]
+      });
+    }
+
+    if (method === 'GET' && path === '/api/v1/settings/permissions/effective') {
+      return json(route, {
+        effective: []
+      });
+    }
 
     if (method === 'GET' && path === '/api/v1/zalo/accounts') {
       return json(route, [
@@ -26,7 +53,8 @@ async function mockConversationsApis(page: Page, state: MockState) {
           id: 'oa_account_1',
           accountType: 'OA',
           displayName: 'OA Retail',
-          status: 'CONNECTED'
+          status: 'CONNECTED',
+          currentPermissionLevel: 'CHAT'
         }
       ]);
     }
@@ -42,17 +70,14 @@ async function mockConversationsApis(page: Page, state: MockState) {
             customerDisplayName: 'Khách test OA',
             unreadCount: 1,
             lastMessageAt: '2026-03-29T04:45:00.000Z',
-            evaluations: [
-              {
-                id: 'eval_brief_1',
-                verdict: 'PASS',
-                score: 88
-              }
-            ]
+            channelAccount: {
+              displayName: 'OA Retail',
+              status: 'CONNECTED'
+            }
           }
         ],
         nextCursor: null,
-        limit: 50
+        limit: 120
       });
     }
 
@@ -74,30 +99,34 @@ async function mockConversationsApis(page: Page, state: MockState) {
             content: 'Bên em gửi bảng giá ngay ạ',
             contentType: 'TEXT',
             sentAt: '2026-03-29T04:45:00.000Z'
+          },
+          {
+            id: 'msg_3',
+            senderType: 'CUSTOMER',
+            senderName: 'Khách test OA',
+            content: '[Sticker #21767]',
+            contentType: 'STICKER',
+            attachmentsJson: {
+              kind: 'sticker',
+              sticker: {
+                id: 21767,
+                previewUrl: 'https://cdn.example.test/zalo/sticker-21767.webp'
+              }
+            },
+            sentAt: '2026-03-29T04:46:00.000Z'
           }
         ],
         nextCursor: null,
-        limit: 120
-      });
-    }
-
-    if (method === 'GET' && path === '/api/v1/conversations/threads/thread_oa_1/evaluation/latest') {
-      return json(route, {
-        evaluation: {
-          id: 'eval_latest_1',
-          verdict: 'PASS',
-          score: 90,
-          summary: 'Tư vấn đầy đủ và đúng ngữ cảnh.',
-          review: 'Nên hỏi thêm nhu cầu số lượng.',
-          model: 'gpt-4o-mini',
-          provider: 'OPENAI_COMPATIBLE',
-          evaluatedAt: '2026-03-29T04:46:00.000Z',
-          violations: []
-        }
+        limit: 200
       });
     }
 
     if (method === 'POST' && path === '/api/v1/zalo/accounts/oa_account_1/oa/messages/send') {
+      try {
+        state.lastOaSendPayload = (request.postDataJSON() as Record<string, unknown>) ?? null;
+      } catch {
+        state.lastOaSendPayload = null;
+      }
       return json(route, {
         success: true,
         messageId: 'oa_out_001',
@@ -185,44 +214,67 @@ async function mockConversationsApis(page: Page, state: MockState) {
       }, 201);
     }
 
+    if (method === 'GET' && /^\/api\/v1\/conversations\/threads\/[^/]+\/evaluation\/latest$/.test(path)) {
+      return json(route, {
+        evaluation: {
+          id: 'eval_latest_1',
+          verdict: 'PASS',
+          score: 90,
+          summary: 'Tư vấn đầy đủ và đúng ngữ cảnh.',
+          model: 'gpt-4o-mini',
+          provider: 'OPENAI_COMPATIBLE',
+          evaluatedAt: '2026-03-29T04:46:00.000Z'
+        }
+      });
+    }
+
     return json(route, { message: `Unmocked route: ${method} ${path}` }, 404);
   });
 }
 
-test.describe('CRM Conversations Inbox', () => {
-  test('hiển thị thread list và message panel đúng dữ liệu', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
-    await mockConversationsApis(page, state);
+test.describe('Zalo Automation pages', () => {
+  test('messages page shows conversation workspace and no AI block', async ({ page }) => {
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0, lastOaSendPayload: null };
+    await mockZaloAutomationApis(page, state);
 
-    await page.goto('/modules/crm/conversations');
+    await page.goto('/modules/zalo-automation/messages');
 
-    await expect(page.getByTestId('crm-conversations-workbench')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Hội thoại khách hàng CRM' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'Khách test OA' }).first()).toBeVisible();
+    await expect(page.getByTestId('zalo-automation-messages-workbench')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tải lại' })).toBeVisible();
+    await expect(page.locator('.zalo-chat-account-unread-item')).toContainText(['OA Retail']);
+    await expect(page.locator('.zalo-chat-thread-title .zalo-chat-unread-badge')).toHaveText('1');
     await expect(page.getByText('Khách hỏi giá combo')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Kết quả AI mới nhất' })).toBeVisible();
-    await expect(page.getByText('Tư vấn đầy đủ và đúng ngữ cảnh.')).toBeVisible();
+    await expect(page.locator('[data-message-direction=\"incoming\"]')).toHaveCount(2);
+    await expect(page.locator('[data-message-direction=\"outgoing\"]')).toHaveCount(1);
+    await expect(page.locator('.zalo-chat-message-sticker')).toHaveCount(1);
+    await expect(page.locator('.zalo-chat-message-sticker')).toHaveAttribute('src', /sticker-21767\.webp/);
+    await expect(page.getByRole('heading', { name: 'AI đánh giá & Phiên chạy' })).toHaveCount(0);
+    await expect(page.getByText('Kết quả AI mới nhất')).toHaveCount(0);
   });
 
-  test('gửi tin nhắn từ panel phản hồi hiển thị banner thành công', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
-    await mockConversationsApis(page, state);
+  test('messages page sends OA message successfully', async ({ page }) => {
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0, lastOaSendPayload: null };
+    await mockZaloAutomationApis(page, state);
 
-    await page.goto('/modules/crm/conversations');
+    await page.goto('/modules/zalo-automation/messages');
 
     await page.getByLabel('Nội dung').fill('Bảng giá hôm nay đã gửi qua OA.');
-    await page.getByTestId('conversation-send-button').click();
+    await page.getByTestId('zalo-message-send-button').click();
 
     await expect(page.getByText('Đã gửi tin nhắn thành công.')).toBeVisible();
+    await expect.poll(() => state.lastOaSendPayload?.senderName).toBeUndefined();
   });
 
-  test('run-now cập nhật danh sách runs và run detail', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
-    await mockConversationsApis(page, state);
+  test('ai-runs page run-now updates run table and detail', async ({ page }) => {
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0, lastOaSendPayload: null };
+    await mockZaloAutomationApis(page, state);
 
-    await page.goto('/modules/crm/conversations');
+    await page.goto('/modules/zalo-automation/ai-runs');
 
-    await expect(page.getByRole('heading', { name: 'Lịch đánh giá AI và phiên chạy' })).toBeVisible();
+    await expect(page.getByTestId('zalo-automation-ai-runs-workbench')).toBeVisible();
+    await expect(
+      page.getByTestId('zalo-automation-ai-runs-workbench').getByRole('heading', { name: 'AI đánh giá & Phiên chạy' })
+    ).toBeVisible();
     await expect(page.getByTestId('run-evaluated-run_1')).toHaveText('3');
 
     await page.getByTestId('run-now-job_1').click();
@@ -232,11 +284,11 @@ test.describe('CRM Conversations Inbox', () => {
     await expect(page.getByRole('heading', { name: 'Chi tiết phiên chạy' })).toBeVisible();
   });
 
-  test('bulk run-now jobs hiển thị summary thành công', async ({ page }) => {
-    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0 };
-    await mockConversationsApis(page, state);
+  test('ai-runs page bulk run-now executes selected jobs', async ({ page }) => {
+    const state: MockState = { runEvaluatedCount: 3, runNowCalls: 0, lastOaSendPayload: null };
+    await mockZaloAutomationApis(page, state);
 
-    await page.goto('/modules/crm/conversations');
+    await page.goto('/modules/zalo-automation/ai-runs');
 
     await expect(page.getByRole('cell', { name: 'QC Zalo định kỳ' })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'QC OA realtime' })).toBeVisible();

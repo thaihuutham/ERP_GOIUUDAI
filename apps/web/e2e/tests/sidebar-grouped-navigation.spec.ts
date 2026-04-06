@@ -55,6 +55,7 @@ test.describe('AppShell sidebar grouped navigation', () => {
     const sideMenu = page.locator('aside.side-menu');
 
     await expect(sideMenu.locator('.side-section-title', { hasText: 'KINH DOANH' })).toBeVisible();
+    await expect(sideMenu.locator('.side-section-title', { hasText: 'ZALO AUTOMATION' })).toBeVisible();
     await expect(sideMenu.locator('.side-section-title', { hasText: 'NHÂN SỰ' })).toBeVisible();
     await expect(sideMenu.locator('.side-section-title', { hasText: 'TÀI CHÍNH & VẬN HÀNH' })).toBeVisible();
     await expect(sideMenu.locator('.side-section-title', { hasText: 'HỆ THỐNG' })).toBeVisible();
@@ -63,8 +64,16 @@ test.describe('AppShell sidebar grouped navigation', () => {
 
     await roleSelect.selectOption('STAFF');
     await expect(sideMenu.getByRole('link', { name: 'CRM', exact: true })).toBeVisible();
+    await expect(sideMenu.getByRole('link', { name: 'Tin nhắn', exact: true })).toBeVisible();
+    await expect(sideMenu.getByRole('link', { name: 'Tài khoản Zalo', exact: true })).toBeVisible();
+    await expect(sideMenu.getByRole('link', { name: 'AI đánh giá & Phiên chạy', exact: true })).toBeVisible();
+    await expect(sideMenu.getByRole('link', { name: 'Chiến dịch', exact: true })).toBeVisible();
     await expect(sideMenu.getByRole('link', { name: 'Quy trình', exact: true })).toHaveCount(0);
     await expect(sideMenu.getByRole('link', { name: 'Nhật ký hệ thống', exact: true })).toHaveCount(0);
+
+    await sideMenu.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
+    await expect(page).toHaveURL(/\/modules\/zalo-automation\/campaigns$/);
+    await expect(page.getByRole('heading', { name: 'Chiến dịch Zalo PERSONAL' })).toBeVisible();
 
     await roleSelect.selectOption('MANAGER');
     await expect(sideMenu.getByRole('link', { name: 'Quy trình', exact: true })).toBeVisible();

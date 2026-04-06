@@ -381,6 +381,12 @@ const settingsRouteRule: RoutePolicyRule = {
   })
 };
 
+const zaloAutomationRouteRule: RoutePolicyRule = {
+  key: 'zalo-automation-crm-module',
+  matches: (pathname) => normalizePath(pathname).startsWith('/modules/zalo-automation'),
+  decide: (snapshot) => decideModuleAccess(snapshot, 'crm')
+};
+
 const moduleRouteRule: RoutePolicyRule = {
   key: 'module-access',
   matches: (pathname) => Boolean(resolveModuleKeyFromPathname(pathname)),
@@ -418,6 +424,7 @@ const assistantSubRouteRule: RoutePolicyRule = {
 
 export const ROUTE_POLICY_RULES: RoutePolicyRule[] = [
   settingsRouteRule,
+  zaloAutomationRouteRule,
   moduleRouteRule,
   assistantSubRouteRule
 ];

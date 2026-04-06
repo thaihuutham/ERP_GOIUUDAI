@@ -2,9 +2,620 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-05 18:13 +07
+- Last updated: 2026-04-06 16:08 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-06 16:08 +07 (Quota account theo ngày + reset 24:00)
+- User request:
+  - sửa semantics `Quota account`: là số lượng tin nhắn tối đa mỗi ngày, reset lúc `24:00`;
+  - làm rõ tác động tải hệ thống khi đặt `maxRecipients` lớn.
+- Đã triển khai:
+  - `apps/api/src/modules/zalo/zalo-campaign.service.ts`
+    - hoàn thiện logic daily quota:
+      - thêm `dailySentCount` + `dailyQuotaDate` vào runtime flow;
+      - reset quota theo ngày qua `ensureDailyQuotaWindow(...)`;
+      - helper timezone/date key + tính mốc reset ngày mới;
+      - sau mỗi lần gửi thành công: tăng `dailySentCount`, chạm quota thì dời `nextSendAt` sang mốc reset ngày kế.
+    - cập nhật `syncCampaignTerminalStatus(...)`:
+      - bỏ điều kiện fail dựa trên `sentCount >= quota` tích lũy;
+      - chỉ fail `NO_RUNNABLE_ACCOUNT` khi thực sự không còn account khả dụng (`READY/DONE legacy`, connected).
+    - cập nhật snapshot limit:
+      - bỏ việc chặn snapshot theo tổng quota account (quota giờ là theo ngày).
+  - `apps/api/prisma/schema.prisma`
+    - model `ZaloCampaignAccount` có `dailySentCount Int @default(0)` và `dailyQuotaDate String?`.
+  - Migration mới:
+    - `apps/api/prisma/migrations/20260406161000_add_daily_quota_fields_zalo_campaign_accounts/migration.sql`.
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - cập nhật help text `Quota account`:
+      - quota theo ngày;
+      - reset lúc `24:00` theo timezone campaign;
+      - chạm quota thì chờ sang ngày mới.
+    - đổi label field sang `Quota/ngày`.
+    - cập nhật help text `Max recipients` để cảnh báo đặt quá lớn sẽ làm snapshot nặng hơn.
+  - `docs/specs/ZALO_CAMPAIGNS_V1.md`
+    - cập nhật rule quota theo ngày và wording runtime flow tương ứng.
+- Verification:
+  - Backend:
+    - `npm run -w apps/api prisma:generate` ✅
+    - `npm run -w apps/api lint` ✅
+    - `npm run -w apps/api build` ✅
+    - `npm run -w apps/api test -- --run test/zalo-campaign-template.util.test.ts test/zalo-campaign.service.test.ts test/zalo.controller.test.ts` ✅ (`14 passed`)
+  - Frontend:
+    - `npm run -w apps/web build` ✅
+    - `npm run -w apps/web lint` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+  - Prisma rollout:
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:deploy` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+
+## Session Update 2026-04-06 15:49 +07 (Fix campaign API 404 runtime + stale PERSONAL status)
+- User report:
+  - lỗi `Cannot GET /api/v1/zalo/campaigns`;
+  - nick Zalo vẫn nhắn được qua ERP nhưng UI báo `DISCONNECTED`.
+- Root cause:
+  - API process đang chạy từ `11:27` (cũ hơn phần code thêm route campaign), nên runtime chưa có route `/zalo/campaigns`.
+  - status account PERSONAL lấy từ DB có thể bị stale; khi listener từng phát `closed` rồi websocket tự hồi (`retryOnClose`), runtime có `hasApi=true`, `wsState=OPEN` nhưng cờ/DB vẫn `DISCONNECTED`.
+- Đã triển khai:
+  - Runtime operation:
+    - restart API process cổng `3001` để nạp code mới.
+    - verify route campaign hoạt động lại `GET /api/v1/zalo/campaigns` trả `200`.
+    - trigger reconnect account PERSONAL `cmnmdk9gh0rcqt3dwvak88c0a`, status quay về `CONNECTED`.
+  - Code fix:
+    - `apps/api/src/modules/zalo/zalo.service.ts` (`listAccounts`):
+      - overlay status cho account PERSONAL theo runtime listener:
+        - nếu `hasApi=true` và `wsStateLabel='OPEN'` thì trả `status='CONNECTED'`,
+        - giảm false-negative `DISCONNECTED` khi DB status bị stale.
+- Verification:
+  - Backend quality:
+    - `npm run -w apps/api lint` ✅
+    - `npm run -w apps/api build` ✅
+    - `npm run -w apps/api test -- --run test/zalo.controller.test.ts test/zalo.service.test.ts` ✅ (`12 passed`)
+  - Runtime checks:
+    - `GET /api/v1/zalo/campaigns` ✅ (`200`)
+    - `GET /api/v1/zalo/accounts?accountType=PERSONAL` ✅ (`status=CONNECTED` cho account đã reconnect)
+    - `GET /api/v1/zalo/accounts/:id/personal/listener-debug` ✅ (`poolStatus=CONNECTED`, `wsStateLabel=OPEN`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 15:39 +07 (Campaign operator dropdown + field help popup)
+- User request:
+  - phần `Operator campaign (được toàn quyền trên campaign được gán)` cần hiển thị kiểu dropdown cho dễ nhìn;
+  - bổ sung diễn giải chi tiết cho các trường cài đặt bằng icon `i` mở popup.
+- Đã triển khai:
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - giữ luồng chọn operator campaign dạng dropdown + nút `Thêm operator` + chip `Bỏ`;
+    - bổ sung hệ thống field-help cho các trường campaign (name/code/policy/delay/error threshold/snapshot/promo/quota/template/operator);
+    - thêm popup `Modal` hiển thị mô tả chi tiết + ví dụ cho từng trường;
+    - harden accessibility cho nút `i`:
+      - `aria-label` đổi thành text generic để không đụng selector field label;
+      - thêm `title="Giải thích: <field>"` để vẫn rõ nghĩa khi hover/test.
+  - `apps/web/app/styles/modules/crm.css`
+    - thêm style cho label-row, help-button, help-modal, empty-operator text.
+  - `apps/web/e2e/tests/zalo-campaigns-flow.spec.ts`
+    - verify mở popup help;
+    - verify thao tác operator bằng dropdown;
+    - cập nhật selector ổn định (dùng `getByTitle` cho nút help, dùng placeholder cho input create form).
+- Verification:
+  - Frontend:
+    - `npm run -w apps/web lint` ✅
+    - `npm run -w apps/web build` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+  - Backend gate:
+    - `npm run -w apps/api lint` ✅
+    - `npm run -w apps/api build` ✅
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 15:25 +07 (Campaign delete + backend tests + campaign e2e flow)
+- User request:
+  - tiếp tục hoàn thiện toàn bộ chức năng `Zalo Campaigns`.
+- Đã triển khai:
+  - Backend API:
+    - thêm endpoint `DELETE /api/v1/zalo/campaigns/:id` tại:
+      - `apps/api/src/modules/zalo/zalo.controller.ts`
+      - `apps/api/src/modules/zalo/zalo-campaign.service.ts`
+    - rule hiện tại: chỉ `ADMIN` được xóa và chỉ xóa campaign trạng thái `DRAFT`.
+  - Frontend campaign workbench:
+    - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+      - thêm action `Xóa nháp` (chỉ hiện khi `ADMIN` + campaign `DRAFT`);
+      - gọi API delete và refresh list;
+      - bổ sung `data-testid` cho workbench và action buttons campaign để ổn định e2e.
+  - Test backend:
+    - thêm unit test template/spin/variable:
+      - `apps/api/test/zalo-campaign-template.util.test.ts`
+    - thêm unit test service campaign (ACL, conflict, delete rules):
+      - `apps/api/test/zalo-campaign.service.test.ts`
+    - mở rộng controller test cho campaign routes/query parsing:
+      - `apps/api/test/zalo.controller.test.ts`
+  - Test frontend e2e:
+    - thêm file mới:
+      - `apps/web/e2e/tests/zalo-campaigns-flow.spec.ts`
+    - cover:
+      - tạo campaign;
+      - start/pause/resume/cancel lifecycle;
+      - xóa campaign draft;
+      - mock API stateful cho `zalo/campaigns`.
+- Verification:
+  - Backend:
+    - `npm run -w apps/api lint` ✅
+    - `npm run -w apps/api build` ✅
+    - `npm run -w apps/api test -- --run test/zalo-campaign-template.util.test.ts test/zalo-campaign.service.test.ts test/zalo.controller.test.ts` ✅ (`14 passed`)
+  - Frontend:
+    - `npm run -w apps/web lint` ✅
+    - `npm run -w apps/web build` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 15:06 +07 (Wire Zalo campaigns route + campaign UI styles + sidebar e2e)
+- User action:
+  - xác nhận tiếp tục task (`ok`) để hoàn thiện phần Zalo campaigns còn dang dở.
+- Đã triển khai:
+  - Route page campaigns:
+    - thêm `apps/web/app/modules/zalo-automation/campaigns/page.tsx` để render `ZaloAutomationCampaignsWorkbench`.
+  - Campaign UI style:
+    - cập nhật `apps/web/app/styles/modules/crm.css`, bổ sung các class đang dùng trong workbench:
+      - form grid / account card / operator picker / KPI grid / operator chip;
+      - highlight row đang chọn (`tr.is-selected-row`);
+      - responsive fallback cho mobile.
+  - E2E guard cho menu mới:
+    - cập nhật `apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts`:
+      - assert link `Chiến dịch` hiển thị ở group `ZALO AUTOMATION`;
+      - click link và verify URL `/modules/zalo-automation/campaigns`;
+      - verify heading `Chiến dịch Zalo PERSONAL`.
+- Verification:
+  - `npm run -w apps/web lint` ✅
+  - `npm run -w apps/web build` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`1 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 11:59 +07 (Sticky shell header + isolated scroll in Zalo messages)
+- User request:
+  - cố định phần header + ô tìm kiếm trên cùng;
+  - khi lăn chuột, chỉ cuộn nội dung `Danh sách hội thoại` hoặc `Luồng tin nhắn`;
+  - phần tên hội thoại, tên tài khoản Zalo và vùng tìm kiếm không bị cuộn theo.
+- Đã triển khai:
+  - `apps/web/app/styles/layout.css`
+    - `shell-main` đổi sang layout cột full-height (`height: 100vh`, `display: flex`, `overflow: hidden`) để giữ toolbar/header cố định.
+    - `app-content` thành vùng cuộn độc lập (`flex: 1`, `min-height: 0`, `overflow: auto`).
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - thêm class `zalo-chat-workbench` cho workbench trang tin nhắn.
+  - `apps/web/app/styles/modules/crm.css`
+    - thêm `.zalo-chat-workbench` full-height theo container.
+    - `.zalo-chat-layout` dùng `flex: 1` + `min-height: 0`.
+    - khóa cuộn panel (`overflow: hidden`) và dồn cuộn vào:
+      - `.zalo-chat-thread-list`
+      - `.zalo-chat-message-list`
+    - thêm `overscroll-behavior: contain` cho 2 list để tránh scroll chain lên trang ngoài.
+- Verification:
+  - `npm run -w apps/web build` ✅
+  - `npm run -w apps/web lint` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 11:53 +07 (Zalo Messages layout stretch + unread badge visibility)
+- User request:
+  - bỏ khối header lớn ở đầu trang tin nhắn để mở rộng diện tích làm việc;
+  - kéo dài 2 khung `Danh sách hội thoại` + `Luồng tin nhắn` xuống thấp hơn theo chiều cao trang;
+  - hiển thị unread dạng số đỏ ngay trước tên hội thoại;
+  - bỏ hội thoại không thuộc Zalo (ví dụ `Smoke Customer / Kênh khác`);
+  - hiển thị unread theo từng tài khoản Zalo tại khu vực filter tài khoản.
+- Đã triển khai:
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - bỏ block header lớn trong trang Messages, giữ toolbar gọn (`Quản lý tài khoản`, `AI đánh giá`, `Tải lại`);
+    - lọc thread list chỉ giữ `ZALO_PERSONAL` và `ZALO_OA`;
+    - thêm unread badge đỏ trước tên từng hội thoại (xóa hiển thị text `Unread: x` cũ);
+    - tổng hợp unread theo account và hiển thị badge đỏ ở phần tài khoản Zalo;
+    - cập nhật option `Tất cả tài khoản` + từng account để có số unread khi > 0.
+  - `apps/web/app/styles/modules/crm.css`
+    - `zalo-chat-layout` dùng `min-height: calc(100vh - 220px)` để mở rộng 2 panel xuống cuối trang;
+    - `zalo-chat-thread-list` + `zalo-chat-message-list` chuyển sang flex-fill (`flex: 1`, `min-height: 0`) để dùng tối đa không gian;
+    - thêm style badge đỏ unread cho thread/account.
+  - `apps/web/e2e/tests/conversations-inbox.spec.ts`
+    - cập nhật assertion theo UI mới:
+      - không còn heading header cũ;
+      - có badge unread theo thread/account;
+      - vẫn pass luồng gửi tin và trang AI runs.
+- Verification:
+  - `npm run -w apps/web build` ✅
+  - `npm run -w apps/web lint` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 11:28 +07 (Fix duplicate ERP outbound message rows)
+- User report:
+  - nhắn từ điện thoại chỉ thấy 1 dòng (đúng);
+  - nhắn từ ERP lại hiện 2 dòng trong cùng hội thoại, nhưng trên Zalo thật chỉ gửi 1 tin.
+- Root-cause xác nhận bằng DB:
+  - cùng content/sentAt tạo 2 row AGENT:
+    - row 1 từ API send path: `externalMessageId=''`, senderName `admin@local.erp`;
+    - row 2 từ listener self-message: có `externalMessageId` thật (vd `7696099457179`), senderName `Tào Thám`.
+  - Sau khi bổ sung parse outbound msgId, phát sinh race-condition:
+    - listener insert trước vài ms;
+    - send path insert sau bị unique conflict (`tenant_Id, threadId, externalMessageId`) và trả 500.
+- Đã triển khai:
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+    - `resolveOutboundMessageId(...)` parse sâu các shape nested (`message`, `attachment`, `response`, `result`).
+    - `sendMessage(...)`:
+      - nếu không lấy được `externalMessageId` thì **không ingest optimistic** (đợi listener sync) để tránh duplicate.
+  - `apps/api/src/modules/conversations/conversations.service.ts`
+    - harden `createOrReuseMessage(...)`:
+      - bọc `create` bằng try/catch;
+      - nếu `P2002` unique conflict và có `externalMessageId`, fetch lại row existing và return thay vì throw 500.
+  - `apps/api/test/zalo-personal.pool.service.test.ts`
+    - thêm test parse nested outbound id;
+    - thêm test skip optimistic ingest khi send response thiếu external id.
+- Runtime verification:
+  - restart API thành công (PID mới `25363`, health `ok=true`).
+  - reconnect listener account `cmnmdk9gh0rcqt3dwvak88c0a` => `poolStatus=CONNECTED`, `wsState=OPEN`.
+  - gửi test marker `"[ERP-DEDUPE-CHECK-1775449689]"`:
+    - API trả `{"success":true}`;
+    - DB query đúng **1 row** (`COUNT=1`), không còn duplicate.
+- Verification gate:
+  - `npm run -w apps/api lint` ✅
+  - `npm run -w apps/api build` ✅
+  - `npm run -w apps/api test -- --run test/zalo-personal.pool.service.test.ts test/conversations.realtime.test.ts` ✅ (`9 passed`)
+
+## Session Update 2026-04-06 10:59 +07 (Fix missing self messages from phone in ERP chat)
+- User report:
+  - khi nhắn bằng điện thoại (chính tài khoản Zalo đã kết nối), tin nhắn không xuất hiện trong hội thoại ERP.
+- Root-cause:
+  - `zca-js` mặc định `selfListen=false`; message có `isSelf=true` bị bỏ qua trước khi tới pipeline ingest.
+  - trong quá trình harden listener, logic ingest đã tách thành helper nhưng helper chưa được thêm đầy đủ, gây nguy cơ listener không ingest ổn định.
+- Đã triển khai:
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+    - bật `selfListen: true` khi tạo Zalo instance cho cả:
+      - `startQrLogin(...)`
+      - `reconnectWithSavedSession(...)`
+    - bổ sung `resolveOutboundMessageId(...)`:
+      - parse `msgId/messageId` từ nhiều shape response khi gửi outbound để dùng dedupe.
+    - bổ sung `handleInboundMessage(...)`:
+      - gom logic ingest cho cả event `message` và `old_messages`;
+      - parse fallback cho `senderExternalId`, `externalThreadId`, `externalMessageId`, `senderName`, timestamp;
+      - normalize content (bao gồm sticker metadata);
+      - cập nhật listener debug snapshot (`lastIngestedAt`, `lastErrorAt`...).
+    - listener `message` và `old_messages` đều gọi chung helper này.
+    - outbound `sendMessage(...)` ingest với `externalMessageId` để tránh duplicate khi self-listen bật.
+- Verification:
+  - `npm run -w apps/api build` ✅
+  - `npm run -w apps/api lint` ✅
+  - `npm run -w apps/api test -- --run test/zalo-personal.pool.service.test.ts` ✅ (`5 passed`)
+  - `npm run -w apps/api test -- --run test/zalo.service.test.ts test/conversations.realtime.test.ts` ✅ (`10 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 10:34 +07 (ERP display name edit + Zalo sticker rendering)
+- User yêu cầu:
+  - cho phép sửa tên hiển thị nick trực tiếp trong ERP (không đổi tên nick Zalo thật);
+  - xử lý lỗi sticker đang hiển thị JSON thô như `{\"id\":21767,\"catId\":10320,\"type\":7}`.
+- Đã triển khai:
+  - Web Accounts:
+    - `apps/web/components/zalo-automation-accounts-workbench.tsx`
+      - thêm nút `Sửa tên hiển thị` theo từng tài khoản;
+      - thêm modal sửa tên hiển thị + note phạm vi chỉ trong ERP;
+      - submit `PATCH /api/v1/zalo/accounts/:id`.
+  - API listener inbound:
+    - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+      - thêm `normalizeIncomingContent(...)` để chuẩn hóa raw content;
+      - detect sticker từ `chat.sticker` và payload `id/catId/type`;
+      - lưu `contentType='STICKER'` + `attachmentsJson.sticker`;
+      - gọi `api.getStickersDetail(...)` để lấy URL sticker (cache theo sticker id), fallback label `[Sticker #id]`.
+  - Web Messages:
+    - `apps/web/components/zalo-automation-messages-workbench.tsx`
+      - render ảnh sticker từ `attachmentsJson.sticker.previewUrl`/fallback URLs;
+      - hỗ trợ parse legacy content JSON sticker để tránh hiển thị JSON thô;
+      - fallback text khi không có URL.
+    - `apps/web/app/styles/modules/crm.css`
+      - thêm style `.zalo-chat-message-sticker`.
+  - Tests:
+    - `apps/api/test/zalo-personal.pool.service.test.ts` thêm test sticker normalize + fallback.
+    - `apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts` thêm test edit display name.
+    - `apps/web/e2e/tests/conversations-inbox.spec.ts` thêm assert render sticker image.
+- Verify:
+  - `npm run -w apps/api lint` ✅
+  - `npm run -w apps/web lint` ✅
+  - `npm run -w apps/api build` ✅
+  - `npm run -w apps/web build` ✅
+  - `npm run -w apps/api test -- --run test/zalo-personal.pool.service.test.ts` ✅ (`5 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 09:58 +07 (Zalo personal listener diagnostics + bootstrap restore)
+- User cần xác minh chính xác liệu `zca-js` có nhận inbound message mới hay chưa.
+- Đã triển khai diagnostics runtime:
+  - `GET /api/v1/zalo/accounts/:id/personal/listener-debug`
+    - trả `poolStatus`, `hasApi`, `hasListener`, `wsState`, `lastRawEventAt`, `lastIngestedAt`, `lastErrorAt`...
+  - `POST /api/v1/zalo/accounts/:id/personal/request-old-messages`
+    - trigger `listener.requestOldMessages(...)` cho cả user/group.
+- Đã fix vận hành quan trọng:
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts` implement `OnModuleInit` để auto-restore listener cho PERSONAL account có trạng thái `CONNECTED` + session hợp lệ khi API khởi động lại.
+  - Tránh tình trạng DB vẫn `CONNECTED` nhưng listener in-memory bị mất sau restart.
+- Kết quả kiểm tra account thực tế:
+  - account: `cmnmdk9gh0rcqt3dwvak88c0a`.
+  - listener hiện tại `OPEN` sau restart và auto-restore.
+  - tại mốc `2026-04-06 09:57:58 +07`: `lastRawEventAt = null`, `lastIngestedAt = null` ⇒ chưa thấy `zca-js` nhận event inbound mới trong phiên listener hiện tại.
+- Verify:
+  - `npm run -w apps/api lint` ✅
+  - `npm run -w apps/api build` ✅
+
+## Session Update 2026-04-06 09:32 +07 (Hotfix missing new inbound Zalo conversations)
+- User report:
+  - tài khoản Zalo cá nhân vẫn login bình thường;
+  - gửi tin nhắn đi được; hội thoại cũ đang mở vẫn gửi/nhận;
+  - nhưng khách mới nhắn đến không xuất hiện hội thoại mới.
+- Triển khai fix:
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+    - harden parser message listener:
+      - fallback nhiều key cho `senderExternalId`/`externalThreadId`/`senderName`/`externalMessageId`;
+      - thêm warning khi không resolve được thread id (tránh silent drop).
+    - thêm `parseZaloSentAt(...)` để normalize timestamp:
+      - seconds -> milliseconds,
+      - microseconds -> milliseconds,
+      - giữ nguyên milliseconds.
+    - dùng timestamp đã normalize khi ingest message để đảm bảo `lastMessageAt` sort đúng.
+  - `apps/api/test/zalo-personal.pool.service.test.ts`
+    - thêm 3 unit tests cho normalize timestamp.
+- Verify:
+  - `npm run -w apps/api test -- --run test/zalo-personal.pool.service.test.ts` ✅
+  - `npm run -w apps/api test -- --run test/conversations.realtime.test.ts` ✅
+  - `npm run -w apps/api lint` ✅
+  - `npm run -w apps/api build` ✅
+  - Stability gate:
+    - `docker ps` (có `erp-postgres`) ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅
+
+## Session Update 2026-04-06 09:15 +07 (Zalo account creation moved to modal + runtime owner binding)
+- User yêu cầu UX/API cho trang tạo tài khoản Zalo:
+  - bỏ form inline, chuyển thành nút `Tạo tài khoản` ở góc phải hàng filter;
+  - bấm nút mở popup tạo mới;
+  - chỉ còn 3 trường bắt buộc: `Loại tài khoản`, `Tên hiển thị`, `Số điện thoại`;
+  - bỏ nhập `Zalo UID`;
+  - `Chủ sở hữu` chỉ hiện cho admin để chỉ định người quản lý, user khác ẩn và tự gán theo người đang đăng nhập.
+- Đã triển khai:
+  - Web:
+    - `apps/web/components/zalo-automation-accounts-workbench.tsx`
+      - thay form tạo inline bằng modal tạo tài khoản.
+      - thêm nút mở modal tại toolbar cùng hàng filter.
+      - bỏ trường `Zalo UID` khỏi form/payload.
+      - admin thấy selector `Chủ sở hữu` (lọc role `ADMIN|MANAGER`), non-admin ẩn field.
+      - validate bắt buộc `Loại tài khoản/Tên hiển thị/Số điện thoại`.
+    - `apps/web/app/styles/modules/crm.css`
+      - thêm style toolbar filter + nút tạo tài khoản để giữ layout cùng hàng.
+  - API:
+    - `apps/api/src/modules/zalo/zalo.service.ts`
+      - `createAccount(...)` giờ yêu cầu `displayName` + `phone`.
+      - bỏ nhận `zaloUid` từ request (set `null` khi tạo).
+      - owner binding theo auth context:
+        - non-admin luôn gán `ownerUserId = userId` hiện tại,
+        - admin có thể override `ownerUserId`, nếu không chọn thì fallback user hiện tại.
+  - Tests:
+    - `apps/api/test/zalo.service.test.ts`
+      - thêm test non-admin không override owner và bỏ qua `zaloUid`.
+      - thêm test admin được chỉ định owner khi tạo.
+    - `apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts`
+      - thêm 2 case cho modal tạo tài khoản (admin + staff).
+      - assert payload không còn `zaloUid`; non-admin không gửi `ownerUserId`.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/zalo.service.test.ts` ✅ (`8 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 08:57 +07 (Sender identity bound to ERP user context)
+- User yêu cầu sửa triệt để sender naming:
+  - sender không được map theo role label (`Admin/Manager/Staff`),
+  - phải lấy đúng user ERP cụ thể vừa gửi tin.
+- Đã triển khai:
+  - Web:
+    - `apps/web/components/zalo-automation-messages-workbench.tsx` bỏ truyền `senderName` từ frontend.
+  - API:
+    - `apps/api/src/modules/zalo/zalo.service.ts`:
+      - inject `ClsService`,
+      - resolve sender từ auth context (`employee.fullName -> email -> userId`) và dùng cho personal/OA send.
+    - `apps/api/src/modules/conversations/conversations.service.ts`:
+      - inject `ClsService`,
+      - tự resolve senderName tương tự cho `appendMessage` khi `senderType=AGENT` và client không truyền tên.
+  - Tests:
+    - `apps/api/test/zalo.service.test.ts` thêm case senderName lấy từ `employee.fullName`.
+    - `apps/api/test/conversations.realtime.test.ts` cập nhật constructor mock theo DI mới.
+    - `apps/web/e2e/tests/conversations-inbox.spec.ts` assert frontend không còn gửi `senderName`.
+- Verify:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/zalo.service.test.ts test/conversations.realtime.test.ts` ✅ (`8 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+
+## Session Update 2026-04-06 06:59 +07 (Zalo Messages UX + senderName role fix)
+- User feedback cần chỉnh lại trang `Zalo Automation > Tin nhắn`:
+  - cột điều phối hội thoại thu gọn còn khoảng 1/4 để vùng chat rộng hơn,
+  - tin nhắn đến/trả lời hiển thị trái/phải kiểu chat app,
+  - gửi từ role `ADMIN` không còn bị hiển thị người gửi là `Staff`.
+- Đã triển khai:
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - bỏ hardcode `senderName: 'Staff'`, dùng sender theo role runtime (`Admin/Manager/Staff`).
+    - khi gửi tin qua personal/OA/fallback đều đính kèm `senderName`.
+    - render bubble theo hướng `incoming`/`outgoing` với marker `data-message-direction`.
+  - `apps/web/app/styles/modules/crm.css`
+    - đổi tỷ lệ `.zalo-chat-layout` thành `1fr/3fr` (danh sách hội thoại ~1/4, luồng chat ~3/4),
+    - style bubble inbound/outbound trái/phải.
+  - `apps/api/src/modules/zalo/zalo.service.ts`
+    - `sendPersonalMessage(...)` nhận/forward `senderName`.
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+    - `sendMessage(...)` ingest outbound message với `senderName` runtime thay vì hardcode `Staff`.
+  - `apps/web/e2e/tests/conversations-inbox.spec.ts`
+    - thêm assert hướng bubble + verify payload OA gửi từ role ADMIN có `senderName = Admin`.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/zalo.service.test.ts` ✅ (`5 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+
+## Session Update 2026-04-05 21:54 +07 (Finalize implementation + full verification rerun)
+- Đã hoàn tất toàn bộ implementation theo plan `Zalo Automation` parity và xác nhận lại không còn hạng mục dang dở.
+- Đã rerun full gate theo phạm vi thay đổi:
+  - Backend:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/zalo.service.test.ts test/zalo.api-flow.test.ts test/conversations.realtime.test.ts` ✅ (`9 passed`)
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`13 passed`)
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`7 passed`)
+  - Stability gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'` ✅ (có `erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+
+## Session Update 2026-04-06 06:14 +07 (Hotfix runtime route 404 for Zalo assignments)
+- User báo lỗi runtime: `Cannot GET /api/v1/zalo/accounts/:id/assignments`.
+- Đã kiểm tra source:
+  - route tồn tại trong `ZaloController` (`GET /zalo/accounts/:id/assignments`).
+- Đã debug runtime thực tế:
+  - trước khi restart, request thật trả 404 `Cannot GET`.
+  - process API đang chạy là instance cũ (`node --loader ts-node/esm ... src/main.ts`) chưa nạp code route mới.
+- Đã thực hiện restart API process.
+- Kết quả sau fix:
+  - endpoint `/api/v1/zalo/accounts/:id/assignments` không còn 404.
+  - request không có quyền admin trả `403 Forbidden` (đúng policy hiện tại: chỉ `ADMIN` hệ thống được quản trị assignment).
+
+## Session Update 2026-04-06 06:18 +07 (Fix QR image not rendering in modal)
+- User báo lỗi modal đăng nhập QR hiện icon ảnh vỡ, không quét được.
+- Root-cause đã xác định:
+  - backend trả `qrImage` dạng base64 thô (ví dụ prefix `iVBORw0...`), không phải `data:image/...`.
+  - `<img src>` ở web dùng trực tiếp chuỗi này nên browser không render được.
+- Đã fix tại frontend:
+  - cập nhật `apps/web/components/zalo-automation-accounts-workbench.tsx`,
+  - thêm helper `normalizeQrImageSource(...)`:
+    - giữ nguyên nếu đã là `data:image/...` hoặc URL hợp lệ,
+    - tự prepend `data:image/png;base64,` khi nhận base64 thô,
+    - chuẩn hóa whitespace trước khi render.
+  - áp dụng normalize cho cả luồng socket `zalo:qr` và API fallback `GET /personal/qr`.
+- Đã bổ sung regression e2e:
+  - `apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts` mock `qrImage` base64 thô và assert `img src` được normalize thành `data:image/png;base64,...`.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`1 passed`)
+
+## Session Update 2026-04-06 06:30 +07 (Accounts layout + assignment popup UX)
+- User yêu cầu:
+  - bỏ bảng phân quyền bên phải để bảng danh sách tài khoản rộng full trang,
+  - chỉ hiển thị nút `Phân quyền` cho admin,
+  - bấm `Phân quyền` mở popup để chọn nhân sự + mức quyền như flow hiện có.
+- Đã triển khai:
+  - refactor `apps/web/components/zalo-automation-accounts-workbench.tsx`:
+    - bỏ panel phân quyền cột phải,
+    - danh sách tài khoản chuyển full-width (`crm-grid-single`),
+    - nút `Phân quyền` chỉ render khi `role === ADMIN`,
+    - thêm modal `Phân quyền tài khoản Zalo`:
+      - chọn nhân sự,
+      - chọn mức quyền `READ/CHAT/ADMIN`,
+      - lưu assignment,
+      - xem danh sách assignment hiện có và thu hồi.
+  - cập nhật style `apps/web/app/styles/modules/crm.css`:
+    - thêm `.crm-grid-single` để ép 1 cột full width.
+  - cập nhật e2e:
+    - `apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts` theo luồng modal mới (`Phân quyền` + label `Nhân sự`).
+    - `apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts` giữ regression QR base64 thô.
+- Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+
+## Session Update 2026-04-05 21:46 +07 (Zalo Automation full parity split pages + realtime)
+- User yêu cầu triển khai full plan tách namespace `zalo-automation` và parity chức năng với ZaloCRM.
+- Đã hoàn tất route/navigation/policy:
+  - route mới:
+    - `/modules/zalo-automation/messages`
+    - `/modules/zalo-automation/accounts`
+    - `/modules/zalo-automation/ai-runs`
+  - sidebar thêm section `ZALO AUTOMATION` với 3 mục con.
+  - access policy map `/modules/zalo-automation/*` vào module quyền `crm`.
+  - breadcrumb + app-shell title nhận diện đúng nhóm route mới.
+- Đã hoàn tất backend realtime + API parity:
+  - thêm gateway/service/module socket:
+    - `apps/api/src/modules/zalo/zalo-automation.gateway.ts`
+    - `apps/api/src/modules/zalo/zalo-automation-realtime.service.ts`
+    - `apps/api/src/modules/zalo/zalo-automation-realtime.module.ts`
+  - event client:
+    - `org:join`, `zalo:subscribe`, `zalo:unsubscribe`
+  - event server:
+    - `zalo:qr`, `zalo:scanned`, `zalo:connected`, `zalo:disconnected`, `zalo:error`, `zalo:qr-expired`, `zalo:reconnect-failed`, `chat:message`, `chat:deleted`
+  - emit từ `ZaloPersonalPoolService` + `ConversationsService` (ingest/send message Zalo) + soft-delete account.
+  - endpoint mới:
+    - `DELETE /api/v1/zalo/accounts/:id` (soft delete: disconnect + set `INACTIVE`, giữ lịch sử hội thoại)
+    - `POST /api/v1/zalo/accounts/:id/sync-contacts` (sync contact chỉ có SĐT, normalize phone, upsert customer theo `phoneNormalized`)
+- Đã hoàn tất frontend split pages:
+  - `messages`: workspace vận hành hội thoại, filter account + search + send, realtime message/delete, **không còn AI block**.
+  - `accounts`: bảng tài khoản + assignment + login QR/reconnect + sync danh bạ + soft delete.
+  - `ai-runs`: chuyển toàn bộ lịch/run/detail/evaluation từ trang cũ sang trang riêng, giữ API `conversation-quality`.
+  - thêm socket client helper `apps/web/lib/zalo-automation-socket.ts`.
+  - bổ sung CSS cho layout chat workspace + QR modal.
+- Đã bổ sung/điều chỉnh test:
+  - Backend:
+    - `apps/api/test/zalo.service.test.ts`
+    - `apps/api/test/zalo.api-flow.test.ts`
+    - `apps/api/test/conversations.realtime.test.ts`
+  - Frontend e2e:
+    - `apps/web/e2e/tests/conversations-inbox.spec.ts` (messages + ai-runs theo namespace mới, verify messages không còn AI block)
+    - `apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts`
+    - `apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts` (login QR/reconnect/sync/delete)
+    - `apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts` (section `ZALO AUTOMATION`)
+- Đã tạo ADR mới:
+  - `docs/decisions/ADR-047-ZALO-AUTOMATION-ROUTE-NAMESPACE-SPLIT.md`
+  - `docs/decisions/ADR-048-ZALO-AUTOMATION-REALTIME-SOCKET-EVENT-BUS.md`
+- Verification session:
+  - Backend:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/zalo.service.test.ts test/zalo.api-flow.test.ts test/conversations.realtime.test.ts` ✅ (`9 passed`)
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`13 passed`)
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/zalo-account-assignment-flow.spec.ts apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`7 passed`)
+
+## Session Update 2026-04-05 18:58 +07 (Core agent rule: mandatory brainstorming gate)
+- User yêu cầu bổ sung quy tắc bắt buộc dùng skill `brainstorming` cho các nội dung có nhiều phương án hoặc chưa rõ ràng.
+- Đã cập nhật `AGENTS.md`:
+  - thêm mục `1.1 Bắt buộc dùng skill brainstorming khi yêu cầu chưa rõ`,
+  - quy định hard-gate: không implement trước khi chốt mục tiêu/phạm vi/ràng buộc phi chức năng và xác nhận Understanding Lock với user.
+- Scope phiên này là cập nhật quy tắc vận hành agent, không thay đổi business logic/runtime code ERP.
 
 ## Session Update 2026-04-05 18:13 +07 (IAM rollout Task 10 + Task 11 handoff/stability)
 - User yêu cầu tiếp tục triển khai.

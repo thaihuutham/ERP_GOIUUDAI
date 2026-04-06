@@ -733,7 +733,7 @@ export function CrmConversationsWorkbench() {
             <Link className="btn btn-ghost" href="/modules/crm">
               Quay lại vận hành CRM
             </Link>
-            <Link className="btn btn-ghost" href="/modules/crm/zalo-accounts">
+            <Link className="btn btn-ghost" href="/modules/zalo-automation/accounts">
               Quản lý tài khoản Zalo
             </Link>
             <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>
