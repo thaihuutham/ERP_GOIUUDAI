@@ -3474,3 +3474,21 @@
 - Verify phiên hotfix:
   - `npm --prefix apps/web run lint` ✅
   - API Settings Center GET/PUT smoke ✅
+
+## Update 2026-04-06 20:17 - Customer360 dictionary + route canonicalization
+- Đã chuẩn hóa Customer360 API contract về một endpoint canonical:
+  - giữ `/api/v1/crm/customers`;
+  - bỏ alias `/api/v1/crm/customer-360` trong `apps/api/src/modules/crm/crm.controller.ts`.
+- Đã cập nhật frontend endpoint mapping:
+  - `apps/web/lib/module-definitions.ts` (feature `customer-360`) dùng `/crm/customers` cho list/create/update/archive.
+- Đã tạo tài liệu chuẩn dữ liệu Customer360:
+  - `docs/specs/CUSTOMER360_DATA_DICTIONARY.md`
+  - gồm: field, kiểu dữ liệu, bắt buộc/không, ý nghĩa, nguồn cập nhật, màn hình sử dụng.
+- Đã ghi ADR kiến trúc:
+  - `docs/decisions/ADR-050-CRM-CUSTOMER360-ENDPOINT-CANONICALIZATION.md`.
+- Verify phiên này:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/permission.util.test.ts test/crm.service.test.ts` ✅

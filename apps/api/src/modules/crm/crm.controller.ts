@@ -63,49 +63,6 @@ export class CrmController {
     return this.crmService.archiveCustomer(id);
   }
 
-  @Get('customer-360')
-  listCustomer360(
-    @Query() query: PaginationQueryDto,
-    @Query('status') status?: GenericStatus | 'ALL',
-    @Query('stage') stage?: string,
-    @Query('tag') tag?: string,
-    @Req() req?: { query?: Record<string, unknown> }
-  ) {
-    const entityIdsPromise = this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.CUSTOMER, req?.query);
-    return entityIdsPromise
-      .then((entityIds) => this.crmService.listCustomers(query, { status, stage, tag }, entityIds))
-      .then((result) => this.customFields.wrapResult(CustomFieldEntityType.CUSTOMER, result));
-  }
-
-  @Post('customer-360')
-  createCustomer360(@Body() body: Record<string, unknown>) {
-    const mutation = this.customFields.parseMutationBody(body);
-    return this.crmService.createCustomer(mutation.base)
-      .then(async (result) => {
-        const container = result as Record<string, unknown>;
-        const customer = container.customer as Record<string, unknown> | undefined;
-        if (customer?.id) {
-          await this.customFields.applyEntityMutation(CustomFieldEntityType.CUSTOMER, customer.id, mutation);
-        }
-        return this.customFields.wrapNestedEntity(CustomFieldEntityType.CUSTOMER, container, 'customer');
-      });
-  }
-
-  @Patch('customer-360/:id')
-  updateCustomer360(@Param('id') id: string, @Body() body: Record<string, unknown>) {
-    const mutation = this.customFields.parseMutationBody(body);
-    return this.crmService.updateCustomer(id, mutation.base)
-      .then(async (customer) => {
-        await this.customFields.applyEntityMutation(CustomFieldEntityType.CUSTOMER, id, mutation);
-        return this.customFields.wrapEntity(CustomFieldEntityType.CUSTOMER, customer);
-      });
-  }
-
-  @Delete('customer-360/:id')
-  archiveCustomer360(@Param('id') id: string) {
-    return this.crmService.archiveCustomer(id);
-  }
-
   @Get('interactions')
   listInteractions(
     @Query() query: PaginationQueryDto,

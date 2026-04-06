@@ -31,7 +31,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         key: 'customer-360',
         title: 'Khách hàng 360',
         description: 'Danh sách hồ sơ khách hàng hợp nhất.',
-        listEndpoint: '/crm/customer-360',
+        listEndpoint: '/crm/customers',
         columns: [
           'id',
           'fullName',
@@ -50,7 +50,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             key: 'create-customer-360',
             label: 'Tạo khách hàng 360',
             method: 'POST',
-            endpoint: '/crm/customer-360',
+            endpoint: '/crm/customers',
             fields: [
               { name: 'fullName', label: 'Họ tên', required: true, placeholder: 'Nguyễn Văn A' },
               { name: 'phone', label: 'Số điện thoại', placeholder: '0909123456' },
@@ -90,7 +90,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             key: 'update-customer-360',
             label: 'Cập nhật khách hàng',
             method: 'PATCH',
-            endpoint: '/crm/customer-360/:id',
+            endpoint: '/crm/customers/:id',
             fields: [
               { name: 'id', label: 'Mã khách hàng', required: true, placeholder: 'cuid...' },
               { name: 'fullName', label: 'Họ tên mới' },
@@ -119,7 +119,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             key: 'archive-customer-360',
             label: 'Lưu trữ khách hàng',
             method: 'DELETE',
-            endpoint: '/crm/customer-360/:id',
+            endpoint: '/crm/customers/:id',
             fields: [{ name: 'id', label: 'Mã khách hàng', required: true }]
           }
         ]

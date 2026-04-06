@@ -3514,3 +3514,20 @@
   - `npm run lint --workspace @erp/web` ✅
   - `npm run build --workspace @erp/web` ✅
   - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+
+### Update 2026-04-06 20:17 (Customer360 data dictionary + API route canonicalization)
+- [x] Chuẩn hóa API Customer360 về một route duy nhất:
+  - giữ canonical route `/api/v1/crm/customers`;
+  - loại alias `/api/v1/crm/customer-360` khỏi controller CRM.
+- [x] Đồng bộ frontend CRM module definitions:
+  - toàn bộ list/create/update/archive của feature `customer-360` dùng `/crm/customers`.
+- [x] Tạo tài liệu data dictionary chuẩn:
+  - `docs/specs/CUSTOMER360_DATA_DICTIONARY.md` (field, kiểu dữ liệu, bắt buộc/không, nguồn cập nhật, màn hình dùng).
+- [x] Ghi quyết định kiến trúc:
+  - `docs/decisions/ADR-050-CRM-CUSTOMER360-ENDPOINT-CANONICALIZATION.md`.
+- [x] Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/permission.util.test.ts test/crm.service.test.ts` ✅
