@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import { ConversationChannel } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { ConversationsService } from './conversations.service';
@@ -12,12 +12,19 @@ export class ConversationsController {
     @Query() query: PaginationQueryDto,
     @Query('channel') channel?: ConversationChannel | 'ALL',
     @Query('channelAccountId') channelAccountId?: string,
-    @Query('customerId') customerId?: string
+    @Query('customerId') customerId?: string,
+    @Query('tags') tags?: string
   ) {
     return this.conversationsService.listThreads(query, {
       channel,
       channelAccountId,
-      customerId
+      customerId,
+      tags: tags
+        ? tags
+          .split(/[\n,;]+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+        : []
     });
   }
 
@@ -34,6 +41,11 @@ export class ConversationsController {
   @Post('threads/:id/messages')
   appendMessage(@Param('id') threadId: string, @Body() body: Record<string, unknown>) {
     return this.conversationsService.appendMessage(threadId, body);
+  }
+
+  @Patch('threads/:id/tags')
+  updateThreadTags(@Param('id') threadId: string, @Body() body: Record<string, unknown>) {
+    return this.conversationsService.updateThreadTags(threadId, body);
   }
 
   @Get('threads/:id/evaluation/latest')

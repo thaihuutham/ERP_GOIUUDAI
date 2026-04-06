@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
+import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloService } from './zalo.service';
 import {
@@ -886,11 +887,34 @@ export class ZaloCampaignService {
       };
     }
 
+    const variablePayload = this.toRecord(recipient.variablePayloadJson);
+    const customerPayload = this.toRecord(variablePayload.customer);
+    const recipientPhone = this.normalizeCampaignPhone(
+      customerPayload.phoneNormalized
+      ?? customerPayload.phone
+      ?? variablePayload.normalizedPhone,
+    );
+    const recipientDisplayName = this.cleanString(
+      customerPayload.fullName
+      ?? customerPayload.displayName
+      ?? customerPayload.zaloName,
+    ) || null;
+    let effectiveExternalThreadId = this.cleanString(recipient.externalThreadId) || null;
+
     try {
-      await this.zaloService.sendPersonalMessage(account.zaloAccountId, {
-        externalThreadId: recipient.externalThreadId,
+      const deliveryResult = await this.zaloService.sendPersonalMessage(account.zaloAccountId, {
+        externalThreadId: effectiveExternalThreadId,
+        phone: recipientPhone || undefined,
+        customerPhone: recipientPhone || undefined,
+        customerDisplayName: recipientDisplayName || undefined,
         content: rendered.content,
       });
+      const resolvedExternalThreadId = this.cleanString(
+        this.toRecord(deliveryResult).externalThreadId,
+      );
+      if (resolvedExternalThreadId) {
+        effectiveExternalThreadId = resolvedExternalThreadId;
+      }
 
       const timezone = this.cleanString(campaign.timezone) || SYSTEM_TIMEZONE;
       const quotaDateKey = this.getDateKeyInTimezone(now, timezone);
@@ -907,6 +931,7 @@ export class ZaloCampaignService {
           data: {
             status: ZaloCampaignRecipientStatus.SENT,
             sentAt: now,
+            externalThreadId: effectiveExternalThreadId,
             failedReason: null,
             skippedReason: null,
             targetAccountId: account.zaloAccountId,
@@ -922,7 +947,7 @@ export class ZaloCampaignService {
             recipientId: recipient.id,
             customerId: recipient.customerId,
             zaloAccountId: account.zaloAccountId,
-            externalThreadId: recipient.externalThreadId,
+            externalThreadId: effectiveExternalThreadId,
             status: ZaloCampaignAttemptStatus.SENT,
             renderedContent: rendered.content,
             missingVariables: [],
@@ -1011,7 +1036,7 @@ export class ZaloCampaignService {
             recipientId: recipient.id,
             customerId: recipient.customerId,
             zaloAccountId: account.zaloAccountId,
-            externalThreadId: recipient.externalThreadId,
+            externalThreadId: effectiveExternalThreadId,
             status: ZaloCampaignAttemptStatus.FAILED,
             renderedContent: rendered.content,
             errorMessage,
@@ -1177,12 +1202,28 @@ export class ZaloCampaignService {
     account: CampaignAccountWithZalo,
     recipient: RecipientWithPayload,
   ): RecipientCompatibilityDecision {
+    const variablePayload = this.toRecord(recipient.variablePayloadJson);
     const externalThreadId = this.cleanString(recipient.externalThreadId);
     if (!externalThreadId) {
-      return {
-        allowed: false,
-        reason: 'NO_THREAD',
-      };
+      const normalizedPhone = this.cleanString(
+        variablePayload.normalizedPhone
+        ?? this.toRecord(variablePayload.customer).phoneNormalized
+        ?? this.toRecord(variablePayload.customer).phone,
+      );
+      if (!normalizedPhone) {
+        return {
+          allowed: false,
+          reason: 'NO_THREAD',
+        };
+      }
+
+      const reachableAccountIds = this.parseStringArray(variablePayload.reachableAccountIds);
+      if (reachableAccountIds.length > 0 && !reachableAccountIds.includes(account.zaloAccountId)) {
+        return {
+          allowed: false,
+          reason: 'ACCOUNT_NOT_REACHABLE',
+        };
+      }
     }
 
     if (
@@ -1197,7 +1238,17 @@ export class ZaloCampaignService {
     }
 
     if (campaign.selectionPolicy === ZaloCampaignSelectionPolicy.AVOID_PREVIOUSLY_INTERACTED_ACCOUNT) {
-      const variablePayload = this.toRecord(recipient.variablePayloadJson);
+      const resolvedFromPhoneLookup = Boolean(variablePayload.resolvedFromPhoneLookup);
+      if (resolvedFromPhoneLookup) {
+        const reachableAccountIds = this.parseStringArray(variablePayload.reachableAccountIds);
+        if (reachableAccountIds.length > 0 && !reachableAccountIds.includes(account.zaloAccountId)) {
+          return {
+            allowed: false,
+            reason: 'ACCOUNT_NOT_REACHABLE',
+          };
+        }
+      }
+
       const interactedAccountIds = this.parseStringArray(variablePayload.interactedAccountIds);
       if (interactedAccountIds.includes(account.zaloAccountId)) {
         return {
@@ -1480,6 +1531,7 @@ export class ZaloCampaignService {
         code: true,
         fullName: true,
         phone: true,
+        phoneNormalized: true,
         email: true,
         customerStage: true,
         segment: true,
@@ -1533,16 +1585,79 @@ export class ZaloCampaignService {
       threadByCustomer.set(customerId, rows);
     }
 
+    const phoneKeyByCustomer = new Map<string, string>();
+    const phonesForLookup = new Set<string>();
+    for (const customer of customers) {
+      const normalizedPhone = this.normalizeCampaignPhone(customer.phoneNormalized ?? customer.phone);
+      if (!normalizedPhone) {
+        continue;
+      }
+      phoneKeyByCustomer.set(customer.id, normalizedPhone);
+      phonesForLookup.add(normalizedPhone);
+    }
+
+    const lookupAccountIds = campaign.accounts
+      .filter((account) => account.status !== ZaloCampaignAccountStatus.DISABLED)
+      .map((account) => account.zaloAccountId);
+
+    const contactThreadByPhone = phonesForLookup.size > 0
+      ? await this.zaloService.resolvePersonalThreadsByPhones(
+        lookupAccountIds,
+        [...phonesForLookup],
+      )
+      : {};
+
     const defaultPromoCode = this.cleanString(filter.defaultPromoCode) || null;
 
     const rows: Prisma.ZaloCampaignRecipientCreateManyInput[] = customers.map((customer) => {
-      const threadCandidates = threadByCustomer.get(customer.id) ?? [];
-      const mostRecentThread = threadCandidates[0] ?? null;
+      const interactionThreadCandidates = threadByCustomer.get(customer.id) ?? [];
+      const phoneKey = phoneKeyByCustomer.get(customer.id) ?? null;
+      const phoneResolvedCandidates = phoneKey
+        ? (contactThreadByPhone[phoneKey] ?? []).map((candidate) => ({
+          channelAccountId: candidate.accountId,
+          externalThreadId: candidate.externalThreadId,
+          lastMessageAt: null,
+        }))
+        : [];
+
+      const dedupedPhoneResolvedCandidates: CandidateThread[] = [];
+      const seenResolvedKeys = new Set<string>();
+      for (const candidate of phoneResolvedCandidates) {
+        const accountKey = this.cleanString(candidate.channelAccountId);
+        const threadKey = this.cleanString(candidate.externalThreadId);
+        if (!threadKey) {
+          continue;
+        }
+        const dedupeKey = `${accountKey}::${threadKey}`;
+        if (seenResolvedKeys.has(dedupeKey)) {
+          continue;
+        }
+        seenResolvedKeys.add(dedupeKey);
+        dedupedPhoneResolvedCandidates.push(candidate);
+      }
+
+      const resolvedFromPhoneLookup = (
+        interactionThreadCandidates.length === 0
+        && dedupedPhoneResolvedCandidates.length > 0
+      );
+
+      const effectiveThreadCandidates = interactionThreadCandidates.length > 0
+        ? interactionThreadCandidates
+        : dedupedPhoneResolvedCandidates;
+      const mostRecentThread = effectiveThreadCandidates[0] ?? null;
       const externalThreadId = this.cleanString(mostRecentThread?.externalThreadId) || null;
 
       const interactedAccountIds = Array.from(
         new Set(
-          threadCandidates
+          interactionThreadCandidates
+            .map((item) => this.cleanString(item.channelAccountId))
+            .filter((item) => Boolean(item)),
+        ),
+      );
+
+      const reachableAccountIds = Array.from(
+        new Set(
+          dedupedPhoneResolvedCandidates
             .map((item) => this.cleanString(item.channelAccountId))
             .filter((item) => Boolean(item)),
         ),
@@ -1551,6 +1666,7 @@ export class ZaloCampaignService {
       const targetAccountId = campaign.selectionPolicy === ZaloCampaignSelectionPolicy.PRIORITIZE_RECENT_INTERACTION
         ? (this.cleanString(mostRecentThread?.channelAccountId) || null)
         : null;
+      const canResolveByPhone = Boolean(phoneKey);
 
       const promoCode = defaultPromoCode || this.cleanString(customer.code) || null;
       const variablePayload: JsonRecord = {
@@ -1559,6 +1675,7 @@ export class ZaloCampaignService {
           code: customer.code,
           fullName: customer.fullName,
           phone: customer.phone,
+          phoneNormalized: customer.phoneNormalized,
           email: customer.email,
           customerStage: customer.customerStage,
           segment: customer.segment,
@@ -1572,6 +1689,9 @@ export class ZaloCampaignService {
           name: campaign.name,
         },
         interactedAccountIds,
+        reachableAccountIds,
+        resolvedFromPhoneLookup,
+        normalizedPhone: phoneKey,
       };
 
       const snapshot: JsonRecord = {
@@ -1586,7 +1706,8 @@ export class ZaloCampaignService {
           source: customer.source,
           tags: customer.tags,
         },
-        threads: threadCandidates,
+        threads: interactionThreadCandidates,
+        resolvedThreadsByPhone: dedupedPhoneResolvedCandidates,
       };
 
       return {
@@ -1595,10 +1716,10 @@ export class ZaloCampaignService {
         customerId: customer.id,
         externalThreadId,
         targetAccountId,
-        status: externalThreadId
+        status: (externalThreadId || canResolveByPhone)
           ? ZaloCampaignRecipientStatus.PENDING
           : ZaloCampaignRecipientStatus.SKIPPED,
-        skippedReason: externalThreadId ? null : 'NO_TARGET_THREAD',
+        skippedReason: (externalThreadId || canResolveByPhone) ? null : 'NO_TARGET_THREAD',
         variablePayloadJson: variablePayload as Prisma.InputJsonValue,
         customerSnapshotJson: snapshot as Prisma.InputJsonValue,
       };
@@ -2286,5 +2407,23 @@ export class ZaloCampaignService {
     }
 
     return [];
+  }
+
+  private normalizeCampaignPhone(value: unknown) {
+    const normalized = normalizeVietnamPhone(String(value ?? '').trim());
+    if (!normalized) {
+      return null;
+    }
+    const compact = normalized.replace(/[^\d+]/g, '');
+    if (!compact) {
+      return null;
+    }
+    if (compact.startsWith('+84')) {
+      return `0${compact.slice(3)}`;
+    }
+    if (compact.startsWith('84')) {
+      return `0${compact.slice(2)}`;
+    }
+    return compact;
   }
 }

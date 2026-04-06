@@ -246,6 +246,24 @@
   font-size: 0.76rem;
 }
 
+.zalo-chat-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.zalo-chat-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d8e9de;
+  border-radius: 999px;
+  background: #f6fcf8;
+  color: #1f6540;
+  padding: 0.12rem 0.42rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
 .zalo-chat-message-list {
   border: 1px solid #d8e9de;
   border-radius: var(--radius-lg);
@@ -259,6 +277,11 @@
   gap: 0.5rem;
   flex: 1;
   min-height: 0;
+}
+
+.zalo-chat-tag-form {
+  display: grid;
+  gap: 0.4rem;
 }
 
 .zalo-chat-message-item {
@@ -378,6 +401,16 @@
   gap: 0.45rem;
 }
 
+.zalo-campaign-name-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.zalo-campaign-name-link:hover,
+.zalo-campaign-name-link:focus-visible {
+  text-decoration: underline;
+}
+
 .zalo-campaign-label-row {
   display: inline-flex;
   align-items: center;
@@ -409,27 +442,66 @@
 }
 
 .zalo-campaign-account-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.45rem;
   font-weight: 600;
+  min-width: 0;
 }
 
 .zalo-campaign-account-toggle input[type='checkbox'] {
   margin: 0;
 }
 
-.zalo-campaign-account-toggle .badge {
-  margin-left: auto;
+.zalo-campaign-account-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.zalo-campaign-account-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.zalo-campaign-account-inline-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.zalo-campaign-account-inline-field.is-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+}
+
+.zalo-campaign-account-inline-field input {
+  width: 160px;
+}
+
+.zalo-campaign-account-inline-field.is-inline input {
+  width: 92px;
+}
+
+.zalo-campaign-template-textarea {
+  width: 100%;
+  min-height: 128px;
 }
 
 .zalo-campaign-operator-picker {
-  border: 1px solid #d8e9de;
+  border: 1px dashed #c6ddcf;
   border-radius: var(--radius-lg);
-  background: #fbfefc;
-  padding: 0.55rem;
+  background: #f9fdfb;
+  padding: 0.45rem 0.55rem;
   display: grid;
-  gap: 0.42rem;
+  gap: 0.34rem;
+}
+
+.zalo-campaign-operator-picker.is-inline-grid {
+  grid-column: span 2;
 }
 
 .zalo-campaign-operator-picker p {
@@ -479,6 +551,35 @@
 .zalo-campaign-kpi-grid strong {
   color: #174f31;
   font-size: 0.92rem;
+}
+
+.zalo-campaign-account-table {
+  min-width: 1060px;
+}
+
+.zalo-campaign-account-table th,
+.zalo-campaign-account-table td {
+  white-space: nowrap;
+}
+
+.zalo-campaign-account-table th:nth-child(1),
+.zalo-campaign-account-table td:nth-child(1) {
+  min-width: 260px;
+  white-space: normal;
+}
+
+.zalo-campaign-account-table th:nth-child(2),
+.zalo-campaign-account-table td:nth-child(2) {
+  min-width: 120px;
+}
+
+.zalo-campaign-account-table th:nth-child(8),
+.zalo-campaign-account-table td:nth-child(8) {
+  min-width: 150px;
+}
+
+.zalo-campaign-unassigned-row {
+  background: #fff9ed;
 }
 
 .zalo-campaign-operators-inline {
@@ -558,5 +659,9 @@ tr.is-selected-row:hover {
   .zalo-campaign-operator-list,
   .zalo-campaign-kpi-grid {
     grid-template-columns: 1fr;
+  }
+
+  .zalo-campaign-operator-picker.is-inline-grid {
+    grid-column: auto;
   }
 }

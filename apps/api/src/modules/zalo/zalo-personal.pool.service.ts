@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloAutomationRealtimeService } from './zalo-automation-realtime.service';
+import { buildFriendAlias, normalizeAliasPhone } from './zalo-friend-alias.util';
 
 type PersonalPoolStatus = 'DISCONNECTED' | 'QR_PENDING' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
@@ -701,6 +702,7 @@ export class ZaloPersonalPoolService implements OnModuleInit {
       const rawContent = message?.data?.content ?? message?.content ?? message?.data?.message ?? message?.message ?? '';
       const normalizedContent = await this.normalizeIncomingContent(rawContent, message, api);
       const contentType = normalizedContent.contentType || this.detectContentType(rawContent);
+      const phoneFromPayload = this.extractInboundPhoneCandidate(message);
       const senderName = this.pickFirstNonEmptyString(
         message?.data?.dName,
         message?.data?.displayName,
@@ -731,7 +733,7 @@ export class ZaloPersonalPoolService implements OnModuleInit {
         ? this.pickFirstNonEmptyString(message?.data?.gName, message?.data?.groupName, message?.groupName)
         : senderName;
 
-      await this.conversationsService.ingestExternalMessage({
+      const ingestedMessage = await this.conversationsService.ingestExternalMessage({
         channel: ConversationChannel.ZALO_PERSONAL,
         channelAccountId: accountId,
         externalThreadId,
@@ -746,6 +748,17 @@ export class ZaloPersonalPoolService implements OnModuleInit {
         customerDisplayName: customerDisplayName || undefined
       });
 
+      if (!isGroup && senderType === ConversationSenderType.CUSTOMER) {
+        await this.tryUpdateInboundFriendAlias({
+          accountId,
+          api,
+          externalThreadId,
+          threadId: this.pickFirstNonEmptyString((ingestedMessage as { threadId?: unknown })?.threadId) || undefined,
+          senderName: senderName || customerDisplayName || undefined,
+          phone: phoneFromPayload || undefined
+        });
+      }
+
       this.updateListenerDebug(accountId, {
         lastIngestedAt: new Date(),
         lastIngestedThreadId: externalThreadId,
@@ -759,6 +772,79 @@ export class ZaloPersonalPoolService implements OnModuleInit {
       });
       this.logger.error(`Listener ${source} error for ${accountId}: ${errorMessage}`);
     }
+  }
+
+  private async tryUpdateInboundFriendAlias(args: {
+    accountId: string;
+    api: any;
+    externalThreadId: string;
+    threadId?: string;
+    senderName?: string;
+    phone?: string;
+  }) {
+    if (!args.api || typeof args.api.changeFriendAlias !== 'function') {
+      return;
+    }
+
+    let displayName = this.pickFirstNonEmptyString(args.senderName);
+    let phone = normalizeAliasPhone(args.phone);
+    if (!displayName || !phone) {
+      const thread = await this.prisma.client.conversationThread.findFirst({
+        where: {
+          tenant_Id: this.prisma.getTenantId(),
+          ...(args.threadId
+            ? { id: args.threadId }
+            : {
+                channel: ConversationChannel.ZALO_PERSONAL,
+                channelAccountId: args.accountId,
+                externalThreadId: args.externalThreadId
+              })
+        },
+        select: {
+          customerDisplayName: true,
+          customer: {
+            select: {
+              fullName: true,
+              phone: true,
+              phoneNormalized: true
+            }
+          }
+        }
+      });
+      if (!displayName) {
+        displayName = this.pickFirstNonEmptyString(
+          thread?.customerDisplayName,
+          thread?.customer?.fullName
+        );
+      }
+      if (!phone) {
+        phone = normalizeAliasPhone(thread?.customer?.phoneNormalized ?? thread?.customer?.phone);
+      }
+    }
+
+    const alias = buildFriendAlias(displayName, phone);
+    if (!alias) {
+      return;
+    }
+
+    try {
+      await args.api.changeFriendAlias(alias, args.externalThreadId);
+    } catch (error) {
+      this.logger.warn(
+        `Skip inbound alias update for ${args.accountId}/${args.externalThreadId}: ${this.normalizeErrorMessage(error)}`
+      );
+    }
+  }
+
+  private extractInboundPhoneCandidate(message: any) {
+    return this.pickFirstNonEmptyString(
+      message?.data?.phoneNumber,
+      message?.data?.phone_number,
+      message?.data?.phone,
+      message?.phoneNumber,
+      message?.phone_number,
+      message?.phone
+    );
   }
 
   private detectContentType(rawContent: unknown): string {

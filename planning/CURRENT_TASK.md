@@ -2,9 +2,150 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-06 16:08 +07
+- Last updated: 2026-04-06 18:19 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-06 18:19 +07 (UX campaigns layout + detail route separation)
+- User request:
+  - đưa phần gán nhân sự quản lý campaign lên chung với phần chọn nội dung campaign;
+  - quota/ngày dời lên dòng tên nick để card gọn hơn và dành diện tích cho template;
+  - tách `Chi tiết Campaign` + `Recipients Snapshot` ra route riêng, mở khi click tên campaign.
+- Đã triển khai:
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - thêm prop `campaignId?: string` và tách 2 mode:
+      - list/create mode (`/campaigns`);
+      - detail mode (`/campaigns/[campaignId]`).
+    - list mode:
+      - chỉ còn form tạo + bảng danh sách campaign;
+      - tên campaign thành link mở trang detail.
+    - detail mode:
+      - render chi tiết campaign + recipients snapshot + attempts;
+      - thêm nút quay lại danh sách.
+    - create form:
+      - block operator dời lên trước vùng account/template;
+      - quota/ngày chuyển lên cùng dòng tên nick;
+      - template textarea mở rộng.
+  - route mới:
+    - `apps/web/app/modules/zalo-automation/campaigns/[campaignId]/page.tsx`.
+  - style:
+    - `apps/web/app/styles/modules/crm.css` bổ sung style cho link tên campaign, card account top-row/inline quota/template.
+  - e2e update:
+    - `apps/web/e2e/tests/zalo-campaigns-flow.spec.ts` cập nhật mock `GET /zalo/campaigns/:id` và flow tương tác qua detail route.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+
+## Session Update 2026-04-06 17:52 +07 (Reconcile lệch số liệu Tiến độ vs account detail)
+- User report:
+  - số liệu trong ô `Tiến độ` và bảng account detail không giống nhau.
+- Root cause:
+  - `Tiến độ` là tổng recipients toàn campaign theo status.
+  - bảng account detail là counters cấp account (runtime assigned).
+  - recipients `SKIPPED` vì `NO_TARGET_THREAD` tại snapshot có `targetAccountId = null` nên không thuộc account nào.
+- Đã triển khai:
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - thêm tính toán `unassignedRecipientStats` từ `recipients` chưa gán account;
+    - thêm dòng `Chưa gán account` trong bảng account;
+    - thêm note giải thích dưới bảng (bao gồm số `NO_TARGET_THREAD` chưa gán account).
+  - `apps/web/app/styles/modules/crm.css`
+    - style phân biệt dòng `zalo-campaign-unassigned-row`.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+
+## Session Update 2026-04-06 17:37 +07 (Phone-first campaign send + alias auto + tag management + fix detail counters)
+- User request:
+  - campaign cần gửi theo SĐT khi phần lớn khách chưa có thread cũ;
+  - tự động đổi biệt danh thành `Tên Zalo - SĐT` cho cả gửi chiến dịch và inbound ngoài chiến dịch;
+  - cho phép gắn tag khi chat và lọc hội thoại theo tag trên toàn bộ account Zalo;
+  - sửa lỗi detail campaign đang hiển thị `Quota/Sent/Skipped/Failed/Lỗi liên tiếp/Lần gửi gần nhất` = 0 không đúng thực tế.
+- Đã triển khai:
+  - `apps/api/src/modules/zalo/zalo.service.ts`
+    - nâng cấp resolve phone->thread: `getMultiUsersByPhones` -> `findUser` -> `getAllFriends`;
+    - `sendPersonalMessage` nhận phone fallback khi thiếu `externalThreadId`;
+    - thêm `upsertPersonalFriendAlias(...)` cập nhật alias best-effort.
+  - `apps/api/src/modules/zalo/zalo-friend-alias.util.ts` (mới):
+    - normalize phone alias + build alias `Tên - SĐT`.
+  - `apps/api/src/modules/zalo/zalo-campaign.service.ts`
+    - snapshot recipient không skip nếu có phone;
+    - runtime gửi hỗ trợ resolve thread bằng phone;
+    - lưu lại `externalThreadId` đã resolve vào recipient/attempt;
+    - compatibility check theo `reachableAccountIds` khi resolve từ phone.
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+    - inbound customer message tự update alias từ payload/thread/customer context.
+  - `apps/api/src/modules/conversations/conversations.controller.ts`
+    - thêm route `PATCH /conversations/threads/:id/tags`;
+    - list threads nhận query `tags`.
+  - `apps/api/src/modules/conversations/conversations.service.ts`
+    - quản lý tags trong `metadataJson.tags`;
+    - filter tags ở DB (`path=['tags']`, `array_contains`).
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - thêm filter tag ở list hội thoại;
+    - hiển thị tag chips trên thread;
+    - thêm form lưu tag ngay trong panel Luồng tin nhắn.
+  - `apps/web/app/styles/modules/crm.css`
+    - style cho tag chips/tag form trong module chat.
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - `loadCampaignDetails` fetch thêm `/zalo/campaigns/:id` để refresh số liệu account detail.
+- Verification:
+  - Stability:
+    - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - Quality gates:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - Tests:
+    - `npm run test --workspace @erp/api -- --run test/zalo-campaign.service.test.ts test/zalo.controller.test.ts test/zalo.service.test.ts test/zalo-personal.pool.service.test.ts test/conversations.realtime.test.ts` ✅ (`27 passed`)
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`6 passed`)
+    - Note: `conversations.api-flow.test.ts` fail nền do bootstrap mock thiếu (`ConfigService/Prisma` cho `onModuleInit`), không phát sinh từ patch này.
+
+## Session Update 2026-04-06 16:55 +07 (Campaign account table spacing + phone->UID fallback)
+- User request:
+  - chỉnh lại kích thước bảng account trong campaign detail vì các cột đang dồn vào nhau;
+  - kiểm tra luồng `NO_TARGET_THREAD`, bổ sung bước kiểm tra phone có UID Zalo trước khi gửi.
+- Đã triển khai:
+  - UI table layout:
+    - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+      - các bảng campaign dùng class `data-table`;
+      - bảng account detail dùng `data-table zalo-campaign-account-table`.
+    - `apps/web/app/styles/modules/crm.css`
+      - thêm style `zalo-campaign-account-table`:
+        - tăng `min-width`;
+        - giữ `nowrap` cho cột số;
+        - cột account có `min-width` lớn + cho xuống dòng id;
+        - tăng bề rộng cột trạng thái và cột lần gửi gần nhất.
+  - Fallback phone -> UID để giảm `NO_TARGET_THREAD`:
+    - `apps/api/src/modules/zalo/zalo.service.ts`
+      - thêm `resolvePersonalThreadsByPhones(accountIds, phones)`:
+        - đọc danh bạ từ `getAllFriends()` trên các account PERSONAL đang connect;
+        - map phone chuẩn hóa -> UID/thread id.
+      - thêm helper parse UID từ payload contact (`resolveContactUid`).
+    - `apps/api/src/modules/zalo/zalo-campaign.service.ts`
+      - tại snapshot tạo recipient:
+        - nếu customer chưa có `conversationThread`, thử tra phone -> UID qua method mới;
+        - nếu có UID thì set `externalThreadId` để recipient vào `PENDING` (không skip ngay);
+        - lưu thêm `reachableAccountIds` + cờ `resolvedFromPhoneLookup` vào variable payload;
+      - tại compatibility check:
+        - với recipient tạo từ phone-lookup, chỉ account nằm trong `reachableAccountIds` mới được claim gửi.
+- Verification:
+  - Backend:
+    - `npm run -w apps/api lint` ✅
+    - `npm run -w apps/api build` ✅
+    - `npm run -w apps/api test -- --run test/zalo-campaign.service.test.ts test/zalo.controller.test.ts test/zalo.service.test.ts` ✅ (`18 passed`)
+  - Frontend:
+    - `npm run -w apps/web lint` ✅
+    - `npm run -w apps/web build` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+  - Stability gate:
+    - `docker ps` có `erp-postgres` Up ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run -w apps/api prisma:migrate:status` ✅ (`Database schema is up to date!`)
 
 ## Session Update 2026-04-06 16:08 +07 (Quota account theo ngày + reset 24:00)
 - User request:
@@ -3360,3 +3501,16 @@
   - `npm run build --workspace @erp/web` ✅
 - [x] Chốt ADR kiến trúc:
   - `docs/decisions/ADR-018-HR-ATS-PIPELINE-WORKFLOW-INTEGRATION.md`.
+
+### Update 2026-04-06 18:38 (Zalo Campaign UI compact operator + Recipients Snapshot clarity)
+- [x] Điều chỉnh form tạo campaign theo vị trí user khoanh đỏ:
+  - đưa block `Operator campaign` vào chung `zalo-campaign-form-grid`;
+  - cho block operator chiếm 2 cột bên phải cùng hàng `Promo code` để giao diện gọn hơn.
+- [x] Làm rõ hành vi `Recipients Snapshot` ngay trên UI:
+  - thêm mô tả mục đích bảng (kiểm tra thread/target/lý do skip-fail);
+  - nêu rõ bảng chỉ tải snapshot gần nhất tối đa 80 dòng, không kéo full khi campaign có dữ liệu lớn.
+- [x] Cập nhật style responsive cho block operator inline-grid.
+- [x] Verify:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/zalo-campaigns-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)

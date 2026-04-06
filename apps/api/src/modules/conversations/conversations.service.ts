@@ -11,6 +11,7 @@ type ThreadFilters = {
   channel?: ConversationChannel | 'ALL';
   channelAccountId?: string;
   customerId?: string;
+  tags?: string[];
 };
 
 type IngestExternalMessagePayload = {
@@ -42,6 +43,7 @@ export class ConversationsService {
   async listThreads(query: PaginationQueryDto, filters: ThreadFilters = {}) {
     const take = Math.min(Math.max(query.limit ?? 30, 1), 200);
     const keyword = query.q?.trim();
+    const filterTags = this.parseThreadTags(filters.tags);
 
     const where: Prisma.ConversationThreadWhereInput = {};
 
@@ -62,6 +64,17 @@ export class ConversationsService {
         { customerDisplayName: { contains: keyword, mode: 'insensitive' } },
         { externalThreadId: { contains: keyword, mode: 'insensitive' } }
       ];
+    }
+
+    if (filterTags.length > 0) {
+      this.pushAndConstraint(where, {
+        OR: filterTags.map((tag) => ({
+          metadataJson: {
+            path: ['tags'],
+            array_contains: [tag]
+          }
+        }))
+      });
     }
 
     const zaloScope = await this.resolveZaloThreadScope(filters);
@@ -117,7 +130,10 @@ export class ConversationsService {
     const items = hasMore ? rows.slice(0, take) : rows;
 
     return {
-      items,
+      items: items.map((item) => ({
+        ...item,
+        tags: this.readThreadTags(item.metadataJson)
+      })),
       nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
       limit: take
     };
@@ -127,10 +143,13 @@ export class ConversationsService {
     const channel = this.parseChannel(payload.channel, ConversationChannel.ZALO_PERSONAL);
     const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
     const channelAccountId = this.optionalString(payload.channelAccountId) ?? null;
+    const tags = this.parseThreadTags(payload.tags);
 
     if (this.isZaloChannel(channel) && channelAccountId) {
       await this.zaloAssignment.assertCanChatAccount(channelAccountId);
     }
+
+    const metadataJson = this.mergeThreadMetadata(payload.metadataJson as Prisma.InputJsonValue | undefined, tags);
 
     const created = await this.prisma.client.conversationThread.create({
       data: {
@@ -140,14 +159,42 @@ export class ConversationsService {
         externalThreadId,
         customerId: this.optionalString(payload.customerId) ?? null,
         customerDisplayName: this.optionalString(payload.customerDisplayName) ?? null,
-        metadataJson: (payload.metadataJson as Prisma.InputJsonValue | undefined) ?? undefined,
+        metadataJson,
         lastMessageAt: payload.lastMessageAt ? this.parseDate(payload.lastMessageAt, 'lastMessageAt') : undefined,
         unreadCount: this.parseInt(payload.unreadCount, 0),
         isReplied: this.parseBoolean(payload.isReplied, true)
       }
     });
 
-    return created;
+    return {
+      ...created,
+      tags: this.readThreadTags(created.metadataJson)
+    };
+  }
+
+  async updateThreadTags(threadId: string, payload: Record<string, unknown>) {
+    const thread = await this.prisma.client.conversationThread.findFirst({ where: { id: threadId } });
+    if (!thread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    if (this.isZaloChannel(thread.channel) && thread.channelAccountId) {
+      await this.zaloAssignment.assertCanChatAccount(thread.channelAccountId);
+    }
+
+    const tags = this.parseThreadTags(payload.tags);
+    const metadataJson = this.mergeThreadMetadata(thread.metadataJson as Prisma.InputJsonValue | undefined, tags);
+    const updated = await this.prisma.client.conversationThread.update({
+      where: { id: threadId },
+      data: {
+        metadataJson
+      }
+    });
+
+    return {
+      ...updated,
+      tags: this.readThreadTags(updated.metadataJson)
+    };
   }
 
   async listMessages(threadId: string, query: PaginationQueryDto) {
@@ -546,6 +593,44 @@ export class ConversationsService {
 
   private isZaloChannel(channel: ConversationChannel) {
     return channel === ConversationChannel.ZALO_PERSONAL || channel === ConversationChannel.ZALO_OA;
+  }
+
+  private mergeThreadMetadata(metadataJson: Prisma.InputJsonValue | undefined, tags: string[]) {
+    const base = this.ensureRecord(metadataJson);
+    return {
+      ...base,
+      tags
+    } as Prisma.InputJsonValue;
+  }
+
+  private readThreadTags(metadataJson: unknown) {
+    const metadata = this.ensureRecord(metadataJson);
+    return this.parseThreadTags(metadata.tags);
+  }
+
+  private parseThreadTags(input: unknown): string[] {
+    if (Array.isArray(input)) {
+      return Array.from(
+        new Set(
+          input
+            .map((item) => this.cleanString(item).toLowerCase())
+            .filter(Boolean)
+        )
+      );
+    }
+
+    if (typeof input === 'string') {
+      return Array.from(
+        new Set(
+          input
+            .split(/[\n,;]+/)
+            .map((item) => this.cleanString(item).toLowerCase())
+            .filter(Boolean)
+        )
+      );
+    }
+
+    return [];
   }
 
   private async resolveCurrentSenderDisplayName() {

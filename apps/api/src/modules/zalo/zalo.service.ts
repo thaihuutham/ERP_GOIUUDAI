@@ -8,6 +8,7 @@ import { RuntimeSettingsService } from '../../common/settings/runtime-settings.s
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildFriendAlias } from './zalo-friend-alias.util';
 import { ZaloOaOutboundWorkerService } from './zalo-oa-outbound.worker';
 import { ZaloAccountAssignmentService } from './zalo-account-assignment.service';
 import { ZaloAutomationRealtimeService } from './zalo-automation-realtime.service';
@@ -229,6 +230,144 @@ export class ZaloService {
     };
   }
 
+  async resolvePersonalThreadsByPhones(accountIds: string[], phones: string[]) {
+    const normalizedPhoneSet = new Set(
+      phones
+        .map((phone) => this.normalizePhoneForSync(phone))
+        .filter((phone): phone is string => Boolean(phone))
+    );
+    if (normalizedPhoneSet.size === 0) {
+      return {} as Record<string, Array<{ accountId: string; externalThreadId: string; displayName?: string }>>;
+    }
+
+    const uniqueAccountIds = Array.from(
+      new Set(
+        accountIds
+          .map((accountId) => this.optionalString(accountId))
+          .filter((accountId): accountId is string => Boolean(accountId))
+      )
+    );
+
+    const byPhone = new Map<string, Array<{ accountId: string; externalThreadId: string; displayName?: string }>>();
+    const normalizedPhones = [...normalizedPhoneSet];
+    for (const accountId of uniqueAccountIds) {
+      const api = this.personalPool.getConnectedApi(accountId);
+      if (!api) {
+        continue;
+      }
+
+      const unresolvedPhones = new Set(normalizedPhones);
+      const consumeFoundPhone = (phone: string) => {
+        unresolvedPhones.delete(phone);
+      };
+
+      if (typeof api.getMultiUsersByPhones === 'function' && unresolvedPhones.size > 0) {
+        try {
+          const mapped = await api.getMultiUsersByPhones([...unresolvedPhones]);
+          const mappedRecord = mapped && typeof mapped === 'object' && !Array.isArray(mapped)
+            ? (mapped as Record<string, unknown>)
+            : {};
+          for (const [phoneKey, userRow] of Object.entries(mappedRecord)) {
+            const normalizedPhone = this.normalizePhoneForSync(phoneKey);
+            if (!normalizedPhone || !normalizedPhoneSet.has(normalizedPhone)) {
+              continue;
+            }
+            const externalThreadId = this.resolveUidFromLookupRecord(userRow);
+            if (!externalThreadId) {
+              continue;
+            }
+            const displayName = this.resolveDisplayNameFromLookupRecord(userRow);
+            this.appendResolvedPhoneThread(byPhone, normalizedPhone, {
+              accountId,
+              externalThreadId,
+              ...(displayName ? { displayName } : {})
+            });
+            consumeFoundPhone(normalizedPhone);
+          }
+        } catch {
+          // Ignore multi-user lookup errors, fallback to findUser/getAllFriends.
+        }
+      }
+
+      if (typeof api.findUser === 'function' && unresolvedPhones.size > 0) {
+        for (const phone of [...unresolvedPhones]) {
+          try {
+            const foundUser = await api.findUser(phone);
+            const externalThreadId = this.resolveUidFromLookupRecord(foundUser);
+            if (!externalThreadId) {
+              continue;
+            }
+            const displayName = this.resolveDisplayNameFromLookupRecord(foundUser);
+            this.appendResolvedPhoneThread(byPhone, phone, {
+              accountId,
+              externalThreadId,
+              ...(displayName ? { displayName } : {})
+            });
+            consumeFoundPhone(phone);
+          } catch {
+            // Ignore findUser errors per phone.
+          }
+        }
+      }
+
+      if (typeof api.getAllFriends !== 'function' || unresolvedPhones.size === 0) {
+        continue;
+      }
+
+      try {
+        const rawContacts = await api.getAllFriends();
+        const contacts = this.extractContactsFromZaloPayload(rawContacts);
+        for (const contact of contacts) {
+          const normalizedPhone = this.normalizePhoneForSync(this.resolveContactPhone(contact));
+          if (!normalizedPhone || !normalizedPhoneSet.has(normalizedPhone) || !unresolvedPhones.has(normalizedPhone)) {
+            continue;
+          }
+
+          const externalThreadId = this.resolveContactUid(contact);
+          if (!externalThreadId) {
+            continue;
+          }
+
+          const displayName = this.resolveContactDisplayName(contact);
+          this.appendResolvedPhoneThread(byPhone, normalizedPhone, {
+            accountId,
+            externalThreadId,
+            ...(displayName ? { displayName } : {})
+          });
+          consumeFoundPhone(normalizedPhone);
+        }
+      } catch {
+        // Ignore lookup errors for one account; campaign snapshot will fallback to existing thread data.
+      }
+    }
+
+    const output: Record<string, Array<{ accountId: string; externalThreadId: string; displayName?: string }>> = {};
+    for (const [phone, rows] of byPhone.entries()) {
+      output[phone] = rows;
+    }
+    return output;
+  }
+
+  async resolvePersonalThreadByPhone(accountId: string, phone: string) {
+    await this.requirePersonalAccount(accountId);
+
+    const normalizedPhone = this.normalizePhoneForSync(phone);
+    if (!normalizedPhone) {
+      return null;
+    }
+
+    const mapped = await this.resolvePersonalThreadsByPhones([accountId], [normalizedPhone]);
+    const rows = mapped[normalizedPhone] ?? [];
+    const resolved = rows.find((row) => row.accountId === accountId) ?? rows[0] ?? null;
+    if (!resolved) {
+      return null;
+    }
+    return {
+      externalThreadId: resolved.externalThreadId,
+      displayName: resolved.displayName
+    };
+  }
+
   async startPersonalLogin(id: string) {
     const account = await this.requirePersonalAccount(id);
     void this.personalPool.startQrLogin(account.id);
@@ -288,12 +427,89 @@ export class ZaloService {
     await this.requirePersonalAccount(id);
     await this.zaloAssignment.assertCanChatAccount(id);
 
-    const externalThreadId = this.requiredString(payload.externalThreadId, 'Thiếu externalThreadId.');
+    const requestedExternalThreadId = this.optionalString(payload.externalThreadId) ?? null;
+    const requestedPhone = this.optionalString(payload.phone)
+      ?? this.optionalString(payload.recipientPhone)
+      ?? this.optionalString(payload.customerPhone)
+      ?? null;
     const content = this.requiredString(payload.content, 'Thiếu nội dung tin nhắn.');
     const threadType = this.optionalString(payload.threadType)?.toLowerCase() === 'group' ? 'group' : 'user';
     const senderName = await this.resolveCurrentSenderDisplayName();
+    let externalThreadId = requestedExternalThreadId;
+    let resolvedDisplayName: string | null = null;
 
-    return this.personalPool.sendMessage(id, externalThreadId, content, threadType, senderName ?? undefined);
+    if (!externalThreadId && threadType === 'user' && requestedPhone) {
+      const resolvedThread = await this.resolvePersonalThreadByPhone(id, requestedPhone);
+      if (resolvedThread) {
+        externalThreadId = resolvedThread.externalThreadId;
+        resolvedDisplayName = resolvedThread.displayName ?? null;
+      }
+    }
+
+    if (!externalThreadId) {
+      if (threadType === 'group') {
+        throw new BadRequestException('Thiếu externalThreadId cho hội thoại group.');
+      }
+      throw new BadRequestException('Không tìm được thread theo externalThreadId hoặc số điện thoại.');
+    }
+
+    const delivery = await this.personalPool.sendMessage(
+      id,
+      externalThreadId,
+      content,
+      threadType,
+      senderName ?? undefined
+    );
+
+    if (threadType === 'user') {
+      await this.upsertPersonalFriendAlias(id, {
+        externalThreadId,
+        phone: requestedPhone ?? undefined,
+        zaloDisplayName:
+          this.optionalString(payload.customerDisplayName)
+          ?? this.optionalString(payload.zaloDisplayName)
+          ?? this.optionalString(payload.zaloName)
+          ?? resolvedDisplayName
+          ?? undefined
+      });
+    }
+
+    return {
+      ...(delivery as Record<string, unknown>),
+      externalThreadId,
+      resolvedByPhone: !requestedExternalThreadId && Boolean(requestedPhone)
+    };
+  }
+
+  async upsertPersonalFriendAlias(
+    accountId: string,
+    payload: {
+      externalThreadId?: string | null;
+      zaloDisplayName?: string | null;
+      phone?: string | null;
+    }
+  ) {
+    const externalThreadId = this.optionalString(payload.externalThreadId);
+    const alias = buildFriendAlias(payload.zaloDisplayName, payload.phone);
+    if (!externalThreadId || !alias) {
+      return { success: false, reason: 'MISSING_ALIAS_DATA' as const };
+    }
+
+    const api = this.personalPool.getConnectedApi(accountId);
+    if (!api || typeof api.changeFriendAlias !== 'function') {
+      return { success: false, reason: 'ALIAS_API_UNAVAILABLE' as const };
+    }
+
+    try {
+      await api.changeFriendAlias(alias, externalThreadId);
+      return { success: true, alias };
+    } catch (error) {
+      return {
+        success: false,
+        reason: 'ALIAS_UPDATE_FAILED' as const,
+        error: error instanceof Error ? error.message : String(error ?? 'UNKNOWN_ERROR')
+      };
+    }
   }
 
   async sendOaMessage(id: string, payload: Record<string, unknown>) {
@@ -547,6 +763,72 @@ export class ZaloService {
       }
     }
     return undefined;
+  }
+
+  private resolveContactUid(contact: Record<string, unknown>) {
+    const candidates = [
+      contact.uid,
+      contact.uidFrom,
+      contact.uid_from,
+      contact.userId,
+      contact.user_id,
+      contact.id,
+      contact.profileId,
+      contact.profile_id
+    ];
+    for (const candidate of candidates) {
+      const value = this.optionalString(candidate);
+      if (value) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveUidFromLookupRecord(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return undefined;
+    }
+    const record = input as Record<string, unknown>;
+    return this.optionalString(
+      record.uid
+      ?? record.userId
+      ?? record.user_id
+      ?? record.id
+      ?? record.profileId
+      ?? record.profile_id
+    );
+  }
+
+  private resolveDisplayNameFromLookupRecord(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return undefined;
+    }
+    const record = input as Record<string, unknown>;
+    return this.optionalString(
+      record.display_name
+      ?? record.displayName
+      ?? record.zalo_name
+      ?? record.zaloName
+      ?? record.fullName
+      ?? record.full_name
+    );
+  }
+
+  private appendResolvedPhoneThread(
+    byPhone: Map<string, Array<{ accountId: string; externalThreadId: string; displayName?: string }>>,
+    normalizedPhone: string,
+    row: { accountId: string; externalThreadId: string; displayName?: string }
+  ) {
+    const rows = byPhone.get(normalizedPhone) ?? [];
+    const duplicated = rows.some(
+      (item) => item.accountId === row.accountId && item.externalThreadId === row.externalThreadId
+    );
+    if (duplicated) {
+      return;
+    }
+    rows.push(row);
+    byPhone.set(normalizedPhone, rows);
   }
 
   private resolveContactPhone(contact: Record<string, unknown>) {

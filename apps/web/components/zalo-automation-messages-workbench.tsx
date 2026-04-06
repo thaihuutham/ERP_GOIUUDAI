@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { getZaloAutomationSocket, resolveZaloAutomationOrgId } from '../lib/zalo-automation-socket';
 import { useAccessPolicy } from './access-policy-context';
@@ -16,6 +16,7 @@ type ThreadRow = {
   channel: ConversationChannel;
   channelAccountId?: string | null;
   externalThreadId: string;
+  tags?: string[] | null;
   customerDisplayName?: string | null;
   unreadCount?: number | null;
   lastMessageAt?: string | null;
@@ -128,6 +129,17 @@ function toOptionalNumber(...values: unknown[]): number | null {
   return null;
 }
 
+function parseTagValues(raw: string) {
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\n,;]+/)
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
 function parseLegacyStickerPayload(rawContent: string | null | undefined) {
   const raw = String(rawContent ?? '').trim();
   if (!raw || raw.length > 600 || !raw.startsWith('{') || !raw.endsWith('}')) {
@@ -203,14 +215,25 @@ export function ZaloAutomationMessagesWorkbench() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
 
   const [threadQuery, setThreadQuery] = useState('');
+  const [threadTagQuery, setThreadTagQuery] = useState('');
   const [threadAccountId, setThreadAccountId] = useState('');
   const [selectedThreadId, setSelectedThreadId] = useState('');
+  const [selectedThreadTagsInput, setSelectedThreadTagsInput] = useState('');
   const [sendMessageContent, setSendMessageContent] = useState('');
+  const [isSavingThreadTags, setIsSavingThreadTags] = useState(false);
 
   const selectedThread = useMemo(
     () => threads.find((thread) => thread.id === selectedThreadId) ?? null,
     [threads, selectedThreadId]
   );
+  const selectedThreadTags = useMemo(
+    () => (Array.isArray(selectedThread?.tags) ? selectedThread.tags.filter(Boolean) : []),
+    [selectedThread]
+  );
+
+  useEffect(() => {
+    setSelectedThreadTagsInput(selectedThreadTags.join(', '));
+  }, [selectedThreadId, selectedThreadTags]);
 
   const unreadByAccount = useMemo(() => {
     const unreadMap = new Map<string, number>();
@@ -302,6 +325,7 @@ export function ZaloAutomationMessagesWorkbench() {
       const payload = await apiRequest<{ items?: ThreadRow[] }>('/conversations/threads', {
         query: {
           q: threadQuery || undefined,
+          tags: threadTagQuery || undefined,
           channel: 'ALL',
           channelAccountId: threadAccountId || undefined,
           limit: 80
@@ -356,7 +380,7 @@ export function ZaloAutomationMessagesWorkbench() {
       return;
     }
     void loadThreads();
-  }, [canView, threadQuery, threadAccountId]);
+  }, [canView, threadQuery, threadTagQuery, threadAccountId]);
 
   useEffect(() => {
     if (!canView || !selectedThreadId) {
@@ -411,6 +435,44 @@ export function ZaloAutomationMessagesWorkbench() {
       }
     };
   }, [canView, threadAccountId, selectedThreadId]);
+
+  const onSaveThreadTags = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    clearNotice();
+    if (!selectedThread) {
+      setErrorMessage('Vui lòng chọn hội thoại trước khi gắn tag.');
+      return;
+    }
+
+    const nextTags = parseTagValues(selectedThreadTagsInput);
+    setIsSavingThreadTags(true);
+    try {
+      const payload = await apiRequest<ThreadRow>(`/conversations/threads/${selectedThread.id}/tags`, {
+        method: 'PATCH',
+        body: {
+          tags: nextTags
+        }
+      });
+      const updatedThread = (normalizeObjectPayload(payload) as ThreadRow | null) ?? null;
+      setThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === selectedThread.id
+            ? {
+                ...thread,
+                ...(updatedThread ?? {}),
+                tags: Array.isArray(updatedThread?.tags) ? updatedThread.tags : nextTags
+              }
+            : thread
+        )
+      );
+      setResultMessage('Đã cập nhật tag hội thoại.');
+      await loadThreads();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật tag hội thoại.');
+    } finally {
+      setIsSavingThreadTags(false);
+    }
+  };
 
   const onSendMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -521,6 +583,15 @@ export function ZaloAutomationMessagesWorkbench() {
                 placeholder="Tên khách hàng hoặc thread id"
               />
             </div>
+            <div className="field">
+              <label htmlFor="zalo-msg-tag-filter">Tag</label>
+              <input
+                id="zalo-msg-tag-filter"
+                value={threadTagQuery}
+                onChange={(event) => setThreadTagQuery(event.target.value)}
+                placeholder="VIP, tiềm năng, cần chăm sóc"
+              />
+            </div>
           </div>
 
           {accountsWithUnread.length > 0 ? (
@@ -562,6 +633,15 @@ export function ZaloAutomationMessagesWorkbench() {
                     <div className="zalo-chat-thread-item-meta">
                       <span>{thread.channelAccount?.displayName || thread.channelAccountId || '--'}</span>
                     </div>
+                    {Array.isArray(thread.tags) && thread.tags.length > 0 ? (
+                      <div className="zalo-chat-tag-list">
+                        {thread.tags.map((tag) => (
+                          <span key={`${thread.id}-${tag}`} className="zalo-chat-tag-chip">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </button>
                 );
               })}
@@ -583,6 +663,31 @@ export function ZaloAutomationMessagesWorkbench() {
           <p className="muted">
             Tài khoản: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
           </p>
+          <p className="muted">
+            Tag hiện tại: {selectedThreadTags.length > 0 ? selectedThreadTags.map((tag) => `#${tag}`).join(', ') : '--'}
+          </p>
+
+          <form className="zalo-chat-tag-form" onSubmit={onSaveThreadTags}>
+            <div className="field">
+              <label htmlFor="zalo-thread-tags">Tag hội thoại</label>
+              <input
+                id="zalo-thread-tags"
+                value={selectedThreadTagsInput}
+                onChange={(event) => setSelectedThreadTagsInput(event.target.value)}
+                placeholder="vip, mới, ưu tiên"
+                disabled={!selectedThread || isSavingThreadTags}
+              />
+            </div>
+            <div className="action-buttons">
+              <button
+                type="submit"
+                className="btn btn-secondary"
+                disabled={!selectedThread || isSavingThreadTags}
+              >
+                {isSavingThreadTags ? 'Đang lưu...' : 'Lưu tag'}
+              </button>
+            </div>
+          </form>
 
           {isLoadingMessages ? <p className="muted">Đang tải tin nhắn...</p> : null}
           {!isLoadingMessages && messages.length === 0 ? <p className="muted">Chưa có tin nhắn.</p> : null}

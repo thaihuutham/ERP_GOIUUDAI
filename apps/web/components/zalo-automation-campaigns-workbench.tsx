@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
@@ -391,7 +392,14 @@ function policyLabel(policy: SelectionPolicy) {
     : 'Tránh nick đã tương tác';
 }
 
-export function ZaloAutomationCampaignsWorkbench() {
+type ZaloAutomationCampaignsWorkbenchProps = {
+  campaignId?: string;
+};
+
+export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsWorkbenchProps = {}) {
+  const { campaignId } = props;
+  const router = useRouter();
+  const isDetailView = Boolean(campaignId);
   const { canModule, canAction } = useAccessPolicy();
   const { role } = useUserRole();
   const canView = canModule('crm');
@@ -404,7 +412,7 @@ export function ZaloAutomationCampaignsWorkbench() {
 
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
-  const [selectedCampaignId, setSelectedCampaignId] = useState('');
+  const [selectedCampaignId, setSelectedCampaignId] = useState(campaignId ?? '');
 
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [attempts, setAttempts] = useState<AttemptRow[]>([]);
@@ -436,10 +444,60 @@ export function ZaloAutomationCampaignsWorkbench() {
 
   const [accountDrafts, setAccountDrafts] = useState<Record<string, AccountDraft>>({});
 
+  const activeCampaignId = isDetailView ? (campaignId ?? '') : selectedCampaignId;
   const selectedCampaign = useMemo(
-    () => campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? null,
-    [campaigns, selectedCampaignId],
+    () => campaigns.find((campaign) => campaign.id === activeCampaignId) ?? null,
+    [activeCampaignId, campaigns],
   );
+
+  const unassignedRecipientStats = useMemo(() => {
+    let pending = 0;
+    let inProgress = 0;
+    let sent = 0;
+    let skipped = 0;
+    let failed = 0;
+    let skippedNoTargetThread = 0;
+    let lastSentAt: string | null = null;
+
+    for (const recipient of recipients) {
+      if (recipient.targetAccountId) {
+        continue;
+      }
+
+      if (recipient.status === 'PENDING') {
+        pending += 1;
+      } else if (recipient.status === 'IN_PROGRESS') {
+        inProgress += 1;
+      } else if (recipient.status === 'SENT') {
+        sent += 1;
+      } else if (recipient.status === 'SKIPPED') {
+        skipped += 1;
+        if (String(recipient.skippedReason ?? '').trim().toUpperCase() === 'NO_TARGET_THREAD') {
+          skippedNoTargetThread += 1;
+        }
+      } else if (recipient.status === 'FAILED') {
+        failed += 1;
+      }
+
+      if (recipient.sentAt) {
+        if (!lastSentAt || new Date(recipient.sentAt).getTime() > new Date(lastSentAt).getTime()) {
+          lastSentAt = recipient.sentAt;
+        }
+      }
+    }
+
+    const total = pending + inProgress + sent + skipped + failed;
+    return {
+      total,
+      pending,
+      inProgress,
+      sent,
+      skipped,
+      failed,
+      skippedNoTargetThread,
+      lastSentAt,
+    };
+  }, [recipients]);
 
   const userLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -471,6 +529,9 @@ export function ZaloAutomationCampaignsWorkbench() {
       const rows = normalizeListPayload(payload) as unknown as CampaignRow[];
       setCampaigns(rows);
       setSelectedCampaignId((prev) => {
+        if (isDetailView) {
+          return campaignId ?? '';
+        }
         if (prev && rows.some((row) => row.id === prev)) {
           return prev;
         }
@@ -551,7 +612,8 @@ export function ZaloAutomationCampaignsWorkbench() {
 
     setIsLoadingDetails(true);
     try {
-      const [recipientsPayload, attemptsPayload] = await Promise.all([
+      const [campaignPayload, recipientsPayload, attemptsPayload] = await Promise.all([
+        apiRequest<CampaignRow>(`/zalo/campaigns/${campaignId}`),
         apiRequest<RecipientRow[]>(`/zalo/campaigns/${campaignId}/recipients`, {
           query: {
             limit: 80,
@@ -563,6 +625,16 @@ export function ZaloAutomationCampaignsWorkbench() {
           },
         }),
       ]);
+      const campaignDetail = normalizeObjectPayload(campaignPayload) as CampaignRow | null;
+      if (campaignDetail?.id) {
+        setCampaigns((prev) => {
+          const exists = prev.some((campaign) => campaign.id === campaignId);
+          if (!exists) {
+            return [campaignDetail, ...prev];
+          }
+          return prev.map((campaign) => (campaign.id === campaignId ? campaignDetail : campaign));
+        });
+      }
       setRecipients(normalizeListPayload(recipientsPayload) as unknown as RecipientRow[]);
       setAttempts(normalizeListPayload(attemptsPayload) as unknown as AttemptRow[]);
     } catch (error) {
@@ -578,6 +650,12 @@ export function ZaloAutomationCampaignsWorkbench() {
   };
 
   useEffect(() => {
+    if (campaignId) {
+      setSelectedCampaignId(campaignId);
+    }
+  }, [campaignId]);
+
+  useEffect(() => {
     if (!canView) {
       return;
     }
@@ -585,13 +663,18 @@ export function ZaloAutomationCampaignsWorkbench() {
   }, [canView, isAdmin]);
 
   useEffect(() => {
-    if (!canView || !selectedCampaignId) {
+    if (!isDetailView) {
       setRecipients([]);
       setAttempts([]);
       return;
     }
-    void loadCampaignDetails(selectedCampaignId);
-  }, [canView, selectedCampaignId]);
+    if (!canView || !activeCampaignId) {
+      setRecipients([]);
+      setAttempts([]);
+      return;
+    }
+    void loadCampaignDetails(activeCampaignId);
+  }, [activeCampaignId, canView, isDetailView]);
 
   const onCreateCampaign = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -683,7 +766,7 @@ export function ZaloAutomationCampaignsWorkbench() {
   };
 
   const runCampaignAction = async (action: 'start' | 'pause' | 'resume' | 'cancel') => {
-    if (!selectedCampaignId) {
+    if (!activeCampaignId) {
       return;
     }
     clearNotice();
@@ -694,11 +777,11 @@ export function ZaloAutomationCampaignsWorkbench() {
     }
 
     try {
-      await apiRequest(`/zalo/campaigns/${selectedCampaignId}/${action}`, {
+      await apiRequest(`/zalo/campaigns/${activeCampaignId}/${action}`, {
         method: 'POST',
       });
       setResultMessage(`Đã thực hiện thao tác ${action.toUpperCase()} cho campaign.`);
-      await Promise.all([loadCampaigns(), loadCampaignDetails(selectedCampaignId)]);
+      await Promise.all([loadCampaigns(), loadCampaignDetails(activeCampaignId)]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : `Không thể ${action} campaign.`);
     }
@@ -729,6 +812,10 @@ export function ZaloAutomationCampaignsWorkbench() {
         method: 'DELETE',
       });
       setResultMessage('Đã xóa campaign draft.');
+      if (isDetailView) {
+        router.push('/modules/zalo-automation/campaigns');
+        return;
+      }
       await loadCampaigns();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không thể xóa campaign.');
@@ -736,13 +823,13 @@ export function ZaloAutomationCampaignsWorkbench() {
   };
 
   const onAssignOperator = async () => {
-    if (!isAdmin || !selectedCampaignId || !operatorUserId) {
+    if (!isAdmin || !activeCampaignId || !operatorUserId) {
       return;
     }
     clearNotice();
 
     try {
-      await apiRequest(`/zalo/campaigns/${selectedCampaignId}/operators/${operatorUserId}`, {
+      await apiRequest(`/zalo/campaigns/${activeCampaignId}/operators/${operatorUserId}`, {
         method: 'PUT',
       });
       setResultMessage('Đã thêm operator cho campaign.');
@@ -779,13 +866,13 @@ export function ZaloAutomationCampaignsWorkbench() {
   );
 
   const onRevokeOperator = async (userId: string) => {
-    if (!isAdmin || !selectedCampaignId) {
+    if (!isAdmin || !activeCampaignId) {
       return;
     }
     clearNotice();
 
     try {
-      await apiRequest(`/zalo/campaigns/${selectedCampaignId}/operators/${userId}`, {
+      await apiRequest(`/zalo/campaigns/${activeCampaignId}/operators/${userId}`, {
         method: 'DELETE',
       });
       setResultMessage('Đã thu hồi operator khỏi campaign.');
@@ -809,342 +896,365 @@ export function ZaloAutomationCampaignsWorkbench() {
   return (
     <div className="crm-customer-page" data-testid="zalo-automation-campaigns-workbench">
       <header className="crm-customer-page-header">
-        <h1>Chiến dịch Zalo PERSONAL</h1>
+        <h1>{isDetailView ? 'Chi tiết Campaign Zalo PERSONAL' : 'Chiến dịch Zalo PERSONAL'}</h1>
         <p>
-          Tạo campaign theo quota account, chạy tự động theo khung giờ và theo dõi trạng thái gửi theo thời gian thực.
+          {isDetailView
+            ? 'Theo dõi chi tiết campaign, trạng thái gửi, recipients snapshot và lịch sử attempts.'
+            : 'Tạo campaign theo quota account, chạy tự động theo khung giờ và theo dõi trạng thái gửi theo thời gian thực.'}
         </p>
       </header>
 
       {errorMessage && <div className="banner banner-error">{errorMessage}</div>}
       {resultMessage && <div className="banner banner-success">{resultMessage}</div>}
 
-      <section className="panel-surface crm-panel">
-        <div className="crm-panel-head">
-          <div>
-            <h2>Tạo Campaign Mới</h2>
-            <p>Chỉ kênh PERSONAL, mỗi account có template và quota riêng.</p>
-          </div>
-          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>
-              Tải lại dữ liệu
-            </button>
-            <Link href="/modules/zalo-automation/accounts" className="btn btn-ghost">
-              Quản lý tài khoản
-            </Link>
-          </div>
-        </div>
-
-        <form className="form-grid" onSubmit={onCreateCampaign}>
-          <div className="zalo-campaign-form-grid">
-            <label>
-              {renderFieldLabel('Tên campaign', 'name')}
-              <input
-                value={createForm.name}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
-                placeholder="Ví dụ: Campaign Tư vấn tháng 4"
-                required
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Mã campaign', 'code')}
-              <input
-                value={createForm.code}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, code: event.target.value }))}
-                placeholder="OPTIONAL_CAMPAIGN_CODE"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Policy chọn account', 'selectionPolicy')}
-              <select
-                value={createForm.selectionPolicy}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    selectionPolicy: event.target.value as SelectionPolicy,
-                  }))
-                }
-              >
-                {SELECTION_POLICY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              {renderFieldLabel('Delay tối thiểu (giây)', 'delayMinSeconds')}
-              <input
-                type="number"
-                min={1}
-                value={createForm.delayMinSeconds}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, delayMinSeconds: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Delay tối đa (giây)', 'delayMaxSeconds')}
-              <input
-                type="number"
-                min={1}
-                value={createForm.delayMaxSeconds}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, delayMaxSeconds: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Ngưỡng lỗi liên tiếp / account', 'maxConsecutiveErrors')}
-              <input
-                type="number"
-                min={1}
-                value={createForm.maxConsecutiveErrors}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    maxConsecutiveErrors: event.target.value,
-                  }))
-                }
-                required
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Max recipients (tuỳ chọn)', 'maxRecipients')}
-              <input
-                type="number"
-                min={1}
-                value={createForm.maxRecipients}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, maxRecipients: event.target.value }))}
-                placeholder="Để trống = theo tổng quota"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Allowed variable keys (phân cách dấu phẩy)', 'allowedVariableKeys')}
-              <input
-                value={createForm.allowedVariableKeys}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    allowedVariableKeys: event.target.value,
-                  }))
-                }
-                placeholder="ten_khach,ma_khuyen_mai,customer.phone"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Customer IDs snapshot (tuỳ chọn)', 'customerIds')}
-              <input
-                value={createForm.customerIds}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, customerIds: event.target.value }))}
-                placeholder="id1,id2,id3"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Tags snapshot (tuỳ chọn)', 'tags')}
-              <input
-                value={createForm.tags}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, tags: event.target.value }))}
-                placeholder="vip,lead-mới"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Stage snapshot (tuỳ chọn)', 'stage')}
-              <input
-                value={createForm.stage}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, stage: event.target.value }))}
-                placeholder="MOI"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Source snapshot (tuỳ chọn)', 'source')}
-              <input
-                value={createForm.source}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, source: event.target.value }))}
-                placeholder="ZALO"
-              />
-            </label>
-            <label>
-              {renderFieldLabel('Promo code mặc định (tuỳ chọn)', 'defaultPromoCode')}
-              <input
-                value={createForm.defaultPromoCode}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    defaultPromoCode: event.target.value,
-                  }))
-                }
-                placeholder="SPRING-2026"
-              />
-            </label>
-          </div>
-
-          <div className="zalo-campaign-account-grid">
-            {accounts.map((account) => {
-              const draft = accountDrafts[account.id] ?? {
-                enabled: false,
-                quota: '20',
-                templateContent: '',
-              };
-              const label = account.displayName || account.zaloUid || account.id;
-              return (
-                <div key={account.id} className="zalo-campaign-account-card">
-                  <label className="zalo-campaign-account-toggle">
-                    <input
-                      type="checkbox"
-                      checked={draft.enabled}
-                      onChange={(event) =>
-                        setAccountDrafts((prev) => ({
-                          ...prev,
-                          [account.id]: {
-                            ...draft,
-                            enabled: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    <span>{label}</span>
-                    <Badge variant={statusToBadge(account.status)}>{account.status || '--'}</Badge>
-                  </label>
-                  <label>
-                    {renderFieldLabel('Quota/ngày', 'accountQuota')}
-                    <input
-                      type="number"
-                      min={1}
-                      value={draft.quota}
-                      onChange={(event) =>
-                        setAccountDrafts((prev) => ({
-                          ...prev,
-                          [account.id]: {
-                            ...draft,
-                            quota: event.target.value,
-                          },
-                        }))
-                      }
-                      disabled={!draft.enabled}
-                    />
-                  </label>
-                  <label>
-                    {renderFieldLabel('Template nội dung', 'accountTemplateContent')}
-                    <textarea
-                      rows={3}
-                      value={draft.templateContent}
-                      onChange={(event) =>
-                        setAccountDrafts((prev) => ({
-                          ...prev,
-                          [account.id]: {
-                            ...draft,
-                            templateContent: event.target.value,
-                          },
-                        }))
-                      }
-                      disabled={!draft.enabled}
-                    />
-                  </label>
-                </div>
-              );
-            })}
-          </div>
-
-          {isAdmin && users.length > 0 && (
-            <div className="zalo-campaign-operator-picker">
-              <p>{renderFieldLabel('Operator campaign (được toàn quyền trên campaign được gán)', 'operatorCampaign')}</p>
-              <div className="zalo-campaign-assign-operator-row">
-                <select
-                  aria-label="Chọn operator cho campaign"
-                  value={createOperatorUserId}
-                  onChange={(event) => setCreateOperatorUserId(event.target.value)}
-                >
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {userLabelMap.get(user.id) || user.id}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" className="btn btn-ghost" onClick={onAddCreateOperator}>
-                  Thêm operator
-                </button>
+      {!isDetailView && (
+        <>
+          <section className="panel-surface crm-panel">
+            <div className="crm-panel-head">
+              <div>
+                <h2>Tạo Campaign Mới</h2>
+                <p>Chỉ kênh PERSONAL, mỗi account có template và quota riêng.</p>
               </div>
-              <div className="zalo-campaign-operators-inline">
-                {selectedOperatorIds.length === 0 && (
-                  <span className="zalo-campaign-empty-operator">Chưa chọn operator cho campaign mới.</span>
-                )}
-                {selectedOperatorIds.map((userId) => (
-                  <div key={userId} className="zalo-campaign-operator-chip">
-                    <span>{userLabelMap.get(userId) || userId}</span>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => onRemoveCreateOperator(userId)}
-                    >
-                      Bỏ
-                    </button>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-ghost" onClick={() => void refreshAll()}>
+                  Tải lại dữ liệu
+                </button>
+                <Link href="/modules/zalo-automation/accounts" className="btn btn-ghost">
+                  Quản lý tài khoản
+                </Link>
               </div>
             </div>
-          )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.45rem' }}>
-            <button type="submit" className="btn btn-primary" disabled={!canCreate}>
-              Tạo campaign
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="panel-surface crm-panel">
-        <div className="crm-panel-head">
-          <h2>Danh sách Campaign</h2>
-          <Badge variant="neutral">{isLoadingCampaigns ? 'Đang tải...' : `${campaigns.length} campaigns`}</Badge>
-        </div>
-
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Tên</th>
-                <th>Trạng thái</th>
-                <th>Policy</th>
-                <th>Tiến độ</th>
-                <th>Tạo lúc</th>
-              </tr>
-            </thead>
-            <tbody>
-              {campaigns.length === 0 && (
-                <tr>
-                  <td colSpan={5}>Chưa có campaign.</td>
-                </tr>
-              )}
-              {campaigns.map((campaign) => {
-                const active = campaign.id === selectedCampaignId;
-                const stats = campaign.stats ?? {};
-                return (
-                  <tr
-                    key={campaign.id}
-                    className={active ? 'is-selected-row' : undefined}
-                    onClick={() => setSelectedCampaignId(campaign.id)}
+            <form className="form-grid" onSubmit={onCreateCampaign}>
+              <div className="zalo-campaign-form-grid">
+                <label>
+                  {renderFieldLabel('Tên campaign', 'name')}
+                  <input
+                    value={createForm.name}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
+                    placeholder="Ví dụ: Campaign Tư vấn tháng 4"
+                    required
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Mã campaign', 'code')}
+                  <input
+                    value={createForm.code}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, code: event.target.value }))}
+                    placeholder="OPTIONAL_CAMPAIGN_CODE"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Policy chọn account', 'selectionPolicy')}
+                  <select
+                    value={createForm.selectionPolicy}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        selectionPolicy: event.target.value as SelectionPolicy,
+                      }))
+                    }
                   >
-                    <td>
-                      <strong>{campaign.name}</strong>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                        {campaign.code || campaign.id}
-                      </div>
-                    </td>
-                    <td>
-                      <Badge variant={statusToBadge(campaign.status)}>{campaignStatusLabel(campaign.status)}</Badge>
-                    </td>
-                    <td>{policyLabel(campaign.selectionPolicy)}</td>
-                    <td>
-                      {`S:${stats.sent ?? 0} / P:${stats.pending ?? 0} / K:${stats.skipped ?? 0} / F:${stats.failed ?? 0}`}
-                    </td>
-                    <td>{toDateTime(campaign.createdAt ?? null)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    {SELECTION_POLICY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {renderFieldLabel('Delay tối thiểu (giây)', 'delayMinSeconds')}
+                  <input
+                    type="number"
+                    min={1}
+                    value={createForm.delayMinSeconds}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, delayMinSeconds: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Delay tối đa (giây)', 'delayMaxSeconds')}
+                  <input
+                    type="number"
+                    min={1}
+                    value={createForm.delayMaxSeconds}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, delayMaxSeconds: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Ngưỡng lỗi liên tiếp / account', 'maxConsecutiveErrors')}
+                  <input
+                    type="number"
+                    min={1}
+                    value={createForm.maxConsecutiveErrors}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        maxConsecutiveErrors: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Max recipients (tuỳ chọn)', 'maxRecipients')}
+                  <input
+                    type="number"
+                    min={1}
+                    value={createForm.maxRecipients}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, maxRecipients: event.target.value }))}
+                    placeholder="Để trống = theo tổng quota"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Allowed variable keys (phân cách dấu phẩy)', 'allowedVariableKeys')}
+                  <input
+                    value={createForm.allowedVariableKeys}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        allowedVariableKeys: event.target.value,
+                      }))
+                    }
+                    placeholder="ten_khach,ma_khuyen_mai,customer.phone"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Customer IDs snapshot (tuỳ chọn)', 'customerIds')}
+                  <input
+                    value={createForm.customerIds}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, customerIds: event.target.value }))}
+                    placeholder="id1,id2,id3"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Tags snapshot (tuỳ chọn)', 'tags')}
+                  <input
+                    value={createForm.tags}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, tags: event.target.value }))}
+                    placeholder="vip,lead-mới"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Stage snapshot (tuỳ chọn)', 'stage')}
+                  <input
+                    value={createForm.stage}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, stage: event.target.value }))}
+                    placeholder="MOI"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Source snapshot (tuỳ chọn)', 'source')}
+                  <input
+                    value={createForm.source}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, source: event.target.value }))}
+                    placeholder="ZALO"
+                  />
+                </label>
+                <label>
+                  {renderFieldLabel('Promo code mặc định (tuỳ chọn)', 'defaultPromoCode')}
+                  <input
+                    value={createForm.defaultPromoCode}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        defaultPromoCode: event.target.value,
+                      }))
+                    }
+                    placeholder="SPRING-2026"
+                  />
+                </label>
+                {isAdmin && users.length > 0 && (
+                  <div className="zalo-campaign-operator-picker is-inline-grid">
+                    <p>
+                      {renderFieldLabel('Operator campaign (được toàn quyền trên campaign được gán)', 'operatorCampaign')}
+                    </p>
+                    <div className="zalo-campaign-assign-operator-row">
+                      <select
+                        aria-label="Chọn operator cho campaign"
+                        value={createOperatorUserId}
+                        onChange={(event) => setCreateOperatorUserId(event.target.value)}
+                      >
+                        {users.map((user) => (
+                          <option key={user.id} value={user.id}>
+                            {userLabelMap.get(user.id) || user.id}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="button" className="btn btn-ghost" onClick={onAddCreateOperator}>
+                        Thêm operator
+                      </button>
+                    </div>
+                    <div className="zalo-campaign-operators-inline">
+                      {selectedOperatorIds.length === 0 && (
+                        <span className="zalo-campaign-empty-operator">Chưa chọn operator cho campaign mới.</span>
+                      )}
+                      {selectedOperatorIds.map((userId) => (
+                        <div key={userId} className="zalo-campaign-operator-chip">
+                          <span>{userLabelMap.get(userId) || userId}</span>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => onRemoveCreateOperator(userId)}
+                          >
+                            Bỏ
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
-      {selectedCampaign && (
+              <div className="zalo-campaign-account-grid">
+                {accounts.map((account) => {
+                  const draft = accountDrafts[account.id] ?? {
+                    enabled: false,
+                    quota: '20',
+                    templateContent: '',
+                  };
+                  const label = account.displayName || account.zaloUid || account.id;
+                  return (
+                    <div key={account.id} className="zalo-campaign-account-card">
+                      <div className="zalo-campaign-account-top-row">
+                        <label className="zalo-campaign-account-toggle">
+                          <input
+                            type="checkbox"
+                            checked={draft.enabled}
+                            onChange={(event) =>
+                              setAccountDrafts((prev) => ({
+                                ...prev,
+                                [account.id]: {
+                                  ...draft,
+                                  enabled: event.target.checked,
+                                },
+                              }))
+                            }
+                          />
+                          <span>{label}</span>
+                        </label>
+                        <div className="zalo-campaign-account-top-actions">
+                          <div className="zalo-campaign-account-inline-field is-inline">
+                            {renderFieldLabel('Quota/ngày', 'accountQuota')}
+                            <input
+                              type="number"
+                              min={1}
+                              value={draft.quota}
+                              onChange={(event) =>
+                                setAccountDrafts((prev) => ({
+                                  ...prev,
+                                  [account.id]: {
+                                    ...draft,
+                                    quota: event.target.value,
+                                  },
+                                }))
+                              }
+                              disabled={!draft.enabled}
+                            />
+                          </div>
+                          <Badge variant={statusToBadge(account.status)}>{account.status || '--'}</Badge>
+                        </div>
+                      </div>
+                      <label>
+                        {renderFieldLabel('Template nội dung', 'accountTemplateContent')}
+                        <textarea
+                          className="zalo-campaign-template-textarea"
+                          rows={5}
+                          value={draft.templateContent}
+                          onChange={(event) =>
+                            setAccountDrafts((prev) => ({
+                              ...prev,
+                              [account.id]: {
+                                ...draft,
+                                templateContent: event.target.value,
+                              },
+                            }))
+                          }
+                          disabled={!draft.enabled}
+                        />
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.45rem' }}>
+                <button type="submit" className="btn btn-primary" disabled={!canCreate}>
+                  Tạo campaign
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="panel-surface crm-panel">
+            <div className="crm-panel-head">
+              <h2>Danh sách Campaign</h2>
+              <Badge variant="neutral">{isLoadingCampaigns ? 'Đang tải...' : `${campaigns.length} campaigns`}</Badge>
+            </div>
+
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Tên</th>
+                    <th>Trạng thái</th>
+                    <th>Policy</th>
+                    <th>Tiến độ</th>
+                    <th>Tạo lúc</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.length === 0 && (
+                    <tr>
+                      <td colSpan={5}>Chưa có campaign.</td>
+                    </tr>
+                  )}
+                  {campaigns.map((campaign) => {
+                    const stats = campaign.stats ?? {};
+                    return (
+                      <tr key={campaign.id}>
+                        <td>
+                          <strong>
+                            <Link className="zalo-campaign-name-link" href={`/modules/zalo-automation/campaigns/${campaign.id}`}>
+                              {campaign.name}
+                            </Link>
+                          </strong>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                            {campaign.code || campaign.id}
+                          </div>
+                        </td>
+                        <td>
+                          <Badge variant={statusToBadge(campaign.status)}>{campaignStatusLabel(campaign.status)}</Badge>
+                        </td>
+                        <td>{policyLabel(campaign.selectionPolicy)}</td>
+                        <td>
+                          {`S:${stats.sent ?? 0} / P:${stats.pending ?? 0} / K:${stats.skipped ?? 0} / F:${stats.failed ?? 0}`}
+                        </td>
+                        <td>{toDateTime(campaign.createdAt ?? null)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+
+      {isDetailView && !isLoadingCampaigns && !selectedCampaign && (
+        <section className="panel-surface crm-panel">
+          <div className="crm-panel-head">
+            <h2>Chi tiết Campaign</h2>
+          </div>
+          <p>Không tìm thấy campaign hoặc bạn không có quyền truy cập.</p>
+          <Link href="/modules/zalo-automation/campaigns" className="btn btn-ghost">
+            Quay lại danh sách campaign
+          </Link>
+        </section>
+      )}
+
+      {isDetailView && selectedCampaign && (
         <>
           <section className="panel-surface crm-panel">
             <div className="crm-panel-head">
@@ -1155,6 +1265,9 @@ export function ZaloAutomationCampaignsWorkbench() {
                 </p>
               </div>
               <div className="zalo-chat-toolbar">
+                <Link href="/modules/zalo-automation/campaigns" className="btn btn-ghost">
+                  Danh sách campaign
+                </Link>
                 <button
                   type="button"
                   className="btn btn-ghost"
@@ -1231,7 +1344,7 @@ export function ZaloAutomationCampaignsWorkbench() {
             </div>
 
             <div className="table-wrap" style={{ marginTop: '0.7rem' }}>
-              <table>
+              <table className="data-table zalo-campaign-account-table">
                 <thead>
                   <tr>
                     <th>Account</th>
@@ -1267,9 +1380,35 @@ export function ZaloAutomationCampaignsWorkbench() {
                       <td>{toDateTime(account.lastSentAt ?? null)}</td>
                     </tr>
                   ))}
+                  {unassignedRecipientStats.total > 0 && (
+                    <tr className="zalo-campaign-unassigned-row">
+                      <td>
+                        <strong>Chưa gán account</strong>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                          Recipients không xác định được target account
+                        </div>
+                      </td>
+                      <td>
+                        <Badge variant="neutral">UNASSIGNED</Badge>
+                      </td>
+                      <td>--</td>
+                      <td>{unassignedRecipientStats.sent}</td>
+                      <td>{unassignedRecipientStats.skipped}</td>
+                      <td>{unassignedRecipientStats.failed}</td>
+                      <td>--</td>
+                      <td>{toDateTime(unassignedRecipientStats.lastSentAt)}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            {unassignedRecipientStats.total > 0 && (
+              <p className="muted" style={{ marginTop: '0.45rem' }}>
+                Tiến độ ở danh sách campaign là tổng toàn bộ recipients. Dòng <strong>Chưa gán account</strong>{' '}
+                thể hiện phần recipients chưa map được target account (NO_TARGET_THREAD:{' '}
+                {unassignedRecipientStats.skippedNoTargetThread}).
+              </p>
+            )}
 
             <div style={{ marginTop: '0.8rem' }}>
               <h3 style={{ marginBottom: '0.5rem' }}>Operators</h3>
@@ -1315,9 +1454,13 @@ export function ZaloAutomationCampaignsWorkbench() {
               <h2>Recipients Snapshot</h2>
               <Badge variant="neutral">{isLoadingDetails ? 'Đang tải...' : `${recipients.length} rows`}</Badge>
             </div>
+            <p className="muted" style={{ marginTop: '0.35rem', marginBottom: '0.55rem' }}>
+              Bảng này dùng để kiểm tra nhanh kết quả gửi theo từng khách (thread, target account, lý do skip/fail). Hệ thống chỉ
+              tải snapshot gần nhất (tối đa 80 dòng), không kéo toàn bộ danh sách khi campaign có dữ liệu lớn.
+            </p>
 
             <div className="table-wrap">
-              <table>
+              <table className="data-table">
                 <thead>
                   <tr>
                     <th>Khách hàng</th>
@@ -1363,7 +1506,7 @@ export function ZaloAutomationCampaignsWorkbench() {
             </div>
 
             <div className="table-wrap">
-              <table>
+              <table className="data-table">
                 <thead>
                   <tr>
                     <th>Thời gian</th>

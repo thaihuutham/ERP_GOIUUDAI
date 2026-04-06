@@ -270,6 +270,15 @@ async function mockCampaignApis(page: Page) {
     }
 
     const campaignDeleteMatch = path.match(/^\/api\/v1\/zalo\/campaigns\/([^/]+)$/);
+    if (campaignDeleteMatch && method === 'GET') {
+      const campaignId = campaignDeleteMatch[1];
+      const found = campaigns.find((campaign) => campaign.id === campaignId);
+      if (!found) {
+        return json(route, { message: 'Not found' }, 404);
+      }
+      return json(route, found);
+    }
+
     if (campaignDeleteMatch && method === 'DELETE') {
       const campaignId = campaignDeleteMatch[1];
       const index = campaigns.findIndex((campaign) => campaign.id === campaignId);
@@ -330,6 +339,8 @@ test.describe('Zalo campaigns flow', () => {
 
     await expect(page.getByText('Đã tạo campaign mới thành công.')).toBeVisible();
     await expect(page.locator('strong', { hasText: 'Campaign V1 Flow' })).toBeVisible();
+    await page.getByRole('link', { name: 'Campaign V1 Flow' }).click();
+    await expect(page).toHaveURL(/\/modules\/zalo-automation\/campaigns\/campaign_2$/);
 
     await page.getByRole('button', { name: 'Start' }).click();
     await expect(page.getByText('Đã thực hiện thao tác START cho campaign.')).toBeVisible();
@@ -354,6 +365,8 @@ test.describe('Zalo campaigns flow', () => {
     await page.goto('/modules/zalo-automation/campaigns');
     await expect(page.getByTestId('zalo-automation-campaigns-workbench')).toBeVisible();
     await expect(page.locator('strong', { hasText: 'Draft Delete Me' })).toBeVisible();
+    await page.getByRole('link', { name: 'Draft Delete Me' }).click();
+    await expect(page).toHaveURL(/\/modules\/zalo-automation\/campaigns\/campaign_draft_1$/);
 
     await page.getByTestId('zalo-campaign-action-delete').click();
     await expect(page.getByText('Đã xóa campaign draft.')).toBeVisible();
