@@ -73,7 +73,8 @@ describe('settings view model', () => {
     expect(resolveDomainTabs('sales_crm_policies').map((item) => item.key)).toEqual([
       'sales-orders',
       'sales-credit',
-      'sales-taxonomy'
+      'sales-taxonomy',
+      'sales-renewal'
     ]);
     expect(resolveDomainTabs('catalog_scm_policies').map((item) => item.key)).toEqual([
       'catalog-defaults',

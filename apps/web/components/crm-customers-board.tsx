@@ -14,9 +14,10 @@ import {
   Globe,
   History,
   Trash2,
+  Car,
 } from 'lucide-react';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useAccessPolicy } from './access-policy-context';
@@ -41,6 +42,61 @@ type Customer = {
   lastContactAt?: string | null;
   status?: string | null;
   updatedAt?: string | null;
+};
+
+type ContractProductType = 'TELECOM_PACKAGE' | 'AUTO_INSURANCE' | 'MOTO_INSURANCE' | 'DIGITAL_SERVICE';
+
+type ContractSummary = {
+  totalContracts?: number;
+  activeContracts?: number;
+  expiredContracts?: number;
+  nextExpiringAt?: string | null;
+  byProduct?: Partial<Record<ContractProductType, number>>;
+};
+
+type CrmCustomerVehicle = {
+  id: string;
+  plateNumber?: string | null;
+  vehicleKind?: string | null;
+  vehicleType?: string | null;
+  ownerFullName?: string | null;
+  status?: string | null;
+  updatedAt?: string | null;
+};
+
+type CrmCustomerContract = {
+  id: string;
+  productType?: ContractProductType | string | null;
+  status?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  sourceRef?: string | null;
+  telecomLine?: {
+    packageName?: string | null;
+    servicePhone?: string | null;
+    currentExpiryAt?: string | null;
+  } | null;
+  autoInsuranceDetail?: {
+    soGCN?: string | null;
+    vehicleId?: string | null;
+  } | null;
+  motoInsuranceDetail?: {
+    soGCN?: string | null;
+    vehicleId?: string | null;
+  } | null;
+  digitalServiceDetail?: {
+    serviceName?: string | null;
+    planName?: string | null;
+    provider?: string | null;
+    serviceAccountRef?: string | null;
+  } | null;
+};
+
+type CustomerDetailPayload = {
+  customer?: Customer;
+  contractSummary?: ContractSummary | null;
+  recentContracts?: CrmCustomerContract[];
+  vehicles?: CrmCustomerVehicle[];
 };
 
 type CustomerTaxonomyPayload = {
@@ -101,6 +157,9 @@ function toDateTime(value: string | null | undefined) {
   return isNaN(parsed.getTime()) ? value : formatRuntimeDateTime(parsed.toISOString());
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 function formatTaxonomyLabel(value: string) {
   return value
@@ -109,6 +168,52 @@ function formatTaxonomyLabel(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function formatContractProductLabel(productType: string | null | undefined) {
+  const normalized = String(productType ?? '').trim().toUpperCase();
+  switch (normalized) {
+    case 'TELECOM_PACKAGE':
+      return 'Gói cước viễn thông';
+    case 'AUTO_INSURANCE':
+      return 'Bảo hiểm ô tô';
+    case 'MOTO_INSURANCE':
+      return 'Bảo hiểm xe máy';
+    case 'DIGITAL_SERVICE':
+      return 'Dịch vụ số';
+    default:
+      return normalized || 'Khác';
+  }
+}
+
+function formatContractReference(contract: CrmCustomerContract, vehicleMap: Map<string, CrmCustomerVehicle>) {
+  const productType = String(contract.productType ?? '').toUpperCase();
+
+  if (productType === 'TELECOM_PACKAGE') {
+    const packageName = contract.telecomLine?.packageName || 'N/A';
+    const servicePhone = contract.telecomLine?.servicePhone || 'N/A';
+    return `${packageName} · SĐT dịch vụ: ${servicePhone}`;
+  }
+
+  if (productType === 'AUTO_INSURANCE') {
+    const soGCN = contract.autoInsuranceDetail?.soGCN || 'N/A';
+    const vehicle = vehicleMap.get(String(contract.autoInsuranceDetail?.vehicleId ?? ''));
+    return `Số GCN: ${soGCN} · Biển số: ${vehicle?.plateNumber || 'N/A'}`;
+  }
+
+  if (productType === 'MOTO_INSURANCE') {
+    const soGCN = contract.motoInsuranceDetail?.soGCN || 'N/A';
+    const vehicle = vehicleMap.get(String(contract.motoInsuranceDetail?.vehicleId ?? ''));
+    return `Số GCN: ${soGCN} · Biển số: ${vehicle?.plateNumber || 'N/A'}`;
+  }
+
+  if (productType === 'DIGITAL_SERVICE') {
+    const serviceName = contract.digitalServiceDetail?.serviceName || 'N/A';
+    const planName = contract.digitalServiceDetail?.planName || 'N/A';
+    return `${serviceName} · Gói: ${planName}`;
+  }
+
+  return contract.sourceRef || 'N/A';
 }
 
 function buildAuditObjectHref(entityType: string, entityId: string) {
@@ -158,6 +263,8 @@ export function CrmCustomersBoard() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<GenericStatus>('ALL');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerDetail, setCustomerDetail] = useState<CustomerDetailPayload | null>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [isDetailEditing, setIsDetailEditing] = useState(false);
   const [isSavingDetail, setIsSavingDetail] = useState(false);
@@ -188,6 +295,15 @@ export function CrmCustomersBoard() {
     setIsDetailEditing(false);
     setDetailForm(buildDetailForm(selectedCustomer));
   }, [selectedCustomer]);
+
+  useEffect(() => {
+    if (isDetailEditing) {
+      return;
+    }
+    if (customerDetail?.customer) {
+      setDetailForm(buildDetailForm(customerDetail.customer));
+    }
+  }, [customerDetail, isDetailEditing]);
 
   const loadCustomers = async () => {
     if (!canView) return;
@@ -230,6 +346,33 @@ export function CrmCustomersBoard() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải taxonomy CRM');
       setCustomerTagOptions(DEFAULT_CUSTOMER_TAG_OPTIONS);
+    }
+  };
+
+  const loadCustomerDetail = async (customerId: string) => {
+    const id = String(customerId || '').trim();
+    if (!id) {
+      setCustomerDetail(null);
+      return;
+    }
+
+    setIsDetailLoading(true);
+    try {
+      const payload = await apiRequest<CustomerDetailPayload>(`/crm/customers/${id}`);
+      const normalizedCustomer = normalizeObjectPayload(payload.customer);
+
+      setCustomerDetail({
+        customer: normalizedCustomer ? (normalizedCustomer as Customer) : undefined,
+        contractSummary: isRecord(payload.contractSummary) ? (payload.contractSummary as ContractSummary) : null,
+        recentContracts: Array.isArray(payload.recentContracts) ? (payload.recentContracts as CrmCustomerContract[]) : [],
+        vehicles: Array.isArray(payload.vehicles) ? (payload.vehicles as CrmCustomerVehicle[]) : []
+      });
+      setErrorMessage(null);
+    } catch (error) {
+      setCustomerDetail(null);
+      setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải chi tiết khách hàng');
+    } finally {
+      setIsDetailLoading(false);
     }
   };
 
@@ -309,7 +452,22 @@ export function CrmCustomersBoard() {
       setResultMessage(`Cập nhật hồ sơ ${detailForm.fullName || selectedCustomer.id} thành công.`);
       setErrorMessage(null);
       setIsDetailEditing(false);
-      await loadCustomers();
+      setSelectedCustomer((prev) => (
+        prev
+          ? {
+              ...prev,
+              fullName: detailForm.fullName || prev.fullName,
+              phone: detailForm.phone || null,
+              email: detailForm.email || null,
+              customerStage: detailForm.customerStage || null,
+              source: detailForm.source || null,
+              segment: detailForm.segment || null,
+              status: detailForm.status || null,
+              tags: detailForm.tags
+            }
+          : prev
+      ));
+      await Promise.all([loadCustomers(), loadCustomerDetail(selectedCustomer.id)]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi cập nhật hồ sơ khách hàng');
     } finally {
@@ -331,6 +489,7 @@ export function CrmCustomersBoard() {
       setResultMessage(`Đã lưu trữ khách hàng ${selectedCustomer.fullName || selectedCustomer.id}.`);
       setErrorMessage(null);
       setSelectedCustomer(null);
+      setCustomerDetail(null);
       setIsDetailEditing(false);
       setDetailForm(buildDetailForm(null));
       await loadCustomers();
@@ -346,6 +505,15 @@ export function CrmCustomersBoard() {
     return () => clearTimeout(timer);
   }, [search, status]);
 
+  useEffect(() => {
+    if (!selectedCustomer?.id) {
+      setCustomerDetail(null);
+      setIsDetailLoading(false);
+      return;
+    }
+    void loadCustomerDetail(selectedCustomer.id);
+  }, [selectedCustomer?.id]);
+
   const customerStageColumnOptions = useMemo(
     () =>
       stageOptions.map((stage) => ({
@@ -354,10 +522,21 @@ export function CrmCustomersBoard() {
       })),
     [stageOptions]
   );
+
+  const detailCustomer = customerDetail?.customer ?? selectedCustomer;
+  const contractSummary = customerDetail?.contractSummary ?? null;
+  const recentContracts = customerDetail?.recentContracts ?? [];
+  const customerVehicles = customerDetail?.vehicles ?? [];
+  const vehicleMap = useMemo(
+    () => new Map(customerVehicles.map((item) => [item.id, item] as const)),
+    [customerVehicles]
+  );
+
   const customerTagSelectOptions = useMemo(() => {
-    const selectedTags = selectedCustomer?.tags?.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean) ?? [];
+    const selectedTags =
+      detailCustomer?.tags?.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean) ?? [];
     return Array.from(new Set([...customerTagOptions, ...selectedTags]));
-  }, [customerTagOptions, selectedCustomer]);
+  }, [customerTagOptions, detailCustomer]);
 
   const columns: ColumnDefinition<Customer>[] = [
     { key: 'code', label: 'Mã KH' },
@@ -400,10 +579,10 @@ export function CrmCustomersBoard() {
 
   const runCustomerBulkAction = async (
     actionLabel: string,
-    execute: (customerId: string) => Promise<void>
+    selectedRows: Customer[],
+    execute: (customer: Customer) => Promise<void>
   ): Promise<BulkExecutionResult> => {
-    const selectedIds = selectedRowIds.map((id) => String(id)).filter(Boolean);
-    if (selectedIds.length === 0) {
+    if (selectedRows.length === 0) {
       return {
         total: 0,
         successCount: 0,
@@ -415,12 +594,20 @@ export function CrmCustomersBoard() {
       };
     }
 
+    const rowsById = new Map<string, Customer>();
+    selectedRows.forEach((row) => rowsById.set(String(row.id), row));
+    const selectedIds = selectedRows.map((row) => String(row.id));
+
     const result = await runBulkOperation({
       ids: selectedIds,
       continueOnError: true,
       chunkSize: 10,
       execute: async (customerId) => {
-        await execute(String(customerId));
+        const row = rowsById.get(String(customerId));
+        if (!row) {
+          throw new Error(`Không tìm thấy khách hàng ${customerId}.`);
+        }
+        await execute(row);
       }
     });
 
@@ -456,9 +643,9 @@ export function CrmCustomersBoard() {
         key: 'bulk-status-active',
         label: 'Set ACTIVE',
         tone: 'primary',
-        execute: async () =>
-          runCustomerBulkAction('Set trạng thái ACTIVE', async (customerId) => {
-            await apiRequest(`/crm/customers/${customerId}`, {
+        execute: async (selectedRows) =>
+          runCustomerBulkAction('Set trạng thái ACTIVE', selectedRows, async (customer) => {
+            await apiRequest(`/crm/customers/${customer.id}`, {
               method: 'PATCH',
               body: { status: 'ACTIVE' }
             });
@@ -468,9 +655,9 @@ export function CrmCustomersBoard() {
         key: 'bulk-status-inactive',
         label: 'Set INACTIVE',
         tone: 'ghost',
-        execute: async () =>
-          runCustomerBulkAction('Set trạng thái INACTIVE', async (customerId) => {
-            await apiRequest(`/crm/customers/${customerId}`, {
+        execute: async (selectedRows) =>
+          runCustomerBulkAction('Set trạng thái INACTIVE', selectedRows, async (customer) => {
+            await apiRequest(`/crm/customers/${customer.id}`, {
               method: 'PATCH',
               body: { status: 'INACTIVE' }
             });
@@ -480,9 +667,9 @@ export function CrmCustomersBoard() {
         key: 'bulk-status-draft',
         label: 'Set DRAFT',
         tone: 'ghost',
-        execute: async () =>
-          runCustomerBulkAction('Set trạng thái DRAFT', async (customerId) => {
-            await apiRequest(`/crm/customers/${customerId}`, {
+        execute: async (selectedRows) =>
+          runCustomerBulkAction('Set trạng thái DRAFT', selectedRows, async (customer) => {
+            await apiRequest(`/crm/customers/${customer.id}`, {
               method: 'PATCH',
               body: { status: 'DRAFT' }
             });
@@ -496,9 +683,9 @@ export function CrmCustomersBoard() {
         label: 'Archive',
         tone: 'danger',
         confirmMessage: (rows) => `Lưu trữ ${rows.length} khách hàng đã chọn?`,
-        execute: async () =>
-          runCustomerBulkAction('Lưu trữ khách hàng', async (customerId) => {
-            await apiRequest(`/crm/customers/${customerId}`, {
+        execute: async (selectedRows) =>
+          runCustomerBulkAction('Lưu trữ khách hàng', selectedRows, async (customer) => {
+            await apiRequest(`/crm/customers/${customer.id}`, {
               method: 'DELETE'
             });
           })
@@ -581,6 +768,7 @@ export function CrmCustomersBoard() {
         isOpen={!!selectedCustomer}
         onClose={() => {
           setSelectedCustomer(null);
+          setCustomerDetail(null);
           setIsDetailEditing(false);
           setDetailForm(buildDetailForm(null));
         }}
@@ -594,9 +782,9 @@ export function CrmCustomersBoard() {
               </div>
               <div>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
-                  {isDetailEditing ? (detailForm.fullName || '(Chưa nhập tên)') : selectedCustomer.fullName}
+                  {isDetailEditing ? (detailForm.fullName || '(Chưa nhập tên)') : detailCustomer?.fullName}
                 </h3>
-                <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>{selectedCustomer.code || 'Mã: (Chưa có)'}</p>
+                <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>{detailCustomer?.code || 'Mã: (Chưa có)'}</p>
               </div>
             </div>
 
@@ -610,7 +798,7 @@ export function CrmCustomersBoard() {
                     placeholder="customer@example.com"
                   />
                 ) : (
-                  <p style={{ fontSize: '0.9375rem' }}>{selectedCustomer.email || '--'}</p>
+                  <p style={{ fontSize: '0.9375rem' }}>{detailCustomer?.email || '--'}</p>
                 )}
               </div>
               <div className="field">
@@ -622,7 +810,7 @@ export function CrmCustomersBoard() {
                     placeholder="09xxxxxxxx"
                   />
                 ) : (
-                  <p style={{ fontSize: '0.9375rem' }}>{selectedCustomer.phone || '--'}</p>
+                  <p style={{ fontSize: '0.9375rem' }}>{detailCustomer?.phone || '--'}</p>
                 )}
               </div>
               <div className="field">
@@ -639,12 +827,12 @@ export function CrmCustomersBoard() {
                     ))}
                   </select>
                 ) : (
-                  <p style={{ fontSize: '0.9375rem' }}>{selectedCustomer.customerStage || '--'}</p>
+                  <p style={{ fontSize: '0.9375rem' }}>{detailCustomer?.customerStage || '--'}</p>
                 )}
               </div>
               <div className="field">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}><CreditCard size={14} /> Tổng chi tiêu</label>
-                <p style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--primary)' }}>{toCurrency(selectedCustomer.totalSpent)}</p>
+                <p style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--primary)' }}>{toCurrency(detailCustomer?.totalSpent)}</p>
               </div>
               <div className="field">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}><Globe size={14} /> Nguồn</label>
@@ -660,7 +848,7 @@ export function CrmCustomersBoard() {
                     ))}
                   </select>
                 ) : (
-                  <p style={{ fontSize: '0.9375rem' }}>{selectedCustomer.source || '--'}</p>
+                  <p style={{ fontSize: '0.9375rem' }}>{detailCustomer?.source || '--'}</p>
                 )}
               </div>
               <div className="field">
@@ -676,7 +864,7 @@ export function CrmCustomersBoard() {
                   </select>
                 ) : (
                   <p style={{ fontSize: '0.9375rem' }}>
-                    <Badge variant={statusToBadge(selectedCustomer.status)}>{selectedCustomer.status || '--'}</Badge>
+                    <Badge variant={statusToBadge(detailCustomer?.status)}>{detailCustomer?.status || '--'}</Badge>
                   </p>
                 )}
               </div>
@@ -689,12 +877,12 @@ export function CrmCustomersBoard() {
                     placeholder="VIP / Retail / B2B..."
                   />
                 ) : (
-                  <p style={{ fontSize: '0.9375rem' }}>{selectedCustomer.segment || '--'}</p>
+                  <p style={{ fontSize: '0.9375rem' }}>{detailCustomer?.segment || '--'}</p>
                 )}
               </div>
               <div className="field">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}><Calendar size={14} /> Cập nhật cuối</label>
-                <p style={{ fontSize: '0.9375rem' }}>{toDateTime(selectedCustomer.updatedAt)}</p>
+                <p style={{ fontSize: '0.9375rem' }}>{toDateTime(detailCustomer?.updatedAt)}</p>
               </div>
             </div>
 
@@ -715,10 +903,95 @@ export function CrmCustomersBoard() {
                 </select>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  {selectedCustomer.tags?.length ? selectedCustomer.tags.map((t) => (
+                  {detailCustomer?.tags?.length ? detailCustomer.tags.map((t) => (
                     <span key={t} className="finance-status-pill finance-status-pill-neutral">{t}</span>
                   )) : <span style={{ color: 'var(--muted)', fontSize: '0.875rem italic' }}>--</span>}
                 </div>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.9rem' }}>
+              <h4 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Gia hạn CRM & gói cước</h4>
+              {isDetailLoading ? (
+                <p style={{ margin: 0, color: 'var(--muted)' }}>Đang tải thông tin hợp đồng...</p>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.6rem' }}>
+                    <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.6rem' }}>
+                      <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--muted)' }}>Tổng hợp đồng</p>
+                      <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>{contractSummary?.totalContracts ?? 0}</p>
+                    </div>
+                    <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.6rem' }}>
+                      <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--muted)' }}>Đang active</p>
+                      <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>{contractSummary?.activeContracts ?? 0}</p>
+                    </div>
+                    <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.6rem' }}>
+                      <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--muted)' }}>Đã hết hạn</p>
+                      <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>{contractSummary?.expiredContracts ?? 0}</p>
+                    </div>
+                    <div style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.6rem' }}>
+                      <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--muted)' }}>Hết hạn gần nhất</p>
+                      <p style={{ margin: 0, fontSize: '0.86rem', fontWeight: 600 }}>{toDateTime(contractSummary?.nextExpiringAt)}</p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
+                    {(['TELECOM_PACKAGE', 'AUTO_INSURANCE', 'MOTO_INSURANCE', 'DIGITAL_SERVICE'] as ContractProductType[]).map((productType) => (
+                      <span key={`product-summary-${productType}`} className="finance-status-pill finance-status-pill-neutral">
+                        {formatContractProductLabel(productType)}: {contractSummary?.byProduct?.[productType] ?? 0}
+                      </span>
+                    ))}
+                  </div>
+
+                  {recentContracts.length > 0 ? (
+                    <div style={{ display: 'grid', gap: '0.5rem' }}>
+                      {recentContracts.slice(0, 5).map((contract) => (
+                        <div key={contract.id} style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.65rem 0.75rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '0.88rem' }}>{formatContractProductLabel(contract.productType)}</strong>
+                            <Badge variant={statusToBadge(contract.status)}>{contract.status || '--'}</Badge>
+                          </div>
+                          <p style={{ margin: '0.35rem 0 0', fontSize: '0.84rem', color: 'var(--muted)' }}>
+                            {formatContractReference(contract, vehicleMap)}
+                          </p>
+                          <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                            Hiệu lực: {toDateTime(contract.startsAt)} → {toDateTime(contract.endsAt)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--muted)' }}>Khách hàng chưa có hợp đồng CRM.</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.65rem' }}>
+              <h4 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <Car size={16} /> Thông tin xe
+              </h4>
+              {isDetailLoading ? (
+                <p style={{ margin: 0, color: 'var(--muted)' }}>Đang tải danh sách xe...</p>
+              ) : customerVehicles.length > 0 ? (
+                <div style={{ display: 'grid', gap: '0.45rem' }}>
+                  {customerVehicles.slice(0, 8).map((vehicle) => (
+                    <div key={vehicle.id} style={{ border: '1px solid var(--line)', borderRadius: '10px', padding: '0.6rem 0.75rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                        <strong style={{ fontSize: '0.9rem' }}>{vehicle.plateNumber || 'Biển số N/A'}</strong>
+                        <Badge variant={statusToBadge(vehicle.status)}>{vehicle.status || '--'}</Badge>
+                      </div>
+                      <p style={{ margin: '0.3rem 0 0', fontSize: '0.83rem', color: 'var(--muted)' }}>
+                        Loại xe: {vehicle.vehicleKind || '--'} · Dòng xe: {vehicle.vehicleType || '--'}
+                      </p>
+                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                        Chủ xe: {vehicle.ownerFullName || '--'} · Cập nhật: {toDateTime(vehicle.updatedAt)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--muted)' }}>Chưa có thông tin xe cho khách hàng này.</p>
               )}
             </div>
 
@@ -738,7 +1011,7 @@ export function CrmCustomersBoard() {
                     style={{ flex: 1 }}
                     onClick={() => {
                       setIsDetailEditing(false);
-                      setDetailForm(buildDetailForm(selectedCustomer));
+                      setDetailForm(buildDetailForm(detailCustomer ?? selectedCustomer));
                     }}
                     disabled={isSavingDetail}
                   >
@@ -752,7 +1025,7 @@ export function CrmCustomersBoard() {
                       className="btn btn-primary"
                       style={{ flex: 1 }}
                       onClick={() => {
-                        setDetailForm(buildDetailForm(selectedCustomer));
+                        setDetailForm(buildDetailForm(detailCustomer ?? selectedCustomer));
                         setIsDetailEditing(true);
                       }}
                     >
@@ -762,7 +1035,7 @@ export function CrmCustomersBoard() {
                   <button className="btn btn-ghost" style={{ flex: 1 }} disabled>
                     Gửi thông báo
                   </button>
-                  {canDelete && String(selectedCustomer.status || '').toUpperCase() !== 'ARCHIVED' && (
+                  {canDelete && String(detailCustomer?.status || '').toUpperCase() !== 'ARCHIVED' && (
                     <button
                       className="btn btn-danger"
                       style={{ flex: 1 }}

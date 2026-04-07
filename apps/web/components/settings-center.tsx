@@ -173,6 +173,7 @@ type FieldConfig = {
   min?: number;
   max?: number;
   step?: number;
+  allowEmpty?: boolean;
   options?: FieldOption[];
   isAdvanced?: boolean;
   taxonomyType?: TaxonomyManagerType;
@@ -799,6 +800,66 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
             helper: 'Danh sách resultTag hợp lệ cho interaction.',
             type: 'taxonomyManager',
             taxonomyType: 'interactionResultTags'
+          }
+        ]
+      },
+      {
+        id: 'sales-renewal-reminder',
+        title: 'Nhắc gia hạn CRM',
+        fields: [
+          {
+            id: 'sales-renewal-global-days',
+            path: 'renewalReminder.globalLeadDays',
+            label: 'Số ngày nhắc mặc định',
+            helper: 'Nếu không cấu hình riêng theo sản phẩm, hệ thống dùng số ngày mặc định này.',
+            type: 'number',
+            unit: 'ngày',
+            min: 1,
+            max: 365
+          },
+          {
+            id: 'sales-renewal-telecom-days',
+            path: 'renewalReminder.productLeadDays.TELECOM_PACKAGE',
+            label: 'Nhắc gia hạn gói cước viễn thông',
+            helper: 'Để trống nếu muốn dùng số ngày mặc định.',
+            type: 'number',
+            unit: 'ngày',
+            min: 1,
+            max: 365,
+            allowEmpty: true
+          },
+          {
+            id: 'sales-renewal-auto-days',
+            path: 'renewalReminder.productLeadDays.AUTO_INSURANCE',
+            label: 'Nhắc gia hạn bảo hiểm ô tô',
+            helper: 'Để trống nếu muốn dùng số ngày mặc định.',
+            type: 'number',
+            unit: 'ngày',
+            min: 1,
+            max: 365,
+            allowEmpty: true
+          },
+          {
+            id: 'sales-renewal-moto-days',
+            path: 'renewalReminder.productLeadDays.MOTO_INSURANCE',
+            label: 'Nhắc gia hạn bảo hiểm xe máy',
+            helper: 'Để trống nếu muốn dùng số ngày mặc định.',
+            type: 'number',
+            unit: 'ngày',
+            min: 1,
+            max: 365,
+            allowEmpty: true
+          },
+          {
+            id: 'sales-renewal-digital-days',
+            path: 'renewalReminder.productLeadDays.DIGITAL_SERVICE',
+            label: 'Nhắc gia hạn dịch vụ số',
+            helper: 'Để trống nếu muốn dùng số ngày mặc định.',
+            type: 'number',
+            unit: 'ngày',
+            min: 1,
+            max: 365,
+            allowEmpty: true
           }
         ]
       }
@@ -1501,6 +1562,9 @@ function getFieldValue(field: FieldConfig, data: Record<string, unknown>) {
       const parsed = Number(raw);
       return Number.isFinite(parsed) ? parsed : 0;
     }
+    if (field.allowEmpty) {
+      return '';
+    }
     return 0;
   }
 
@@ -1535,6 +1599,9 @@ function setFieldValue(field: FieldConfig, data: Record<string, unknown>, input:
   if (field.type === 'number') {
     const raw = String(input ?? '').trim();
     if (!raw) {
+      if (field.allowEmpty) {
+        return setByPath(data, field.path, null);
+      }
       return setByPath(data, field.path, 0);
     }
     const parsed = Number(raw);
@@ -1566,6 +1633,9 @@ function normalizeForComparison(field: FieldConfig, value: unknown) {
   }
 
   if (field.type === 'number') {
+    if (field.allowEmpty && (value === null || value === undefined || String(value).trim() === '')) {
+      return null;
+    }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
   }
@@ -1599,6 +1669,9 @@ function formatFieldValue(field: FieldConfig, value: unknown) {
   }
 
   if (field.type === 'number') {
+    if (field.allowEmpty && (value === null || value === undefined || String(value).trim() === '')) {
+      return 'Chưa nhập';
+    }
     const parsed = Number(value);
     const numberText = Number.isFinite(parsed) ? String(parsed) : '0';
     return field.unit ? `${numberText} ${field.unit}` : numberText;

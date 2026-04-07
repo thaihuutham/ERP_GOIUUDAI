@@ -21,6 +21,7 @@ RUN npm prune --omit=dev --workspaces --include-workspace-root
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
+COPY --from=build /workspace/package.json ./package.json
 COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/apps/web/.next ./apps/web/.next
 COPY --from=build /workspace/apps/web/public ./apps/web/public
