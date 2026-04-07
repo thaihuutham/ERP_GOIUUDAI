@@ -253,6 +253,38 @@ describe('SettingsPolicyService', () => {
     expect(taxonomy.sources).toEqual(['online', 'referral']);
   });
 
+  it('normalizes CRM renewal reminder settings with bounded lead days', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('sales_crm_policies', {
+      renewalReminder: {
+        globalLeadDays: 45,
+        productLeadDays: {
+          TELECOM_PACKAGE: '15',
+          AUTO_INSURANCE: '',
+          MOTO_INSURANCE: null,
+          DIGITAL_SERVICE: 120
+        }
+      }
+    }, {
+      reason: 'normalize renewal reminder'
+    });
+
+    const sales = result.data as Record<string, unknown>;
+    const renewal = (sales.renewalReminder ?? {}) as Record<string, unknown>;
+    const productLeadDays = (renewal.productLeadDays ?? {}) as Record<string, unknown>;
+
+    expect(renewal.globalLeadDays).toBe(45);
+    expect(productLeadDays.TELECOM_PACKAGE).toBe(15);
+    expect(productLeadDays.AUTO_INSURANCE).toBeNull();
+    expect(productLeadDays.MOTO_INSURANCE).toBeNull();
+    expect(productLeadDays.DIGITAL_SERVICE).toBe(120);
+  });
+
   it('blocks removing in-use sales taxonomy values via direct domain update', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();

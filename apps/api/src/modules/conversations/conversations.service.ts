@@ -1,9 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConversationChannel, ConversationSenderType, Prisma } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
+import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CrmContractsService } from '../crm/crm-contracts.service';
 import { ZaloAccountAssignmentService } from '../zalo/zalo-account-assignment.service';
 import { ZaloAutomationRealtimeService } from '../zalo/zalo-automation-realtime.service';
 
@@ -34,10 +36,11 @@ type IngestExternalMessagePayload = {
 @Injectable()
 export class ConversationsService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly cls: ClsService,
-    private readonly zaloAssignment: ZaloAccountAssignmentService,
-    private readonly zaloRealtime: ZaloAutomationRealtimeService
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ClsService) private readonly cls: ClsService,
+    @Inject(ZaloAccountAssignmentService) private readonly zaloAssignment: ZaloAccountAssignmentService,
+    @Inject(ZaloAutomationRealtimeService) private readonly zaloRealtime: ZaloAutomationRealtimeService,
+    @Optional() @Inject(CrmContractsService) private readonly crmContractsService?: CrmContractsService
   ) {}
 
   async listThreads(query: PaginationQueryDto, filters: ThreadFilters = {}) {
@@ -381,6 +384,8 @@ export class ConversationsService {
   }
 
   private async resolveThreadForIngestion(payload: IngestExternalMessagePayload) {
+    const resolvedCustomerId = payload.customerId ?? await this.resolveCustomerIdByIdentity(payload);
+
     const existing = await this.prisma.client.conversationThread.findFirst({
       where: {
         channel: payload.channel,
@@ -390,11 +395,11 @@ export class ConversationsService {
     });
 
     if (existing) {
-      if (!existing.customerId && payload.customerId) {
+      if (!existing.customerId && resolvedCustomerId) {
         await this.prisma.client.conversationThread.updateMany({
           where: { id: existing.id },
           data: {
-            customerId: payload.customerId,
+            customerId: resolvedCustomerId,
             customerDisplayName: payload.customerDisplayName ?? existing.customerDisplayName
           }
         });
@@ -408,7 +413,7 @@ export class ConversationsService {
         channel: payload.channel,
         channelAccountId: payload.channelAccountId ?? null,
         externalThreadId: payload.externalThreadId,
-        customerId: payload.customerId ?? null,
+        customerId: resolvedCustomerId ?? null,
         customerDisplayName: payload.customerDisplayName ?? null,
         metadataJson: payload.metadataJson ?? undefined,
         lastMessageAt: payload.sentAt ?? new Date(),
@@ -416,6 +421,37 @@ export class ConversationsService {
         isReplied: payload.senderType !== ConversationSenderType.CUSTOMER
       }
     });
+  }
+
+  private async resolveCustomerIdByIdentity(payload: IngestExternalMessagePayload) {
+    if (!this.crmContractsService) {
+      return null;
+    }
+    const fallbackPhone = this.extractFallbackPhone(payload);
+    return this.crmContractsService.resolveCustomerIdForExternalIdentity(
+      payload.channel,
+      payload.senderExternalId,
+      fallbackPhone
+    );
+  }
+
+  private extractFallbackPhone(payload: IngestExternalMessagePayload) {
+    const metadata = this.ensureRecord(payload.metadataJson);
+    const candidates = [
+      this.optionalString(metadata.phone),
+      this.optionalString(metadata.phoneNormalized),
+      this.optionalString(metadata.customerPhone),
+      this.optionalString(metadata.senderPhone),
+      this.optionalString(payload.externalThreadId)
+    ];
+
+    for (const candidate of candidates) {
+      const normalized = normalizeVietnamPhone(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return undefined;
   }
 
   private async createOrReuseMessage(payload: IngestExternalMessagePayload, thread: { id: string; unreadCount: number; isReplied: boolean; }) {

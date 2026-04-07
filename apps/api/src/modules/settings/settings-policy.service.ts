@@ -1350,6 +1350,8 @@ export class SettingsPolicyService {
       const orderSettings = this.ensureRecord(sales.orderSettings);
       const customerTaxonomy = this.ensureRecord(sales.customerTaxonomy);
       const tagRegistry = this.ensureRecord(sales.tagRegistry);
+      const renewalReminder = this.ensureRecord(sales.renewalReminder);
+      const productLeadDays = this.ensureRecord(renewalReminder.productLeadDays);
       return {
         ...sales,
         orderSettings: {
@@ -1365,6 +1367,15 @@ export class SettingsPolicyService {
           customerTags: this.normalizeSalesTagRegistryValues(tagRegistry.customerTags),
           interactionTags: this.normalizeSalesTagRegistryValues(tagRegistry.interactionTags),
           interactionResultTags: this.normalizeSalesTagRegistryValues(tagRegistry.interactionResultTags)
+        },
+        renewalReminder: {
+          globalLeadDays: this.toInt(renewalReminder.globalLeadDays, 30, 1, 365),
+          productLeadDays: {
+            TELECOM_PACKAGE: this.readOptionalPositiveInt(productLeadDays.TELECOM_PACKAGE, 1, 365),
+            AUTO_INSURANCE: this.readOptionalPositiveInt(productLeadDays.AUTO_INSURANCE, 1, 365),
+            MOTO_INSURANCE: this.readOptionalPositiveInt(productLeadDays.MOTO_INSURANCE, 1, 365),
+            DIGITAL_SERVICE: this.readOptionalPositiveInt(productLeadDays.DIGITAL_SERVICE, 1, 365)
+          }
         }
       };
     }
@@ -1711,6 +1722,23 @@ export class SettingsPolicyService {
       }
       if (interactionResultTags.length === 0) {
         warnings.push('sales_crm_policies.tagRegistry.interactionResultTags đang rỗng.');
+      }
+
+      const renewalReminder = this.ensureRecord(value.renewalReminder);
+      const productLeadDays = this.ensureRecord(renewalReminder.productLeadDays);
+      const globalLeadDays = this.readOptionalPositiveInt(renewalReminder.globalLeadDays, 1, 365);
+      if (globalLeadDays === null) {
+        errors.push('sales_crm_policies.renewalReminder.globalLeadDays phải là số nguyên trong khoảng 1..365.');
+      }
+      for (const key of ['TELECOM_PACKAGE', 'AUTO_INSURANCE', 'MOTO_INSURANCE', 'DIGITAL_SERVICE'] as const) {
+        const overrideValue = productLeadDays[key];
+        if (overrideValue === undefined || overrideValue === null || overrideValue === '') {
+          continue;
+        }
+        const parsed = this.readOptionalPositiveInt(overrideValue, 1, 365);
+        if (parsed === null) {
+          errors.push(`sales_crm_policies.renewalReminder.productLeadDays.${key} phải là số nguyên trong khoảng 1..365 hoặc để trống.`);
+        }
       }
     }
 
@@ -2059,6 +2087,17 @@ export class SettingsPolicyService {
       return '';
     }
     return String(value).trim();
+  }
+
+  private readOptionalPositiveInt(value: unknown, min: number, max: number): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+      return null;
+    }
+    return parsed;
   }
 
   private toInt(value: unknown, fallback: number, min: number, max: number) {

@@ -116,7 +116,27 @@ const ENTITY_TYPE_ALIASES: Record<string, CustomFieldEntityType> = {
   workflow_definition: CustomFieldEntityType.WORKFLOW_DEFINITION,
   'workflow-definition': CustomFieldEntityType.WORKFLOW_DEFINITION,
   workflowDefinition: CustomFieldEntityType.WORKFLOW_DEFINITION,
-  workflowDefinitions: CustomFieldEntityType.WORKFLOW_DEFINITION
+  workflowDefinitions: CustomFieldEntityType.WORKFLOW_DEFINITION,
+
+  SERVICE_CONTRACT: CustomFieldEntityType.SERVICE_CONTRACT,
+  service_contract: CustomFieldEntityType.SERVICE_CONTRACT,
+  'service-contract': CustomFieldEntityType.SERVICE_CONTRACT,
+  serviceContract: CustomFieldEntityType.SERVICE_CONTRACT,
+  serviceContracts: CustomFieldEntityType.SERVICE_CONTRACT,
+  contract: CustomFieldEntityType.SERVICE_CONTRACT,
+  contracts: CustomFieldEntityType.SERVICE_CONTRACT,
+
+  VEHICLE: CustomFieldEntityType.VEHICLE,
+  vehicle: CustomFieldEntityType.VEHICLE,
+  vehicles: CustomFieldEntityType.VEHICLE,
+
+  INSURANCE_POLICY: CustomFieldEntityType.INSURANCE_POLICY,
+  insurance_policy: CustomFieldEntityType.INSURANCE_POLICY,
+  'insurance-policy': CustomFieldEntityType.INSURANCE_POLICY,
+  insurancePolicy: CustomFieldEntityType.INSURANCE_POLICY,
+  insurancePolicies: CustomFieldEntityType.INSURANCE_POLICY,
+  policy: CustomFieldEntityType.INSURANCE_POLICY,
+  policies: CustomFieldEntityType.INSURANCE_POLICY
 };
 
 @Injectable()
@@ -1340,6 +1360,13 @@ export class CustomFieldsService {
         return this.prisma.client.hrEvent as any;
       case CustomFieldEntityType.WORKFLOW_DEFINITION:
         return this.prisma.client.workflowDefinition as any;
+      case CustomFieldEntityType.SERVICE_CONTRACT:
+        return this.prisma.client.serviceContract as any;
+      case CustomFieldEntityType.VEHICLE:
+        return this.prisma.client.vehicle as any;
+      case CustomFieldEntityType.INSURANCE_POLICY:
+        // Map insurance policy custom fields to ServiceContract (insurance contracts only).
+        return this.prisma.client.serviceContract as any;
       default:
         throw new BadRequestException(`Unsupported entityType: ${entityType}`);
     }

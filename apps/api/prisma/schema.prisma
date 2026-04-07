@@ -255,6 +255,70 @@ enum CustomFieldEntityType {
   PROJECT
   HR_EVENT
   WORKFLOW_DEFINITION
+  SERVICE_CONTRACT
+  VEHICLE
+  INSURANCE_POLICY
+}
+
+enum ServiceContractProductType {
+  TELECOM_PACKAGE
+  AUTO_INSURANCE
+  MOTO_INSURANCE
+  DIGITAL_SERVICE
+}
+
+enum ServiceContractStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
+}
+
+enum ServiceContractSourceType {
+  MANUAL
+  SALES_ORDER
+  EXTERNAL_SYNC
+  EXCEL_BASELINE
+  OCR_APPROVED
+}
+
+enum ContractRenewalReminderStatus {
+  PENDING
+  COMPLETED
+  CANCELED
+}
+
+enum CustomerSocialPlatform {
+  ZALO
+  FACEBOOK
+  TIKTOK
+}
+
+enum TelecomBeneficiaryType {
+  SELF
+  RELATIVE
+}
+
+enum VehicleKind {
+  AUTO
+  MOTO
+}
+
+enum InboundPolicyDocumentSourceType {
+  API_SYNC
+  MANUAL_UPLOAD
+  EXTERNAL_LINK
+}
+
+enum InboundPolicyExtractionStatus {
+  PENDING
+  EXTRACTED
+  FAILED
+}
+
+enum InboundPolicyReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum CustomFieldType {
@@ -640,6 +704,12 @@ model Customer {
 
   orders        Order[]
   interactions  CustomerInteraction[]
+  serviceContracts ServiceContract[]
+  socialIdentities CustomerSocialIdentity[]
+  ownedVehicles Vehicle[] @relation("CustomerOwnedVehicles")
+  telecomBeneficiaryLines TelecomServiceLine[] @relation("TelecomBeneficiaryCustomer")
+  inboundPolicyDocuments InboundPolicyDocument[]
+  externalOrderIngests ExternalOrderIngest[]
   zaloCampaignRecipients ZaloCampaignRecipient[]
   zaloCampaignAttempts ZaloCampaignMessageAttempt[]
   paymentRequests PaymentRequest[]
@@ -769,6 +839,8 @@ model Order {
   customer      Customer? @relation(fields: [customerId], references: [id])
   items         OrderItem[]
   invoices      Invoice[]
+  serviceContracts ServiceContract[]
+  externalOrderIngests ExternalOrderIngest[]
 
   @@unique([tenant_Id, orderNo])
   @@index([tenant_Id])
@@ -793,6 +865,283 @@ model OrderItem {
 
   @@index([tenant_Id])
   @@index([tenant_Id, orderId])
+}
+
+model ServiceContract {
+  id                     String                   @id @default(cuid())
+  tenant_Id              String
+  customerId             String
+  salesOrderId           String?
+  productType            ServiceContractProductType
+  status                 ServiceContractStatus    @default(ACTIVE)
+  startsAt               DateTime
+  endsAt                 DateTime
+  renewalLeadDaysOverride Int?
+  ownerStaffId           String?
+  sourceType             ServiceContractSourceType @default(MANUAL)
+  sourceRef              String?
+  metadataJson           Json?
+  customFieldSchemaVersion Int?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  customer               Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  salesOrder             Order?                   @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  reminders              ContractRenewalReminder[]
+  telecomLine            TelecomServiceLine?
+  autoInsuranceDetail    AutoInsurancePolicyDetail?
+  motoInsuranceDetail    MotoInsurancePolicyDetail?
+  digitalServiceDetail   DigitalServiceDetail?
+  externalOrderIngests   ExternalOrderIngest[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId, endsAt])
+  @@index([tenant_Id, productType, endsAt])
+  @@index([tenant_Id, ownerStaffId, endsAt])
+  @@index([tenant_Id, salesOrderId])
+  @@index([tenant_Id, customFieldSchemaVersion])
+}
+
+model ContractRenewalReminder {
+  id              String                        @id @default(cuid())
+  tenant_Id       String
+  contractId      String
+  dueAt           DateTime
+  leadDays        Int
+  assigneeStaffId String?
+  status          ContractRenewalReminderStatus @default(PENDING)
+  resolutionNote  String?
+  dedupeKey       String
+  createdAt       DateTime                      @default(now())
+  updatedAt       DateTime                      @updatedAt
+
+  contract        ServiceContract               @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, dedupeKey])
+  @@index([tenant_Id])
+  @@index([tenant_Id, contractId])
+  @@index([tenant_Id, status, dueAt])
+  @@index([tenant_Id, assigneeStaffId, status, dueAt])
+}
+
+model CustomerSocialIdentity {
+  id             String               @id @default(cuid())
+  tenant_Id      String
+  customerId     String
+  platform       CustomerSocialPlatform
+  externalUserId String
+  displayName    String?
+  phoneHint      String?
+  lastSeenAt     DateTime?
+  metadataJson   Json?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  customer       Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, platform, externalUserId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId, platform])
+}
+
+model TelecomServiceLine {
+  id                    String                 @id @default(cuid())
+  tenant_Id             String
+  contractId            String                 @unique
+  servicePhone          String
+  servicePhoneNormalized String?
+  packageCode           String?
+  packageName           String
+  termDays              Int
+  currentExpiryAt       DateTime
+  beneficiaryType       TelecomBeneficiaryType @default(SELF)
+  beneficiaryCustomerId String?
+  beneficiaryName       String?
+  beneficiaryPhone      String?
+  beneficiaryPhoneNormalized String?
+  beneficiaryRelation   String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  contract              ServiceContract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  beneficiaryCustomer   Customer?              @relation("TelecomBeneficiaryCustomer", fields: [beneficiaryCustomerId], references: [id], onDelete: SetNull)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, servicePhoneNormalized])
+  @@index([tenant_Id, beneficiaryCustomerId])
+  @@index([tenant_Id, currentExpiryAt])
+}
+
+model Vehicle {
+  id                    String       @id @default(cuid())
+  tenant_Id             String
+  ownerCustomerId       String?
+  ownerFullName         String
+  ownerAddress          String?
+  plateNumber           String
+  chassisNumber         String
+  engineNumber          String
+  vehicleKind           VehicleKind
+  vehicleType           String
+  seatCount             Int?
+  loadKg                Int?
+  customFieldSchemaVersion Int?
+  status                GenericStatus @default(ACTIVE)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  ownerCustomer         Customer?     @relation("CustomerOwnedVehicles", fields: [ownerCustomerId], references: [id], onDelete: SetNull)
+  autoInsurancePolicies AutoInsurancePolicyDetail[]
+  motoInsurancePolicies MotoInsurancePolicyDetail[]
+  inboundPolicyDocuments InboundPolicyDocument[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, ownerCustomerId])
+  @@index([tenant_Id, vehicleKind, plateNumber])
+  @@index([tenant_Id, plateNumber])
+  @@index([tenant_Id, customFieldSchemaVersion])
+}
+
+model AutoInsurancePolicyDetail {
+  id                      String          @id @default(cuid())
+  tenant_Id               String
+  contractId              String          @unique
+  vehicleId               String
+  soGCN                   String
+  policyFromAt            DateTime
+  policyToAt              DateTime
+  premiumWithVat          Decimal?        @db.Decimal(18, 2)
+  issuedAt                DateTime?
+  voluntary               Boolean         @default(false)
+  tnDriverSeatCount       Int?
+  tnPassengerSeatCount    Int?
+  tnInsuredAmountPerEvent Decimal?        @db.Decimal(18, 2)
+  tnPremium               Decimal?        @db.Decimal(18, 2)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  contract                ServiceContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  vehicle                 Vehicle         @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, vehicleId, policyToAt])
+  @@index([tenant_Id, soGCN])
+}
+
+model MotoInsurancePolicyDetail {
+  id                      String          @id @default(cuid())
+  tenant_Id               String
+  contractId              String          @unique
+  vehicleId               String
+  soGCN                   String
+  policyFromAt            DateTime
+  policyToAt              DateTime
+  premiumWithVat          Decimal?        @db.Decimal(18, 2)
+  issuedAt                DateTime?
+  voluntary               Boolean         @default(false)
+  tnInsuredPersons        String?
+  tnInsuredAmountPerEvent Decimal?        @db.Decimal(18, 2)
+  tnPremium               Decimal?        @db.Decimal(18, 2)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  contract                ServiceContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  vehicle                 Vehicle         @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, vehicleId, policyToAt])
+  @@index([tenant_Id, soGCN])
+}
+
+model DigitalServiceDetail {
+  id               String          @id @default(cuid())
+  tenant_Id        String
+  contractId       String          @unique
+  serviceName      String
+  planName         String?
+  termDays         Int?
+  serviceAccountRef String?
+  provider         String?
+  metadataJson     Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  contract         ServiceContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, provider])
+}
+
+model InboundPolicyDocument {
+  id               String                       @id @default(cuid())
+  tenant_Id        String
+  customerId       String?
+  vehicleId        String?
+  uploadUrl        String
+  sourceType       InboundPolicyDocumentSourceType
+  sourceRef        String?
+  extractionStatus InboundPolicyExtractionStatus @default(PENDING)
+  reviewStatus     InboundPolicyReviewStatus   @default(PENDING)
+  uploadedBy       String?
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  customer         Customer?                   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  vehicle          Vehicle?                    @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  extractions      InboundPolicyExtraction[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId])
+  @@index([tenant_Id, vehicleId])
+  @@index([tenant_Id, extractionStatus, reviewStatus, createdAt])
+}
+
+model InboundPolicyExtraction {
+  id                String                       @id @default(cuid())
+  tenant_Id         String
+  documentId        String
+  extractionStatus  InboundPolicyExtractionStatus @default(PENDING)
+  reviewStatus      InboundPolicyReviewStatus   @default(PENDING)
+  rawPayloadJson    Json?
+  normalizedPayloadJson Json?
+  confidence        Decimal?                     @db.Decimal(6, 4)
+  provider          String?
+  errorMessage      String?
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  document          InboundPolicyDocument        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, documentId, createdAt])
+  @@index([tenant_Id, extractionStatus, reviewStatus])
+}
+
+model ExternalOrderIngest {
+  id                String             @id @default(cuid())
+  tenant_Id         String
+  sourceSystem      String
+  externalOrderId   String
+  customerId        String?
+  salesOrderId      String?
+  serviceContractId String?
+  payloadJson       Json?
+  status            GenericStatus      @default(ACTIVE)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  customer          Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  salesOrder        Order?             @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  serviceContract   ServiceContract?   @relation(fields: [serviceContractId], references: [id], onDelete: SetNull)
+
+  @@unique([tenant_Id, sourceSystem, externalOrderId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, sourceSystem, createdAt])
+  @@index([tenant_Id, customerId])
 }
 
 model Attendance {

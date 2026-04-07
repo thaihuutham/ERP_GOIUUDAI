@@ -29,7 +29,7 @@ services:
       - meili_data:/meili_data
 
   minio:
-    image: minio/minio:RELEASE.2026-03-13T11-33-45Z
+    image: minio/minio:latest
     container_name: erp-minio
     command: server /data --console-address ":9001"
     environment:
@@ -48,7 +48,7 @@ services:
     container_name: erp-api
     environment:
       NODE_ENV: ${NODE_ENV:-production}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://erp:REPLACE_WITH_SECURE_PASSWORD@postgres:5432/erp_retail}
+      DATABASE_URL: ${API_DATABASE_URL:-postgresql://erp:erp@postgres:5432/erp_retail}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-GOIUUDAI}
       TENANCY_MODE: ${TENANCY_MODE:-single}

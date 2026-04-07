@@ -17,6 +17,7 @@ RUN npm prune --omit=dev --workspaces --include-workspace-root
 FROM node:22-alpine AS runtime
 WORKDIR /app
 COPY --from=build /workspace/node_modules ./node_modules
+COPY --from=build /workspace/packages/shared ./packages/shared
 COPY --from=build /workspace/apps/api/dist ./apps/api/dist
 COPY --from=build /workspace/apps/api/prisma ./apps/api/prisma
 COPY --from=build /workspace/config/.env.example ./config/.env.example

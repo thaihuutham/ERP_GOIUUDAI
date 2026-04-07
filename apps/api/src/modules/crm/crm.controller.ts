@@ -3,12 +3,14 @@ import { CustomFieldEntityType, GenericStatus } from '@prisma/client';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { CrmContractsService } from './crm-contracts.service';
 import { CrmService } from './crm.service';
 
 @Controller('crm')
 export class CrmController {
   constructor(
     @Inject(CrmService) private readonly crmService: CrmService,
+    @Inject(CrmContractsService) private readonly crmContractsService: CrmContractsService,
     @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
   ) {}
 
@@ -44,6 +46,32 @@ export class CrmController {
         }
         return this.customFields.wrapNestedEntity(CustomFieldEntityType.CUSTOMER, container, 'customer');
       });
+  }
+
+  @Post('customers/:id/social-identities')
+  @AuditAction({ action: 'UPSERT_CUSTOMER_SOCIAL_IDENTITY', entityType: 'Customer', entityIdParam: 'id' })
+  createSocialIdentity(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.crmContractsService.createSocialIdentity(id, body);
+  }
+
+  @Delete('customers/:id/social-identities/:identityId')
+  @AuditAction({ action: 'DELETE_CUSTOMER_SOCIAL_IDENTITY', entityType: 'Customer', entityIdParam: 'id' })
+  deleteSocialIdentity(@Param('identityId') identityId: string) {
+    return this.crmContractsService.deleteSocialIdentity(identityId);
+  }
+
+  @Get('customers/:id/contracts')
+  listCustomerContracts(@Param('id') id: string, @Query() query: PaginationQueryDto) {
+    return this.crmContractsService.listCustomerContracts(id, query);
+  }
+
+  @Get('customers/:id')
+  getCustomerDetail(@Param('id') id: string) {
+    return this.crmContractsService.getCustomerDetail(id)
+      .then(async (detail) => ({
+        ...detail,
+        customer: await this.customFields.wrapEntity(CustomFieldEntityType.CUSTOMER, detail.customer)
+      }));
   }
 
   @Patch('customers/:id')
@@ -106,5 +134,90 @@ export class CrmController {
   @AuditAction({ action: 'MERGE_CUSTOMERS', entityType: 'Customer' })
   mergeCustomers(@Body() body: Record<string, unknown>) {
     return this.crmService.mergeCustomers(body);
+  }
+
+  @Get('contracts')
+  listContracts(
+    @Query() query: PaginationQueryDto,
+    @Query('customerId') customerId?: string,
+    @Query('productType') productType?: string,
+    @Query('status') status?: string
+  ) {
+    return this.crmContractsService.listContracts(query, {
+      customerId,
+      productType,
+      status
+    });
+  }
+
+  @Post('contracts/:id/renew-preview')
+  renewContractPreview(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.crmContractsService.renewContractPreview(id, body);
+  }
+
+  @Get('renewal-worklist')
+  listRenewalWorklist(
+    @Query() query: PaginationQueryDto,
+    @Query('status') status?: string,
+    @Query('assigneeStaffId') assigneeStaffId?: string
+  ) {
+    return this.crmContractsService.listRenewalWorklist(query, {
+      status,
+      assigneeStaffId
+    });
+  }
+
+  @Post('renewal-worklist/run-sweep')
+  @AuditAction({ action: 'RUN_CRM_RENEWAL_SWEEP', entityType: 'ServiceContract' })
+  runRenewalReminderSweep(@Body() body: Record<string, unknown>) {
+    return this.crmContractsService.runRenewalReminderSweep(body);
+  }
+
+  @Get('vehicles')
+  listVehicles(
+    @Query() query: PaginationQueryDto,
+    @Query('ownerCustomerId') ownerCustomerId?: string,
+    @Query('vehicleKind') vehicleKind?: string
+  ) {
+    return this.crmContractsService.listVehicles(query, {
+      ownerCustomerId,
+      vehicleKind
+    });
+  }
+
+  @Post('vehicles')
+  @AuditAction({ action: 'CREATE_CRM_VEHICLE', entityType: 'Vehicle' })
+  createVehicle(@Body() body: Record<string, unknown>) {
+    return this.crmContractsService.createVehicle(body)
+      .then((vehicle) => this.customFields.wrapEntity(CustomFieldEntityType.VEHICLE, vehicle));
+  }
+
+  @Get('vehicles/:id/policies')
+  getVehiclePolicies(@Param('id') id: string) {
+    return this.crmContractsService.getVehiclePolicies(id);
+  }
+
+  @Post('insurance/sync-orders')
+  @AuditAction({ action: 'SYNC_INSURANCE_ORDERS', entityType: 'ServiceContract' })
+  syncInsuranceOrders(@Body() body: Record<string, unknown>) {
+    return this.crmContractsService.syncInsuranceOrders(body);
+  }
+
+  @Post('documents')
+  @AuditAction({ action: 'UPLOAD_POLICY_DOCUMENT', entityType: 'InboundPolicyDocument' })
+  createPolicyDocument(@Body() body: Record<string, unknown>) {
+    return this.crmContractsService.createPolicyDocument(body);
+  }
+
+  @Post('documents/:id/extract')
+  @AuditAction({ action: 'EXTRACT_POLICY_DOCUMENT', entityType: 'InboundPolicyDocument', entityIdParam: 'id' })
+  extractPolicyDocument(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.crmContractsService.extractPolicyDocument(id, body);
+  }
+
+  @Post('documents/:id/approve')
+  @AuditAction({ action: 'APPROVE_POLICY_DOCUMENT', entityType: 'InboundPolicyDocument', entityIdParam: 'id' })
+  approvePolicyDocument(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.crmContractsService.approvePolicyDocument(id, body);
   }
 }

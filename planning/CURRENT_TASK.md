@@ -2,7 +2,7 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-06 18:19 +07
+- Last updated: 2026-04-07 10:46 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
 
@@ -3531,3 +3531,55 @@
   - `npm run lint --workspace @erp/api` ✅
   - `npm run build --workspace @erp/api` ✅
   - `npm run test --workspace @erp/api -- test/permission.util.test.ts test/crm.service.test.ts` ✅
+
+### Update 2026-04-07 10:46 (CRM contracts/renewals đa sản phẩm + social identity + ingest/OCR)
+- [x] Mở rộng schema CRM theo contract-centric model:
+  - enums mới + bảng mới: `ServiceContract`, `ContractRenewalReminder`, `CustomerSocialIdentity`,
+    `TelecomServiceLine`, `Vehicle`, `AutoInsurancePolicyDetail`, `MotoInsurancePolicyDetail`,
+    `DigitalServiceDetail`, `InboundPolicyDocument`, `InboundPolicyExtraction`, `ExternalOrderIngest`.
+  - mở rộng `CustomFieldEntityType`: `SERVICE_CONTRACT`, `VEHICLE`, `INSURANCE_POLICY`.
+  - migration: `apps/api/prisma/migrations/20260407102631_add_crm_contracts_and_renewal_v1/migration.sql`.
+- [x] Bổ sung CRM contracts service + API endpoints:
+  - `GET /api/v1/crm/customers/:id` (detail + contract summary + social identities)
+  - `GET /api/v1/crm/contracts`
+  - `GET /api/v1/crm/customers/:id/contracts`
+  - `POST /api/v1/crm/contracts/:id/renew-preview`
+  - `GET /api/v1/crm/renewal-worklist`
+  - `POST /api/v1/crm/renewal-worklist/run-sweep`
+  - `GET/POST /api/v1/crm/vehicles`, `GET /api/v1/crm/vehicles/:id/policies`
+  - `POST /api/v1/crm/customers/:id/social-identities`
+  - `DELETE /api/v1/crm/customers/:id/social-identities/:identityId`
+  - `POST /api/v1/crm/insurance/sync-orders`
+  - `POST /api/v1/crm/documents`
+  - `POST /api/v1/crm/documents/:id/extract`
+  - `POST /api/v1/crm/documents/:id/approve`
+- [x] Bổ sung scheduler reminder CRM tự động:
+  - file: `apps/api/src/modules/crm/crm-renewal-reminder-scheduler.service.ts`
+  - env controls:
+    - `CRM_RENEWAL_REMINDER_SCHEDULER_ENABLED` (default true)
+    - `CRM_RENEWAL_REMINDER_INTERVAL_MINUTES` (default 60)
+    - `CRM_RENEWAL_REMINDER_BATCH_LIMIT` (default 1000)
+- [x] Bổ sung policy runtime cho renewal lead days:
+  - `sales_crm_policies.renewalReminder.globalLeadDays`
+  - `sales_crm_policies.renewalReminder.productLeadDays.*`
+  - cập nhật normalize/validate ở `SettingsPolicyService` + runtime read ở `RuntimeSettingsService`.
+- [x] Tích hợp identity resolve khi ingest conversation:
+  - `ConversationsService` fallback resolve customer theo `(platform, externalUserId)` rồi tới `phoneNormalized`.
+- [x] Cập nhật custom-fields alias/delegate cho entity mới:
+  - `SERVICE_CONTRACT`, `VEHICLE`, `INSURANCE_POLICY`.
+- [x] Bổ sung test:
+  - `apps/api/test/crm-renewal.util.test.ts`
+  - `apps/api/test/crm-contracts.service.test.ts`
+  - mở rộng `custom-fields.service.test.ts`, `settings-policy.service.test.ts`.
+- [x] ADR:
+  - `docs/decisions/ADR-051-CRM-CUSTOMER360-CONTRACT-RENEWAL-CORE.md`
+- [x] Verify (stability gate):
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.service.test.ts test/crm-renewal.util.test.ts test/crm-contracts.service.test.ts test/settings-policy.service.test.ts test/custom-fields.service.test.ts test/conversations.realtime.test.ts` ✅
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+- [!] Ghi chú test nền:
+  - `test/crm.api-flow.test.ts` trong AppModule bootstrap có unhandled nền từ scheduler/pool Zalo mock (`config/prisma undefined`) giống issue test integration đã biết; không phát sinh từ patch CRM contracts.

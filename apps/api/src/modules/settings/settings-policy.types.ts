@@ -198,6 +198,15 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       customerTags: ['vip', 'khach_moi', 'da_mua'],
       interactionTags: ['quan_tam', 'can_cham_soc', 'da_dat_lich'],
       interactionResultTags: ['quan_tam', 'da_mua', 'khong_phan_hoi']
+    },
+    renewalReminder: {
+      globalLeadDays: 30,
+      productLeadDays: {
+        TELECOM_PACKAGE: 30,
+        AUTO_INSURANCE: 30,
+        MOTO_INSURANCE: 30,
+        DIGITAL_SERVICE: 30
+      }
     }
   },
   catalog_scm_policies: {

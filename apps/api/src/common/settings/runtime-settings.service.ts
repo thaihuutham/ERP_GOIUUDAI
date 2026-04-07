@@ -348,6 +348,15 @@ export class RuntimeSettingsService {
     const creditPolicy = this.toRecord(domain.creditPolicy);
     const customerTaxonomy = this.toRecord(domain.customerTaxonomy);
     const tagRegistry = this.toRecord(domain.tagRegistry);
+    const renewalReminder = this.toRecord(domain.renewalReminder);
+    const productLeadDays = this.toRecord(renewalReminder.productLeadDays);
+    const readOptionalLeadDays = (value: unknown) => {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
+        return null;
+      }
+      return parsed;
+    };
 
     return {
       orderSettings: {
@@ -371,6 +380,15 @@ export class RuntimeSettingsService {
         customerTags: this.toStringArray(tagRegistry.customerTags).map((item) => item.toLowerCase()),
         interactionTags: this.toStringArray(tagRegistry.interactionTags).map((item) => item.toLowerCase()),
         interactionResultTags: this.toStringArray(tagRegistry.interactionResultTags).map((item) => item.toLowerCase())
+      },
+      renewalReminder: {
+        globalLeadDays: this.toInt(renewalReminder.globalLeadDays, 30, 1, 365),
+        productLeadDays: {
+          TELECOM_PACKAGE: readOptionalLeadDays(productLeadDays.TELECOM_PACKAGE),
+          AUTO_INSURANCE: readOptionalLeadDays(productLeadDays.AUTO_INSURANCE),
+          MOTO_INSURANCE: readOptionalLeadDays(productLeadDays.MOTO_INSURANCE),
+          DIGITAL_SERVICE: readOptionalLeadDays(productLeadDays.DIGITAL_SERVICE)
+        }
       }
     };
   }

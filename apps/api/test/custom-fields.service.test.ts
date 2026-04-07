@@ -78,6 +78,16 @@ function makePrismaMock() {
         findFirst: vi.fn(),
         findMany: vi.fn(),
         updateMany: vi.fn()
+      },
+      serviceContract: {
+        findFirst: vi.fn(),
+        findMany: vi.fn(),
+        updateMany: vi.fn()
+      },
+      vehicle: {
+        findFirst: vi.fn(),
+        findMany: vi.fn(),
+        updateMany: vi.fn()
       }
     }
   };
@@ -90,6 +100,16 @@ function makeClsMock() {
 }
 
 describe('CustomFieldsService', () => {
+  it('normalizes CRM-specific entity type aliases', () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const service = new CustomFieldsService(prisma as any, cls as any);
+
+    expect(service.normalizeEntityType('serviceContract')).toBe(CustomFieldEntityType.SERVICE_CONTRACT);
+    expect(service.normalizeEntityType('vehicle')).toBe(CustomFieldEntityType.VEHICLE);
+    expect(service.normalizeEntityType('insurance-policy')).toBe(CustomFieldEntityType.INSURANCE_POLICY);
+  });
+
   it('saves draft then publishes schema version', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();
