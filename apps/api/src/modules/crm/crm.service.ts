@@ -22,6 +22,20 @@ type CustomerImportSummary = {
   errors: CustomerImportError[];
 };
 
+type CustomerImportPreviewSummary = {
+  totalRows: number;
+  validRows: number;
+  wouldCreateCount: number;
+  wouldUpdateCount: number;
+  skippedCount: number;
+  errors: CustomerImportError[];
+};
+
+type CustomerImportUpsertResult = {
+  operation: 'create' | 'update';
+  customerId?: string;
+};
+
 @Injectable()
 export class CrmService {
   constructor(
@@ -590,44 +604,13 @@ export class CrmService {
       throw new ForbiddenException('Chỉ admin được phép import dữ liệu khách hàng bằng Excel.');
     }
 
-    const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    if (rows.length === 0) {
-      throw new BadRequestException('Thiếu dữ liệu rows để import khách hàng.');
-    }
+    const summary = await this.processCustomerImportRows(payload, 'import');
 
-    const maxRows = 2_000;
-    const slicedRows = rows.slice(0, maxRows);
-    const errors: CustomerImportError[] = [];
-    const importedCustomerIds = new Set<string>();
-    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
-
-    for (let index = 0; index < slicedRows.length; index += 1) {
-      const rowIndex = index + 1;
-      const row = this.ensureRecord(slicedRows[index]);
-      const identifier = this.cleanString(row.phone)
-        || this.cleanString(row.phoneNormalized)
-        || this.cleanString(row.email)
-        || this.cleanString(row.emailNormalized)
-        || this.cleanString(row.fullName)
-        || undefined;
-
-      try {
-        const customer = await this.upsertCustomerImportRow(row, salesPolicy);
-        importedCustomerIds.add(customer.id);
-      } catch (error) {
-        errors.push({
-          rowIndex,
-          identifier,
-          message: error instanceof Error ? error.message : 'Không thể import dòng dữ liệu khách hàng.',
-        });
-      }
-    }
-
-    if (importedCustomerIds.size > 0) {
+    if (summary.importedCustomerIds.size > 0) {
       const customers = await this.prisma.client.customer.findMany({
         where: {
           id: {
-            in: [...importedCustomerIds],
+            in: [...summary.importedCustomerIds],
           },
         },
       });
@@ -636,12 +619,28 @@ export class CrmService {
       }
     }
 
-    const importedCount = slicedRows.length - errors.length;
     return {
-      totalRows: slicedRows.length,
-      importedCount,
-      skippedCount: errors.length,
-      errors,
+      totalRows: summary.totalRows,
+      importedCount: summary.validRows,
+      skippedCount: summary.errors.length,
+      errors: summary.errors,
+    };
+  }
+
+  async previewCustomerImport(payload: Record<string, unknown>): Promise<CustomerImportPreviewSummary> {
+    const actor = this.resolveCustomerActor();
+    if (actor.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Chỉ admin được phép mô phỏng import dữ liệu khách hàng.');
+    }
+
+    const summary = await this.processCustomerImportRows(payload, 'preview');
+    return {
+      totalRows: summary.totalRows,
+      validRows: summary.validRows,
+      wouldCreateCount: summary.wouldCreateCount,
+      wouldUpdateCount: summary.wouldUpdateCount,
+      skippedCount: summary.errors.length,
+      errors: summary.errors,
     };
   }
 
@@ -787,8 +786,9 @@ export class CrmService {
     salesPolicy: {
       customerTaxonomy: { stages: string[]; sources: string[] };
       tagRegistry: { customerTags: string[] };
-    }
-  ) {
+    },
+    options: { preview: boolean }
+  ): Promise<CustomerImportUpsertResult> {
     const phoneInput = this.optionalString(row.phoneNormalized) ?? this.optionalString(row.phone);
     const emailInput = this.optionalString(row.emailNormalized) ?? this.optionalString(row.email);
     const phoneNormalized = normalizeVietnamPhone(phoneInput);
@@ -860,6 +860,13 @@ export class CrmService {
         throw new BadRequestException('Thiếu fullName cho khách hàng cần cập nhật.');
       }
 
+      if (options.preview) {
+        return {
+          operation: 'update',
+          customerId: existing.id,
+        };
+      }
+
       await this.prisma.client.customer.updateMany({
         where: { id: existing.id },
         data: {
@@ -897,11 +904,20 @@ export class CrmService {
       if (!updated) {
         throw new NotFoundException('Không tìm thấy khách hàng sau khi cập nhật import.');
       }
-      return updated;
+      return {
+        operation: 'update',
+        customerId: updated.id,
+      };
     }
 
     const fullName = this.requiredString(row.fullName, 'Thiếu fullName cho dòng import khách hàng mới.');
-    return this.prisma.client.customer.create({
+    if (options.preview) {
+      return {
+        operation: 'create',
+      };
+    }
+
+    const created = await this.prisma.client.customer.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
         code: this.optionalString(row.code) ?? null,
@@ -925,6 +941,70 @@ export class CrmService {
         zaloNickType: nextZaloNickType,
       },
     });
+    return {
+      operation: 'create',
+      customerId: created.id,
+    };
+  }
+
+  private async processCustomerImportRows(
+    payload: Record<string, unknown>,
+    mode: 'preview' | 'import'
+  ) {
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length === 0) {
+      throw new BadRequestException('Thiếu dữ liệu rows để import khách hàng.');
+    }
+
+    const maxRows = 2_000;
+    const slicedRows = rows.slice(0, maxRows);
+    const errors: CustomerImportError[] = [];
+    const importedCustomerIds = new Set<string>();
+    let validRows = 0;
+    let wouldCreateCount = 0;
+    let wouldUpdateCount = 0;
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+
+    for (let index = 0; index < slicedRows.length; index += 1) {
+      const rowIndex = index + 1;
+      const row = this.ensureRecord(slicedRows[index]);
+      const identifier = this.cleanString(row.phone)
+        || this.cleanString(row.phoneNormalized)
+        || this.cleanString(row.email)
+        || this.cleanString(row.emailNormalized)
+        || this.cleanString(row.fullName)
+        || undefined;
+
+      try {
+        const upsertResult = await this.upsertCustomerImportRow(row, salesPolicy, {
+          preview: mode === 'preview',
+        });
+        validRows += 1;
+        if (upsertResult.operation === 'create') {
+          wouldCreateCount += 1;
+        } else {
+          wouldUpdateCount += 1;
+        }
+        if (upsertResult.customerId) {
+          importedCustomerIds.add(upsertResult.customerId);
+        }
+      } catch (error) {
+        errors.push({
+          rowIndex,
+          identifier,
+          message: error instanceof Error ? error.message : 'Không thể import dòng dữ liệu khách hàng.',
+        });
+      }
+    }
+
+    return {
+      totalRows: slicedRows.length,
+      validRows,
+      wouldCreateCount,
+      wouldUpdateCount,
+      errors,
+      importedCustomerIds,
+    };
   }
 
   private async findDuplicateCustomer(phone?: string, email?: string, excludeId?: string) {

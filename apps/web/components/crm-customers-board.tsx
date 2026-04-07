@@ -2,7 +2,7 @@
 
 import {
   Download,
-  FileSpreadsheet,
+  Upload,
   Plus,
   User,
   Mail,
@@ -17,16 +17,13 @@ import {
   Car,
 } from 'lucide-react';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { readStoredAuthSession } from '../lib/auth-session';
 import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
-import { downloadExcelTemplate } from '../lib/excel-template';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
-import { ExcelImportBlock } from './ui/excel-import-block';
-import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
+import { StandardDataTable, ColumnDefinition, type StandardTableBulkModalRenderContext } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
 import { Badge, statusToBadge, type BadgeVariant } from './ui/badge';
 
@@ -48,41 +45,6 @@ type CustomerZaloNickType =
   | 'CHUA_CO_NICK_ZALO'
   | 'CHAN_NGUOI_LA'
   | 'GUI_DUOC_TIN_NHAN';
-
-type CustomerImportError = {
-  rowIndex: number;
-  identifier?: string;
-  message: string;
-};
-
-type CustomerImportSummary = {
-  totalRows: number;
-  importedCount: number;
-  skippedCount: number;
-  errors: CustomerImportError[];
-};
-
-type CustomerImportRow = {
-  code?: string;
-  fullName?: string;
-  phone?: string;
-  phoneNormalized?: string;
-  email?: string;
-  emailNormalized?: string;
-  customerStage?: string;
-  source?: string;
-  segment?: string;
-  tags?: string[];
-  ownerStaffId?: string;
-  consentStatus?: string;
-  needsSummary?: string;
-  totalSpent?: number;
-  totalOrders?: number;
-  lastOrderAt?: string;
-  lastContactAt?: string;
-  status?: CustomerCareStatus;
-  zaloNickType?: CustomerZaloNickType;
-};
 
 type Customer = {
   id: string;
@@ -211,6 +173,17 @@ type VehicleFormState = {
   status: 'ACTIVE' | 'INACTIVE' | 'DRAFT';
 };
 
+type CustomerBulkTagMode = 'APPEND' | 'REPLACE';
+
+type CustomerBulkFormState = {
+  softSkip: boolean;
+  status: '' | CustomerCareStatus;
+  source: string;
+  lastContactDate: string;
+  tagsInput: string;
+  tagMode: CustomerBulkTagMode;
+};
+
 const CUSTOMER_STATUS_OPTIONS: CustomerCareStatus[] = [
   'MOI_CHUA_TU_VAN',
   'DANG_SUY_NGHI',
@@ -268,47 +241,6 @@ const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
 const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
 const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
 const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
-
-const CUSTOMER_IMPORT_TEMPLATE_ROWS: Array<Record<string, string | number>> = [
-  {
-    code: 'CUS-2026-001',
-    fullName: 'Nguyen Van A',
-    phone: '0901234567',
-    email: 'a@example.com',
-    customerStage: 'MOI',
-    source: 'ONLINE',
-    segment: 'Retail',
-    tags: 'vip;khach_moi',
-    ownerStaffId: '',
-    consentStatus: '',
-    needsSummary: 'Quan tâm gia hạn gói data',
-    totalSpent: 2500000,
-    totalOrders: 3,
-    lastOrderAt: '2026-03-01T09:00:00.000Z',
-    lastContactAt: '2026-04-01T08:30:00.000Z',
-    status: 'MOI_CHUA_TU_VAN',
-    zaloNickType: 'CHUA_KIEM_TRA',
-  },
-  {
-    code: 'CUS-2026-002',
-    fullName: 'Tran Thi B',
-    phone: '0911222333',
-    email: 'b@example.com',
-    customerStage: 'DANG_CHAM_SOC',
-    source: 'REFERRAL',
-    segment: 'SMB',
-    tags: 'da_mua',
-    ownerStaffId: '',
-    consentStatus: '',
-    needsSummary: 'Đã nhắn qua Zalo',
-    totalSpent: 4800000,
-    totalOrders: 6,
-    lastOrderAt: '2026-02-10T14:00:00.000Z',
-    lastContactAt: '2026-04-03T15:45:00.000Z',
-    status: 'DONG_Y_CHUYEN_THANH_KH',
-    zaloNickType: 'GUI_DUOC_TIN_NHAN',
-  },
-];
 
 function toNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') {
@@ -438,176 +370,6 @@ function buildDetailForm(customer: Customer | null): DetailCustomerFormState {
   };
 }
 
-function normalizeHeaderKey(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function extractExcelHeaderValue(row: Record<string, unknown>, aliases: string[]) {
-  const normalized = new Map<string, unknown>();
-  for (const [key, value] of Object.entries(row)) {
-    normalized.set(normalizeHeaderKey(key), value);
-  }
-
-  for (const alias of aliases) {
-    const value = normalized.get(alias);
-    if (value === undefined || value === null || value === '') {
-      continue;
-    }
-    return value;
-  }
-  return undefined;
-}
-
-function parseCustomerStatusFromExcel(value: unknown): CustomerCareStatus | undefined {
-  const raw = String(value ?? '').trim();
-  if (!raw) {
-    return undefined;
-  }
-  const upper = raw.toUpperCase() as CustomerCareStatus;
-  if (CUSTOMER_STATUS_OPTIONS.includes(upper)) {
-    return upper;
-  }
-  const normalized = normalizeHeaderKey(raw);
-  if (normalized.includes('chuatuvan') || normalized.includes('moichuatuvan')) {
-    return 'MOI_CHUA_TU_VAN';
-  }
-  if (normalized.includes('dangsuynghi')) {
-    return 'DANG_SUY_NGHI';
-  }
-  if (normalized.includes('dongy') || normalized.includes('chuyenthanhkh')) {
-    return 'DONG_Y_CHUYEN_THANH_KH';
-  }
-  if (normalized.includes('khongnghemaylan2')) {
-    return 'KHONG_NGHE_MAY_LAN_2';
-  }
-  if (normalized.includes('khongnghemaylan1')) {
-    return 'KHONG_NGHE_MAY_LAN_1';
-  }
-  if (normalized.includes('tuchoi')) {
-    return 'KH_TU_CHOI';
-  }
-  if (normalized.includes('damuabenkhac')) {
-    return 'KH_DA_MUA_BEN_KHAC';
-  }
-  if (normalized.includes('nguoinhalam') || normalized.includes('thuebao')) {
-    return 'NGUOI_NHA_LAM_THUE_BAO';
-  }
-  if (normalized.includes('saiso') || normalized.includes('khongtontai') || normalized.includes('boquaxoa')) {
-    return 'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA';
-  }
-  return undefined;
-}
-
-function parseCustomerZaloNickTypeFromExcel(value: unknown): CustomerZaloNickType | undefined {
-  const raw = String(value ?? '').trim();
-  if (!raw) {
-    return undefined;
-  }
-  const upper = raw.toUpperCase() as CustomerZaloNickType;
-  if (CUSTOMER_ZALO_NICK_TYPE_OPTIONS.includes(upper)) {
-    return upper;
-  }
-  const normalized = normalizeHeaderKey(raw);
-  if (normalized.includes('chuakiemtra')) {
-    return 'CHUA_KIEM_TRA';
-  }
-  if (normalized.includes('chuaconickzalo') || normalized.includes('chuacozalo')) {
-    return 'CHUA_CO_NICK_ZALO';
-  }
-  if (normalized.includes('channguoila') || normalized.includes('stranger')) {
-    return 'CHAN_NGUOI_LA';
-  }
-  if (normalized.includes('guiduoctinnhan') || normalized.includes('guiduoc')) {
-    return 'GUI_DUOC_TIN_NHAN';
-  }
-  return undefined;
-}
-
-function parseOptionalNonNegativeNumber(value: unknown) {
-  if (value === null || value === undefined || value === '') {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return undefined;
-  }
-  return parsed;
-}
-
-function parseOptionalNonNegativeInteger(value: unknown) {
-  const parsed = parseOptionalNonNegativeNumber(value);
-  if (parsed === undefined) {
-    return undefined;
-  }
-  return Math.trunc(parsed);
-}
-
-function parseOptionalIsoDate(value: unknown) {
-  if (value === null || value === undefined || value === '') {
-    return undefined;
-  }
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
-  }
-  const parsed = new Date(String(value));
-  if (Number.isNaN(parsed.getTime())) {
-    return undefined;
-  }
-  return parsed.toISOString();
-}
-
-async function parseCustomerImportXlsx(file: File): Promise<CustomerImportRow[]> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-  const firstSheet = workbook.SheetNames[0];
-  if (!firstSheet) {
-    return [];
-  }
-  const sheet = workbook.Sheets[firstSheet];
-  const parsedRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    raw: true,
-    defval: null,
-  });
-
-  const rows = parsedRows.map((row) => {
-    const tagsRaw = extractExcelHeaderValue(row, ['tags', 'nhan', 'the', 'customertags']);
-    const tags = String(tagsRaw ?? '')
-      .split(/[;,]/)
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
-
-    const parsed: CustomerImportRow = {
-      code: extractExcelHeaderValue(row, ['code', 'makh', 'customercode']) ? String(extractExcelHeaderValue(row, ['code', 'makh', 'customercode'])).trim() : undefined,
-      fullName: extractExcelHeaderValue(row, ['fullname', 'hoten', 'tenkhachhang', 'customername']) ? String(extractExcelHeaderValue(row, ['fullname', 'hoten', 'tenkhachhang', 'customername'])).trim() : undefined,
-      phone: extractExcelHeaderValue(row, ['phone', 'sdt', 'sodienthoai', 'dienthoai']) ? String(extractExcelHeaderValue(row, ['phone', 'sdt', 'sodienthoai', 'dienthoai'])).trim() : undefined,
-      phoneNormalized: extractExcelHeaderValue(row, ['phonenormalized', 'phonechuhoa', 'phoneclean']) ? String(extractExcelHeaderValue(row, ['phonenormalized', 'phonechuhoa', 'phoneclean'])).trim() : undefined,
-      email: extractExcelHeaderValue(row, ['email']) ? String(extractExcelHeaderValue(row, ['email'])).trim() : undefined,
-      emailNormalized: extractExcelHeaderValue(row, ['emailnormalized', 'emailclean']) ? String(extractExcelHeaderValue(row, ['emailnormalized', 'emailclean'])).trim() : undefined,
-      customerStage: extractExcelHeaderValue(row, ['customerstage', 'giaidoan']) ? String(extractExcelHeaderValue(row, ['customerstage', 'giaidoan'])).trim() : undefined,
-      source: extractExcelHeaderValue(row, ['source', 'nguon']) ? String(extractExcelHeaderValue(row, ['source', 'nguon'])).trim() : undefined,
-      segment: extractExcelHeaderValue(row, ['segment', 'phankhuc', 'phanloai']) ? String(extractExcelHeaderValue(row, ['segment', 'phankhuc', 'phanloai'])).trim() : undefined,
-      tags: tags.length > 0 ? tags : undefined,
-      ownerStaffId: extractExcelHeaderValue(row, ['ownerstaffid', 'phutrach']) ? String(extractExcelHeaderValue(row, ['ownerstaffid', 'phutrach'])).trim() : undefined,
-      consentStatus: extractExcelHeaderValue(row, ['consentstatus', 'dongythongtin']) ? String(extractExcelHeaderValue(row, ['consentstatus', 'dongythongtin'])).trim() : undefined,
-      needsSummary: extractExcelHeaderValue(row, ['needssummary', 'ghichu', 'nhucau']) ? String(extractExcelHeaderValue(row, ['needssummary', 'ghichu', 'nhucau'])).trim() : undefined,
-      totalSpent: parseOptionalNonNegativeNumber(extractExcelHeaderValue(row, ['totalspent', 'tongchitieu'])),
-      totalOrders: parseOptionalNonNegativeInteger(extractExcelHeaderValue(row, ['totalorders', 'tongdonhang'])),
-      lastOrderAt: parseOptionalIsoDate(extractExcelHeaderValue(row, ['lastorderat', 'ngaymuacuoi'])),
-      lastContactAt: parseOptionalIsoDate(extractExcelHeaderValue(row, ['lastcontactat', 'ngaylhcuoi'])),
-      status: parseCustomerStatusFromExcel(extractExcelHeaderValue(row, ['status', 'trangthai', 'trangthaicskh'])),
-      zaloNickType: parseCustomerZaloNickTypeFromExcel(extractExcelHeaderValue(row, ['zalonicktype', 'loainickzalo', 'zalonick'])),
-    };
-    return parsed;
-  });
-
-  return rows.filter((row) => Object.values(row).some((value) => value !== undefined && String(value).trim() !== ''));
-}
-
 function normalizeVehicleKind(input: unknown): 'AUTO' | 'MOTO' {
   const normalized = String(input ?? '').trim().toUpperCase();
   return normalized === 'MOTO' ? 'MOTO' : 'AUTO';
@@ -662,6 +424,17 @@ function readSelectedTags(event: ChangeEvent<HTMLSelectElement>) {
     .filter(Boolean);
 }
 
+function readBulkTags(input: string) {
+  return Array.from(
+    new Set(
+      String(input ?? '')
+        .split(/[;,]/)
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
 export function CrmCustomersBoard() {
   const { canModule, canAction } = useAccessPolicy();
   const { role } = useUserRole();
@@ -698,8 +471,16 @@ export function CrmCustomersBoard() {
   const [archivingVehicleId, setArchivingVehicleId] = useState<string | null>(null);
   const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [isImportingCustomers, setIsImportingCustomers] = useState(false);
-  const [customerImportSummary, setCustomerImportSummary] = useState<CustomerImportSummary | null>(null);
+  const [isApplyingCustomerBulk, setIsApplyingCustomerBulk] = useState(false);
+  const [customerBulkForm, setCustomerBulkForm] = useState<CustomerBulkFormState>({
+    softSkip: false,
+    status: '',
+    source: '',
+    lastContactDate: '',
+    tagsInput: '',
+    tagMode: 'APPEND',
+  });
+  const [customerBulkError, setCustomerBulkError] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState<CreateCustomerFormState>({
     fullName: '',
     phone: '',
@@ -1034,61 +815,6 @@ export function CrmCustomersBoard() {
     }
   };
 
-  const handleImportCustomerFile = async (file: File) => {
-    if (!file) {
-      return;
-    }
-    if (!actorIdentity.isAdmin) {
-      setErrorMessage('Chỉ admin được import dữ liệu khách hàng bằng Excel.');
-      return;
-    }
-
-    const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls')) {
-      setErrorMessage('Chỉ hỗ trợ file Excel định dạng .xlsx hoặc .xls.');
-      return;
-    }
-
-    setIsImportingCustomers(true);
-    setCustomerImportSummary(null);
-    setErrorMessage(null);
-    setResultMessage(null);
-
-    try {
-      const rows = await parseCustomerImportXlsx(file);
-      if (rows.length === 0) {
-        throw new Error('File Excel không có dữ liệu hợp lệ để import.');
-      }
-
-      const summary = await apiRequest<CustomerImportSummary>('/crm/customers/import', {
-        method: 'POST',
-        body: {
-          fileName: file.name,
-          rows,
-        },
-      });
-      setCustomerImportSummary(summary);
-      if (summary.skippedCount === 0) {
-        setResultMessage(`Đã import thành công ${summary.importedCount}/${summary.totalRows} khách hàng.`);
-      } else {
-        setResultMessage(`Đã import ${summary.importedCount}/${summary.totalRows} khách hàng, bỏ qua ${summary.skippedCount} dòng lỗi.`);
-      }
-      await loadCustomers();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể import dữ liệu khách hàng từ Excel.');
-    } finally {
-      setIsImportingCustomers(false);
-    }
-  };
-
-  const handleDownloadCustomerTemplate = () => {
-    downloadExcelTemplate(
-      'customer-import-template.xlsx',
-      'Customers',
-      CUSTOMER_IMPORT_TEMPLATE_ROWS,
-    );
-  };
-
   useEffect(() => {
     const timer = setTimeout(loadCustomers, 300);
     return () => clearTimeout(timer);
@@ -1284,43 +1010,229 @@ export function CrmCustomersBoard() {
     return normalized;
   };
 
-  const bulkActions = useMemo<StandardTableBulkAction<Customer>[]>(() => {
-    const actions: StandardTableBulkAction<Customer>[] = [];
-
-    if (canUpdate) {
-      CUSTOMER_STATUS_OPTIONS.forEach((statusValue, index) => {
-        actions.push({
-          key: `bulk-status-${statusValue.toLowerCase()}`,
-          label: index === 0 ? `Set ${CUSTOMER_STATUS_LABELS[statusValue]}` : `Đổi: ${CUSTOMER_STATUS_LABELS[statusValue]}`,
-          tone: index === 0 ? 'primary' : 'ghost',
-          execute: async (selectedRows) =>
-            runCustomerBulkAction(`Set trạng thái ${CUSTOMER_STATUS_LABELS[statusValue]}`, selectedRows, async (customer) => {
-              await apiRequest(`/crm/customers/${customer.id}`, {
-                method: 'PATCH',
-                body: { status: statusValue },
-              });
-            }),
-        });
-      });
+  const runCustomerBulkModalAction = async (context: StandardTableBulkModalRenderContext<Customer>) => {
+    const selectedRows = context.selectedRows;
+    if (selectedRows.length === 0) {
+      setCustomerBulkError('Vui lòng chọn ít nhất 1 khách hàng.');
+      return;
     }
 
-    if (canDelete) {
-      actions.push({
-        key: 'bulk-soft-skip-customers',
-        label: 'BỎ QUA/Xóa',
-        tone: 'danger',
-        confirmMessage: (rows) => `Đánh dấu BỎ QUA/Xóa cho ${rows.length} khách hàng đã chọn?`,
-        execute: async (selectedRows) =>
-          runCustomerBulkAction('Đánh dấu BỎ QUA/Xóa', selectedRows, async (customer) => {
+    const source = customerBulkForm.source.trim();
+    const statusValue = customerBulkForm.status;
+    const tags = readBulkTags(customerBulkForm.tagsInput);
+    const shouldPatch = Boolean(statusValue || source || customerBulkForm.lastContactDate || tags.length > 0);
+    const shouldSoftSkip = customerBulkForm.softSkip;
+
+    if (!shouldPatch && !shouldSoftSkip) {
+      setCustomerBulkError('Vui lòng chọn ít nhất một thay đổi để áp dụng.');
+      return;
+    }
+    if (shouldPatch && !canUpdate) {
+      setCustomerBulkError('Bạn không có quyền cập nhật hàng loạt khách hàng.');
+      return;
+    }
+    if (shouldSoftSkip && !canDelete) {
+      setCustomerBulkError('Bạn không có quyền BỎ QUA/Xóa hàng loạt khách hàng.');
+      return;
+    }
+
+    setIsApplyingCustomerBulk(true);
+    setCustomerBulkError(null);
+    const actionLabel = shouldPatch && shouldSoftSkip
+      ? 'Cập nhật + BỎ QUA/Xóa khách hàng'
+      : shouldSoftSkip
+        ? 'BỎ QUA/Xóa khách hàng'
+        : 'Cập nhật khách hàng hàng loạt';
+
+    try {
+      const result = await runCustomerBulkAction(actionLabel, selectedRows, async (customer) => {
+        if (shouldPatch) {
+          const patchBody: Record<string, unknown> = {};
+          if (statusValue) {
+            patchBody.status = statusValue;
+          }
+          if (source) {
+            patchBody.source = source;
+          }
+          if (customerBulkForm.lastContactDate) {
+            const parsedDate = new Date(`${customerBulkForm.lastContactDate}T00:00:00`);
+            if (Number.isNaN(parsedDate.getTime())) {
+              throw new Error('Ngày lần liên hệ cuối không hợp lệ.');
+            }
+            patchBody.lastContactAt = parsedDate.toISOString();
+          }
+          if (tags.length > 0) {
+            if (customerBulkForm.tagMode === 'REPLACE') {
+              patchBody.tags = tags;
+            } else {
+              const existingTags = Array.isArray(customer.tags)
+                ? customer.tags.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean)
+                : [];
+              patchBody.tags = Array.from(new Set([...existingTags, ...tags]));
+            }
+          }
+
+          if (Object.keys(patchBody).length > 0) {
             await apiRequest(`/crm/customers/${customer.id}`, {
-              method: 'DELETE'
+              method: 'PATCH',
+              body: patchBody,
             });
-          })
-      });
-    }
+          }
+        }
 
-    return actions;
-  }, [canUpdate, canDelete]);
+        if (shouldSoftSkip) {
+          await apiRequest(`/crm/customers/${customer.id}`, {
+            method: 'DELETE',
+          });
+        }
+      });
+
+      if (result.failedCount === 0) {
+        setCustomerBulkForm({
+          softSkip: false,
+          status: '',
+          source: '',
+          lastContactDate: '',
+          tagsInput: '',
+          tagMode: 'APPEND',
+        });
+        context.clearSelection();
+        context.closeBulkModal();
+      } else {
+        setCustomerBulkError('Một số khách hàng xử lý lỗi. Vui lòng kiểm tra kết quả rồi thử lại.');
+      }
+    } finally {
+      setIsApplyingCustomerBulk(false);
+    }
+  };
+
+  const renderCustomerBulkModalContent = (context: StandardTableBulkModalRenderContext<Customer>) => (
+    <div style={{ display: 'grid', gap: '0.9rem' }}>
+      <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.86rem' }}>
+        Đã chọn <strong>{context.selectedRows.length}</strong> / {context.totalLoadedRows} dòng đang tải.
+      </p>
+      {customerBulkError ? (
+        <div className="finance-alert finance-alert-danger" style={{ margin: 0 }}>
+          {customerBulkError}
+        </div>
+      ) : null}
+      {canDelete ? (
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+          <input
+            type="checkbox"
+            checked={customerBulkForm.softSkip}
+            onChange={(event) =>
+              setCustomerBulkForm((prev) => ({ ...prev, softSkip: event.target.checked }))
+            }
+          />
+          <span>BỎ QUA/Xóa</span>
+        </label>
+      ) : null}
+      {canUpdate ? (
+        <div className="field">
+          <label>Thay đổi trạng thái</label>
+          <select
+            value={customerBulkForm.status}
+            onChange={(event) =>
+              setCustomerBulkForm((prev) => ({ ...prev, status: event.target.value as CustomerCareStatus | '' }))
+            }
+          >
+            <option value="">Không cập nhật</option>
+            {CUSTOMER_STATUS_OPTIONS.map((value) => (
+              <option key={`bulk-status-${value}`} value={value}>
+                {CUSTOMER_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+      {canUpdate ? (
+        <div className="field">
+          <label>Nguồn</label>
+          <input
+            list="crm-customer-source-options"
+            value={customerBulkForm.source}
+            onChange={(event) =>
+              setCustomerBulkForm((prev) => ({ ...prev, source: event.target.value }))
+            }
+            placeholder="ONLINE / REFERRAL / ..."
+          />
+          <datalist id="crm-customer-source-options">
+            {sourceOptions.map((value) => (
+              <option key={`bulk-source-${value}`} value={value} />
+            ))}
+          </datalist>
+        </div>
+      ) : null}
+      {canUpdate ? (
+        <div className="field">
+          <label>Lần liên hệ cuối</label>
+          <input
+            type="date"
+            value={customerBulkForm.lastContactDate}
+            onChange={(event) =>
+              setCustomerBulkForm((prev) => ({ ...prev, lastContactDate: event.target.value }))
+            }
+          />
+        </div>
+      ) : null}
+      {canUpdate ? (
+        <div className="field">
+          <label>Tags (phân tách bằng dấu phẩy hoặc chấm phẩy)</label>
+          <input
+            value={customerBulkForm.tagsInput}
+            onChange={(event) =>
+              setCustomerBulkForm((prev) => ({ ...prev, tagsInput: event.target.value }))
+            }
+            placeholder="vip, da_mua"
+          />
+        </div>
+      ) : null}
+      {canUpdate ? (
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
+            <input
+              type="radio"
+              name="crm-customer-bulk-tag-mode"
+              checked={customerBulkForm.tagMode === 'APPEND'}
+              onChange={() => setCustomerBulkForm((prev) => ({ ...prev, tagMode: 'APPEND' }))}
+            />
+            <span>Append tags</span>
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
+            <input
+              type="radio"
+              name="crm-customer-bulk-tag-mode"
+              checked={customerBulkForm.tagMode === 'REPLACE'}
+              onChange={() => setCustomerBulkForm((prev) => ({ ...prev, tagMode: 'REPLACE' }))}
+            />
+            <span>Replace tags</span>
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const renderCustomerBulkModalFooter = (context: StandardTableBulkModalRenderContext<Customer>) => (
+    <>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={context.closeBulkModal}
+        disabled={isApplyingCustomerBulk}
+      >
+        Đóng
+      </button>
+      <button
+        type="button"
+        className="btn btn-primary"
+        onClick={() => void runCustomerBulkModalAction(context)}
+        disabled={isApplyingCustomerBulk || context.selectedRows.length === 0}
+      >
+        {isApplyingCustomerBulk ? 'Đang xử lý...' : 'Xác nhận'}
+      </button>
+    </>
+  );
 
   if (!canView) {
     return null;
@@ -1341,22 +1253,6 @@ export function CrmCustomersBoard() {
           <button onClick={() => setResultMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
         </div>
       )}
-
-      {actorIdentity.isAdmin && canCreate ? (
-        <ExcelImportBlock<CustomerImportError>
-          cardStyle={{ marginBottom: '1rem' }}
-          title="Import khách hàng bằng Excel (.xlsx)"
-          description="Import theo cơ chế upsert (ưu tiên phoneNormalized, fallback emailNormalized)."
-          fileLabel="File import khách hàng"
-          onDownloadTemplate={handleDownloadCustomerTemplate}
-          onFileSelected={handleImportCustomerFile}
-          isLoading={isImportingCustomers}
-          loadingText="Đang parse và import khách hàng..."
-          helperText="Các cột hỗ trợ: code, fullName, phone, email, customerStage, source, segment, tags, ownerStaffId, consentStatus, needsSummary, totalSpent, totalOrders, lastOrderAt, lastContactAt, status, zaloNickType."
-          summary={customerImportSummary}
-          formatError={(error) => `Dòng ${error.rowIndex}${error.identifier ? ` (${error.identifier})` : ''}: ${error.message}`}
-        />
-      ) : null}
 
       {/* Header Actions */}
       <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
@@ -1379,9 +1275,9 @@ export function CrmCustomersBoard() {
           <button className="btn btn-ghost">
             <Download size={16} /> Export
           </button>
-          <button className="btn btn-ghost" onClick={handleDownloadCustomerTemplate}>
-            <FileSpreadsheet size={16} /> Mẫu import
-          </button>
+          <a className="btn btn-ghost" href="/modules/crm/customers/import">
+            <Upload size={16} /> Import
+          </a>
           <a className="btn btn-ghost" href="/modules/crm/vehicles">
             <Car size={16} /> Quản lý xe
           </a>
@@ -1410,8 +1306,10 @@ export function CrmCustomersBoard() {
         enableRowSelection
         selectedRowIds={selectedRowIds}
         onSelectedRowIdsChange={setSelectedRowIds}
-        bulkActions={bulkActions}
-        showDefaultBulkUtilities
+        bulkActions={[]}
+        bulkModalTitle="Bulk Actions"
+        renderBulkModalContent={renderCustomerBulkModalContent}
+        renderBulkModalFooter={renderCustomerBulkModalFooter}
       />
 
       {/* Detail Side Panel */}

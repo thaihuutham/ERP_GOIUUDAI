@@ -9,9 +9,11 @@ import {
   Copy,
   Download,
   RotateCcw,
-  Archive
+  Archive,
+  ListChecks
 } from 'lucide-react';
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal } from './modal';
 import {
   formatBulkSummary,
   type BulkExecutionResult,
@@ -37,6 +39,14 @@ export interface StandardTableBulkAction<T> {
   execute: (rows: T[]) => Promise<BulkExecutionResult | void>;
 }
 
+export interface StandardTableBulkModalRenderContext<T> {
+  selectedRows: T[];
+  selectedRowIds: BulkRowId[];
+  totalLoadedRows: number;
+  closeBulkModal: () => void;
+  clearSelection: () => void;
+}
+
 interface StandardDataTableProps<T> {
   data: T[];
   columns: ColumnDefinition<T>[];
@@ -51,6 +61,9 @@ interface StandardDataTableProps<T> {
   bulkActions?: StandardTableBulkAction<T>[];
   showDefaultBulkUtilities?: boolean;
   hideArchivedRows?: boolean;
+  bulkModalTitle?: string;
+  renderBulkModalContent?: (context: StandardTableBulkModalRenderContext<T>) => ReactNode;
+  renderBulkModalFooter?: (context: StandardTableBulkModalRenderContext<T>) => ReactNode;
 }
 
 type ArchiveViewMode = 'active' | 'archived';
@@ -144,7 +157,10 @@ export function StandardDataTable<T extends { id: string | number }>({
   onSelectedRowIdsChange,
   bulkActions = [],
   showDefaultBulkUtilities = false,
-  hideArchivedRows = true
+  hideArchivedRows = true,
+  bulkModalTitle = 'Bulk Actions',
+  renderBulkModalContent,
+  renderBulkModalFooter
 }: StandardDataTableProps<T>) {
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
@@ -159,6 +175,7 @@ export function StandardDataTable<T extends { id: string | number }>({
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
   const [lastBulkActionKey, setLastBulkActionKey] = useState<string | null>(null);
   const [runningBulkActionKey, setRunningBulkActionKey] = useState<string | null>(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [archiveViewMode, setArchiveViewMode] = useState<ArchiveViewMode>('active');
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
@@ -437,6 +454,15 @@ export function StandardDataTable<T extends { id: string | number }>({
   const canEdit = editableKeys.length > 0 && !!onSaveRow;
   const isArchivedMode = hideArchivedRows && archiveViewMode === 'archived';
   const emptyMessage = isArchivedMode ? 'Không có dữ liệu đã xóa' : 'Không có dữ liệu';
+  const hasBulkModalControls = enableRowSelection
+    && (bulkActions.length > 0 || showDefaultBulkUtilities || Boolean(renderBulkModalContent));
+  const bulkModalContext: StandardTableBulkModalRenderContext<T> = {
+    selectedRows,
+    selectedRowIds: resolvedSelectedIds,
+    totalLoadedRows: tableData.length,
+    closeBulkModal: () => setBulkModalOpen(false),
+    clearSelection: () => updateSelectedIds([]),
+  };
 
   return (
     <div className="standard-table">
@@ -463,6 +489,18 @@ export function StandardDataTable<T extends { id: string | number }>({
               {isArchivedMode ? 'Quay về dữ liệu hiện hành' : 'Xem dữ liệu đã xóa'}
             </button>
           )}
+          {hasBulkModalControls && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={selectedRows.length === 0}
+              onClick={() => setBulkModalOpen(true)}
+              title={selectedRows.length === 0 ? 'Chọn ít nhất 1 dòng để thao tác hàng loạt' : undefined}
+            >
+              <ListChecks size={14} />
+              Bulk Actions
+            </button>
+          )}
         </div>
 
         {isColumnPickerOpen && (
@@ -484,69 +522,81 @@ export function StandardDataTable<T extends { id: string | number }>({
         )}
       </div>
 
-      {enableRowSelection && (
-        <div className="standard-table-bulk-bar">
-          <div className="standard-table-bulk-meta">
-            Đã chọn <strong>{selectedRows.length}</strong> / {tableData.length} dòng đang tải
-            {!isArchivedMode && hideArchivedRows && archivedRows.length > 0 ? (
-              <span style={{ marginLeft: '0.45rem', color: 'var(--muted)' }}>
-                (ẩn {archivedRows.length} archived)
-              </span>
-            ) : null}
-            {isArchivedMode ? (
-              <span style={{ marginLeft: '0.45rem', color: 'var(--muted)' }}>
-                (chỉ hiển thị dữ liệu đã xóa)
-              </span>
-            ) : null}
-          </div>
-          <div className="standard-table-bulk-actions">
-            {bulkActions.map((action) => (
-              <button
-                key={action.key}
-                type="button"
-                className={`btn ${
-                  action.tone === 'primary' ? 'btn-primary' : action.tone === 'danger' ? 'btn-danger' : 'btn-ghost'
-                }`}
-                disabled={selectedRows.length === 0 || runningBulkActionKey === action.key}
-                onClick={() => void runBulkAction(action, selectedRows)}
-              >
-                {runningBulkActionKey === action.key ? 'Đang xử lý...' : action.label}
-              </button>
-            ))}
+      {hasBulkModalControls && (
+        <Modal
+          open={bulkModalOpen}
+          onClose={() => setBulkModalOpen(false)}
+          title={bulkModalTitle}
+          maxWidth="680px"
+          footer={renderBulkModalFooter ? renderBulkModalFooter(bulkModalContext) : undefined}
+        >
+          {renderBulkModalContent ? (
+            renderBulkModalContent(bulkModalContext)
+          ) : (
+            <div style={{ display: 'grid', gap: '0.9rem' }}>
+              <div className="standard-table-bulk-meta">
+                Đã chọn <strong>{selectedRows.length}</strong> / {tableData.length} dòng đang tải
+                {!isArchivedMode && hideArchivedRows && archivedRows.length > 0 ? (
+                  <span style={{ marginLeft: '0.45rem', color: 'var(--muted)' }}>
+                    (ẩn {archivedRows.length} archived)
+                  </span>
+                ) : null}
+                {isArchivedMode ? (
+                  <span style={{ marginLeft: '0.45rem', color: 'var(--muted)' }}>
+                    (chỉ hiển thị dữ liệu đã xóa)
+                  </span>
+                ) : null}
+              </div>
+              <div className="standard-table-bulk-actions">
+                {bulkActions.map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    className={`btn ${
+                      action.tone === 'primary' ? 'btn-primary' : action.tone === 'danger' ? 'btn-danger' : 'btn-ghost'
+                    }`}
+                    disabled={selectedRows.length === 0 || runningBulkActionKey === action.key}
+                    onClick={() => void runBulkAction(action, selectedRows)}
+                  >
+                    {runningBulkActionKey === action.key ? 'Đang xử lý...' : action.label}
+                  </button>
+                ))}
 
-            {showDefaultBulkUtilities && (
-              <>
+                {showDefaultBulkUtilities && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={selectedRows.length === 0}
+                      onClick={() => void onCopySelectedIds()}
+                    >
+                      <Copy size={14} />
+                      Copy IDs
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={selectedRows.length === 0}
+                      onClick={onExportSelectedRows}
+                    >
+                      <Download size={14} />
+                      Export CSV
+                    </button>
+                  </>
+                )}
+
                 <button
                   type="button"
                   className="btn btn-ghost"
                   disabled={selectedRows.length === 0}
-                  onClick={() => void onCopySelectedIds()}
+                  onClick={() => updateSelectedIds([])}
                 >
-                  <Copy size={14} />
-                  Copy IDs
+                  Clear selection
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={selectedRows.length === 0}
-                  onClick={onExportSelectedRows}
-                >
-                  <Download size={14} />
-                  Export CSV
-                </button>
-              </>
-            )}
-
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={selectedRows.length === 0}
-              onClick={() => updateSelectedIds([])}
-            >
-              Clear selection
-            </button>
-          </div>
-        </div>
+              </div>
+            </div>
+          )}
+        </Modal>
       )}
 
       {bulkResult && (

@@ -100,6 +100,12 @@ export class CrmController {
     return this.crmService.softSkipCustomer(id);
   }
 
+  @Post('customers/import/preview')
+  @AuditAction({ action: 'PREVIEW_IMPORT_CUSTOMERS', entityType: 'Customer' })
+  previewImportCustomers(@Body() body: Record<string, unknown>) {
+    return this.crmService.previewCustomerImport(body);
+  }
+
   @Post('customers/import')
   @AuditAction({ action: 'IMPORT_CUSTOMERS', entityType: 'Customer' })
   importCustomers(@Body() body: Record<string, unknown>) {

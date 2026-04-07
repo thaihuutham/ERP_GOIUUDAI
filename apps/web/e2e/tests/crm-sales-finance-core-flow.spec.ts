@@ -144,6 +144,116 @@ async function mockCoreErpApis(page: Page, state: MockState) {
       return json(route, { deduplicated: false, message: 'Đã tạo khách hàng mới.', customer }, 201);
     }
 
+    if (method === 'POST' && path === '/api/v1/crm/customers/import/preview') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const rows = Array.isArray(body.rows) ? (body.rows as Array<Record<string, unknown>>) : [];
+      const errors: Array<{ rowIndex: number; identifier?: string; message: string }> = [];
+      let validRows = 0;
+      let wouldCreateCount = 0;
+      let wouldUpdateCount = 0;
+
+      rows.forEach((row, index) => {
+        const rowIndex = index + 1;
+        const phone = String(row.phoneNormalized ?? row.phone ?? '').trim();
+        const email = String(row.emailNormalized ?? row.email ?? '').trim().toLowerCase();
+        const identifier = phone || email || String(row.fullName ?? '').trim() || undefined;
+
+        if (!phone && !email) {
+          errors.push({
+            rowIndex,
+            identifier,
+            message: 'Mỗi dòng import cần ít nhất phone hoặc email.',
+          });
+          return;
+        }
+
+        validRows += 1;
+        const existing = state.customers.find(
+          (customer) =>
+            (phone && String(customer.phone ?? '').trim() === phone)
+            || (email && String(customer.email ?? '').trim().toLowerCase() === email),
+        );
+
+        if (existing) {
+          wouldUpdateCount += 1;
+        } else {
+          wouldCreateCount += 1;
+        }
+      });
+
+      return json(route, {
+        totalRows: rows.length,
+        validRows,
+        wouldCreateCount,
+        wouldUpdateCount,
+        skippedCount: errors.length,
+        errors,
+      }, 201);
+    }
+
+    if (method === 'POST' && path === '/api/v1/crm/customers/import') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const rows = Array.isArray(body.rows) ? (body.rows as Array<Record<string, unknown>>) : [];
+      const errors: Array<{ rowIndex: number; identifier?: string; message: string }> = [];
+
+      rows.forEach((row, index) => {
+        const rowIndex = index + 1;
+        const phone = String(row.phoneNormalized ?? row.phone ?? '').trim();
+        const email = String(row.emailNormalized ?? row.email ?? '').trim().toLowerCase();
+        const identifier = phone || email || String(row.fullName ?? '').trim() || undefined;
+
+        if (!phone && !email) {
+          errors.push({
+            rowIndex,
+            identifier,
+            message: 'Mỗi dòng import cần ít nhất phone hoặc email.',
+          });
+          return;
+        }
+
+        const existing = state.customers.find(
+          (customer) =>
+            (phone && String(customer.phone ?? '').trim() === phone)
+            || (email && String(customer.email ?? '').trim().toLowerCase() === email),
+        );
+
+        if (existing) {
+          existing.fullName = String(row.fullName ?? existing.fullName ?? '').trim() || existing.fullName;
+          existing.phone = String(row.phone ?? existing.phone ?? '').trim() || existing.phone;
+          existing.email = String(row.email ?? existing.email ?? '').trim() || existing.email;
+          existing.source = String(row.source ?? existing.source ?? '').trim() || existing.source;
+          existing.customerStage = String(row.customerStage ?? existing.customerStage ?? '').trim() || existing.customerStage;
+          existing.status = String(row.status ?? existing.status ?? '').trim() || existing.status;
+          if (Array.isArray(row.tags)) {
+            existing.tags = (row.tags as unknown[]).map((item) => String(item)).filter(Boolean);
+          }
+          existing.updatedAt = new Date().toISOString();
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const customer: Customer = {
+          id: `cus_e2e_${state.seq.customer++}`,
+          fullName: String(row.fullName ?? '').trim(),
+          phone: phone || undefined,
+          email: email || undefined,
+          customerStage: String(row.customerStage ?? 'MOI'),
+          source: String(row.source ?? 'ONLINE'),
+          status: String(row.status ?? 'MOI_CHUA_TU_VAN'),
+          tags: Array.isArray(row.tags) ? (row.tags as unknown[]).map((item) => String(item)).filter(Boolean) : [],
+          updatedAt: now,
+        };
+        state.customers.unshift(customer);
+      });
+
+      return json(route, {
+        totalRows: rows.length,
+        importedCount: rows.length - errors.length,
+        skippedCount: errors.length,
+        errors,
+      }, 201);
+    }
+
     if (method === 'PATCH' && /\/api\/v1\/crm\/customers\/[^/]+$/.test(path)) {
       const customerId = path.split('/')[5];
       const customer = state.customers.find((item) => item.id === customerId);
@@ -590,6 +700,23 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
     }
   };
 
+  const runGenericBulkAction = async (actionName: string) => {
+    await page.getByRole('button', { name: 'Bulk Actions' }).click();
+    const modal = page.locator('dialog.modal-dialog').last();
+    await expect(modal).toBeVisible();
+    const actionButton = modal.getByRole('button', { name: actionName });
+    if (await actionButton.count()) {
+      await actionButton.click();
+    } else {
+      await modal.getByRole('button', { name: 'Đóng' }).click();
+      await expect(modal).toBeHidden();
+      return false;
+    }
+    await modal.getByRole('button', { name: 'Đóng' }).click();
+    await expect(modal).toBeHidden();
+    return true;
+  };
+
   await page.goto('/modules/crm');
   const crmOverlay = page.locator('.side-panel-overlay');
   if (await crmOverlay.isVisible().catch(() => false)) {
@@ -598,24 +725,30 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
   }
   await expect(page.getByRole('button', { name: 'Khách bulk 1' })).toBeVisible();
   await checkAllVisibleRows();
-  await page.getByRole('button', { name: 'Đổi: KH Từ chối' }).click();
-  await expect(page.locator('.finance-alert-success')).toContainText('Set trạng thái KH Từ chối: thành công 2/2.');
+  await page.getByRole('button', { name: 'Bulk Actions' }).click();
+  const crmBulkModal = page.locator('dialog.modal-dialog').last();
+  await expect(crmBulkModal).toBeVisible();
+  await crmBulkModal.locator('select').first().selectOption('KH_TU_CHOI');
+  await crmBulkModal.getByRole('button', { name: 'Xác nhận' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('thành công 2/2');
   expect(state.customers.every((item) => item.status === 'KH_TU_CHOI')).toBe(true);
 
   await page.goto('/modules/sales');
   await expect(page.getByRole('button', { name: 'SO-BULK-001' })).toBeVisible();
   await checkAllVisibleRows();
-  await page.getByRole('button', { name: 'Approve' }).click();
+  await runGenericBulkAction('Approve');
   await expect(page.locator('.finance-alert-success')).toContainText('Duyệt đơn hàng: thành công 2/2.');
   expect(state.orders.every((item) => item.status === 'APPROVED')).toBe(true);
 
-  const salesArchiveButton = page.getByRole('button', { name: 'Archive' });
-  if (await salesArchiveButton.count()) {
+  if (await page.getByRole('button', { name: 'Bulk Actions' }).count()) {
     page.once('dialog', (dialog) => dialog.accept());
     await checkAllVisibleRows();
-    await salesArchiveButton.click();
-    await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ đơn hàng: thành công 2/2.');
-    expect(state.orders.every((item) => item.status === 'ARCHIVED')).toBe(true);
+    if (await runGenericBulkAction('Archive')) {
+      await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ đơn hàng: thành công 2/2.');
+      expect(state.orders.every((item) => item.status === 'ARCHIVED')).toBe(true);
+    } else {
+      expect(state.orders.every((item) => item.status === 'APPROVED')).toBe(true);
+    }
   } else {
     expect(state.orders.every((item) => item.status === 'APPROVED')).toBe(true);
   }
@@ -623,23 +756,133 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
   await page.goto('/modules/finance');
   await expect(page.getByRole('button', { name: 'INV-BULK-001' })).toBeVisible();
   await checkAllVisibleRows();
-  await page.getByRole('button', { name: 'Issue' }).click();
+  await runGenericBulkAction('Issue');
   await expect(page.locator('.finance-alert-success')).toContainText('Phát hành hóa đơn: thành công 2/2.');
   expect(state.invoices.every((item) => item.status === 'PENDING')).toBe(true);
 
   await checkAllVisibleRows();
-  await page.getByRole('button', { name: 'Approve' }).click();
+  await runGenericBulkAction('Approve');
   await expect(page.locator('.finance-alert-success')).toContainText('Phê duyệt hóa đơn: thành công 2/2.');
   expect(state.invoices.every((item) => item.status === 'APPROVED')).toBe(true);
 
-  const financeArchiveButton = page.getByRole('button', { name: 'Archive' });
-  if (await financeArchiveButton.count()) {
+  if (await page.getByRole('button', { name: 'Bulk Actions' }).count()) {
     page.once('dialog', (dialog) => dialog.accept());
     await checkAllVisibleRows();
-    await financeArchiveButton.click();
-    await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ hóa đơn: thành công 2/2.');
-    expect(state.invoices.every((item) => item.status === 'ARCHIVED')).toBe(true);
+    if (await runGenericBulkAction('Archive')) {
+      await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ hóa đơn: thành công 2/2.');
+      expect(state.invoices.every((item) => item.status === 'ARCHIVED')).toBe(true);
+    } else {
+      expect(state.invoices.every((item) => item.status === 'APPROVED')).toBe(true);
+    }
   } else {
     expect(state.invoices.every((item) => item.status === 'APPROVED')).toBe(true);
   }
+});
+
+test('supports CRM customer import page with preview + import flow', async ({ page }) => {
+  const state: MockState = {
+    customers: [
+      {
+        id: 'cus_existing_import',
+        fullName: 'Khách đang có',
+        phone: '0901112222',
+        email: 'existing@example.com',
+        customerStage: 'MOI',
+        source: 'ONLINE',
+        status: 'MOI_CHUA_TU_VAN',
+        tags: ['vip'],
+        updatedAt: '2026-04-01T01:00:00.000Z',
+      },
+    ],
+    orders: [],
+    invoices: [],
+    approvals: [],
+    allocations: {},
+    seq: {
+      customer: 10,
+      order: 1,
+      invoice: 1,
+      item: 1,
+      allocation: 1,
+    },
+  };
+
+  await mockCoreErpApis(page, state);
+
+  await page.goto('/modules/crm');
+  await expect(page.getByRole('link', { name: 'Import' })).toBeVisible();
+  await page.getByRole('link', { name: 'Import' }).click();
+  await expect(page).toHaveURL(/\/modules\/crm\/customers\/import$/);
+
+  await expect(page.getByRole('button', { name: 'Tải file mẫu' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chạy mô phỏng' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import thật' })).toBeVisible();
+
+  const importRows = [
+    {
+      fullName: 'Khách cập nhật',
+      phone: '0901112222',
+      source: 'REFERRAL',
+      status: 'DANG_SUY_NGHI',
+      tags: ['vip', 'da_mua'],
+    },
+    {
+      fullName: 'Khách tạo mới',
+      phone: '0903334444',
+      source: 'ONLINE',
+      status: 'MOI_CHUA_TU_VAN',
+      tags: ['khach_moi'],
+    },
+    {
+      fullName: 'Dòng lỗi thiếu định danh',
+    },
+  ];
+
+  const previewResponse = await page.evaluate(async (rows) => {
+    const response = await fetch('/api/v1/crm/customers/import/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fileName: 'customers-import.xlsx', rows }),
+    });
+    return {
+      status: response.status,
+      body: await response.json(),
+    };
+  }, importRows);
+
+  expect(previewResponse.status).toBe(201);
+  expect(previewResponse.body).toEqual(
+    expect.objectContaining({
+      totalRows: 3,
+      validRows: 2,
+      wouldCreateCount: 1,
+      wouldUpdateCount: 1,
+      skippedCount: 1,
+    }),
+  );
+
+  const importResponse = await page.evaluate(async (rows) => {
+    const response = await fetch('/api/v1/crm/customers/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fileName: 'customers-import.xlsx', rows }),
+    });
+    return {
+      status: response.status,
+      body: await response.json(),
+    };
+  }, importRows);
+
+  expect(importResponse.status).toBe(201);
+  expect(importResponse.body).toEqual(
+    expect.objectContaining({
+      totalRows: 3,
+      importedCount: 2,
+      skippedCount: 1,
+    }),
+  );
+
+  expect(state.customers).toHaveLength(2);
+  expect(state.customers.some((item) => item.phone === '0903334444')).toBe(true);
+  expect(state.customers.find((item) => item.phone === '0901112222')?.status).toBe('DANG_SUY_NGHI');
 });

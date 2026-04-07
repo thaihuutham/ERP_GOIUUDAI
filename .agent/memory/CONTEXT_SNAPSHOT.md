@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-07 18:30 +07
+- Time: 2026-04-07 19:40 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-07_1827_codex.md`
+- Session Log: `.agent/sessions/2026-04-07_1940_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,58 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-07 19:40 (CRM Customers Import page riêng + simulate preview + chuẩn hóa bulk modal)
+- User request:
+  - implement plan:
+    - bỏ bulk inline bar trên toàn `StandardDataTable`;
+    - thêm nút `Bulk Actions` mở modal;
+    - CRM Customers có custom bulk modal;
+    - tách trang import CRM Customers sang route riêng;
+    - thêm backend simulate dry-run endpoint.
+- Đã xử lý:
+  - Global table:
+    - `apps/web/components/ui/standard-data-table.tsx`
+    - bỏ render `standard-table-bulk-bar`, thêm `Bulk Actions` button + modal.
+    - bổ sung hook custom modal content/footer để module đặc thù override.
+  - CRM Customers:
+    - `apps/web/components/crm-customers-board.tsx`
+    - bỏ import inline block cũ;
+    - thêm `Import` cạnh `Export` -> `/modules/crm/customers/import`;
+    - custom bulk modal fields:
+      - `BỎ QUA/Xóa`,
+      - `Thay đổi trạng thái`,
+      - `Nguồn`,
+      - `Lần liên hệ cuối`,
+      - `Tags` với mode `Append/Replace`.
+    - submit rule: patch selected rows trước, sau đó soft-skip (delete) nếu có tick.
+  - Import route riêng:
+    - `apps/web/app/modules/crm/customers/import/page.tsx`
+    - `apps/web/components/crm-customers-import-board.tsx`
+    - `apps/web/lib/crm-customer-import.ts`
+    - hỗ trợ upload Excel, tải file mẫu, simulate preview, import thật, summary + row errors.
+  - API:
+    - `apps/api/src/modules/crm/crm.controller.ts`
+    - `apps/api/src/modules/crm/crm.service.ts`
+    - thêm `POST /crm/customers/import/preview` (admin only).
+    - refactor pipeline import để tái sử dụng chung giữa preview (dry-run) và import (write).
+  - Tests:
+    - `apps/api/test/crm.service.test.ts`
+    - `apps/api/test/crm.api-flow.test.ts`
+    - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.service.test.ts test/crm.api-flow.test.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+- Notes:
+  - Không thêm schema/field DB mới cho bulk modal CRM.
+  - Không triển khai `Đánh dấu mất liên lạc` trong phase này.
 
 ## Update 2026-04-07 18:27 (Fix unhandled scheduler/pool khi chạy chung crm.api-flow + search-hybrid.api-flow)
 - User request:

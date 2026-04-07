@@ -199,4 +199,45 @@ describe('CRM API flow integration', () => {
     expect(taxonomyRes.body.customerTaxonomy.stages).toEqual(['MOI', 'DANG_CHAM_SOC', 'CHOT_DON']);
     expect(taxonomyRes.body.customerTaxonomy.sources).toEqual(['ONLINE', 'REFERRAL']);
   });
+
+  it('supports customer import preview endpoint', async () => {
+    const adminToken = makeAuthToken('ADMIN');
+
+    vi.spyOn(crmService, 'previewCustomerImport').mockResolvedValue({
+      totalRows: 2,
+      validRows: 1,
+      wouldCreateCount: 1,
+      wouldUpdateCount: 0,
+      skippedCount: 1,
+      errors: [
+        {
+          rowIndex: 2,
+          identifier: '0900000000',
+          message: 'Mỗi dòng import cần ít nhất phone hoặc email.',
+        },
+      ],
+    } as any);
+
+    const previewRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/customers/import/preview')
+      .set('authorization', `Bearer ${adminToken}`)
+      .send({
+        rows: [
+          { fullName: 'Khach 1', phone: '0912345678' },
+          { fullName: 'Khach 2' },
+        ],
+      });
+
+    expect(previewRes.status).toBe(201);
+    expect(previewRes.body).toEqual(
+      expect.objectContaining({
+        totalRows: 2,
+        validRows: 1,
+        wouldCreateCount: 1,
+        wouldUpdateCount: 0,
+        skippedCount: 1,
+      }),
+    );
+    expect(previewRes.body.errors).toHaveLength(1);
+  });
 });

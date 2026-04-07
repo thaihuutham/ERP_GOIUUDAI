@@ -152,6 +152,116 @@ describe('CrmService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('blocks customer import preview when actor is not admin', async () => {
+    const prisma = makePrismaMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const cls = {
+      get: vi.fn((key: string) =>
+        key === AUTH_USER_CONTEXT_KEY
+          ? {
+              userId: 'manager_1',
+              role: UserRole.MANAGER,
+            }
+          : undefined),
+    };
+
+    const service = new CrmService(
+      prisma as any,
+      search as any,
+      runtimeSettings as any,
+      undefined,
+      cls as any,
+    );
+
+    await expect(
+      service.previewCustomerImport({
+        rows: [{ fullName: 'Khach A', phone: '0901234567' }],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('previews customer import without writing database changes', async () => {
+    const prisma = makePrismaMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const cls = {
+      get: vi.fn((key: string) =>
+        key === AUTH_USER_CONTEXT_KEY
+          ? {
+              userId: 'admin_1',
+              role: UserRole.ADMIN,
+            }
+          : undefined),
+    };
+
+    prisma.client.customer.findFirst.mockImplementation(async ({ where }: any) => {
+      if (where?.phoneNormalized === '0909999999') {
+        return {
+          id: 'cus_existing_1',
+          fullName: 'Khach cu',
+          phone: '0909999999',
+          phoneNormalized: '0909999999',
+          email: null,
+          emailNormalized: null,
+          customerStage: 'MOI',
+          source: 'ONLINE',
+          segment: null,
+          ownerStaffId: null,
+          consentStatus: null,
+          tags: [],
+          status: CustomerCareStatus.MOI_CHUA_TU_VAN,
+          zaloNickType: CustomerZaloNickType.CHUA_KIEM_TRA,
+          totalSpent: null,
+          totalOrders: 0,
+          lastOrderAt: null,
+          lastContactAt: null,
+        } as any;
+      }
+      return null;
+    });
+
+    const service = new CrmService(
+      prisma as any,
+      search as any,
+      runtimeSettings as any,
+      undefined,
+      cls as any,
+    );
+
+    const preview = await service.previewCustomerImport({
+      rows: [
+        {
+          fullName: 'Khach moi',
+          phone: '0901234567',
+          source: 'ONLINE',
+        },
+        {
+          fullName: 'Khach cu',
+          phone: '0909999999',
+          status: 'DANG_SUY_NGHI',
+        },
+        {
+          fullName: 'Khong hop le',
+        },
+      ],
+    });
+
+    expect(preview).toEqual(
+      expect.objectContaining({
+        totalRows: 3,
+        validRows: 2,
+        wouldCreateCount: 1,
+        wouldUpdateCount: 1,
+        skippedCount: 1,
+      }),
+    );
+    expect(preview.errors).toHaveLength(1);
+    expect(prisma.client.customer.updateMany).not.toHaveBeenCalled();
+    expect(prisma.client.customer.create).not.toHaveBeenCalled();
+    expect(search.syncCustomerUpsert).not.toHaveBeenCalled();
+  });
+
   it('imports customer row and forces customerStage=DA_MUA when status is DONG_Y_CHUYEN_THANH_KH', async () => {
     const prisma = makePrismaMock();
     const search = makeSearchMock();
