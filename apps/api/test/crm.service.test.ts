@@ -8,6 +8,11 @@ function makePrismaMock() {
   return {
     getTenantId: vi.fn().mockReturnValue('tenant_demo_company'),
     client: {
+      setting: {
+        findFirst: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        create: vi.fn().mockResolvedValue({ id: 'setting_1' }),
+      },
       customer: {
         findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn(),
@@ -76,6 +81,41 @@ describe('CrmService', () => {
         }),
       }),
     );
+  });
+
+  it('applies customFilter in database query and skips hybrid branch', async () => {
+    const prisma = makePrismaMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    search.shouldUseHybridSearch.mockResolvedValue(true);
+
+    const service = new CrmService(
+      prisma as any,
+      search as any,
+      runtimeSettings as any,
+    );
+
+    await service.listCustomers(
+      { limit: 20, q: 'bao hiem' } as any,
+      {
+        customFilter: JSON.stringify({
+          logic: 'AND',
+          conditions: [
+            { field: 'vehicleKinds', operator: 'equals', value: 'AUTO' },
+            { field: 'insurancePolicyNumbers', operator: 'contains', value: 'GCN-01' },
+          ],
+        }),
+      },
+    );
+
+    expect(search.searchCustomerIds).not.toHaveBeenCalled();
+    expect(prisma.client.customer.findMany).toHaveBeenCalledTimes(1);
+
+    const findManyArgs = prisma.client.customer.findMany.mock.calls[0][0];
+    const whereString = JSON.stringify(findManyArgs.where);
+    expect(whereString).toContain('"vehicleKind":"AUTO"');
+    expect(whereString).toContain('"soGCN"');
+    expect(whereString).toContain('"contains":"GCN-01"');
   });
 
   it('soft skips customer by setting SAI_SO_KHONG_TON_TAI_BO_QUA_XOA and syncs search', async () => {
@@ -331,6 +371,110 @@ describe('CrmService', () => {
         totalRows: 1,
         importedCount: 1,
         skippedCount: 0,
+      }),
+    );
+  });
+
+  it('stores customer saved filters by current actor and toggles default filter', async () => {
+    const prisma = makePrismaMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const cls = {
+      get: vi.fn((key: string) =>
+        key === AUTH_USER_CONTEXT_KEY
+          ? {
+              userId: 'staff_42',
+              role: UserRole.STAFF,
+              email: 'staff42@local.erp',
+            }
+          : undefined),
+    };
+
+    prisma.client.setting.findFirst.mockResolvedValue(null);
+    const service = new CrmService(
+      prisma as any,
+      search as any,
+      runtimeSettings as any,
+      undefined,
+      cls as any,
+    );
+
+    const upsertResult = await service.upsertCustomerSavedFilter({
+      name: 'Khach da mua gan day',
+      logic: 'AND',
+      isDefault: true,
+      conditions: [
+        {
+          field: 'status',
+          operator: 'equals',
+          value: 'DONG_Y_CHUYEN_THANH_KH',
+        },
+      ],
+    });
+
+    expect(upsertResult.defaultFilterId).toBeTruthy();
+    expect(upsertResult.items).toHaveLength(1);
+    expect(upsertResult.items[0]?.isDefault).toBe(true);
+
+    expect(prisma.client.setting.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          settingKey: expect.stringMatching(/^crm\.customers\.filters\.v1\.staff_42$/),
+        }),
+      }),
+    );
+  });
+
+  it('deletes customer saved filter and clears default when target is default', async () => {
+    const prisma = makePrismaMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const cls = {
+      get: vi.fn((key: string) =>
+        key === AUTH_USER_CONTEXT_KEY
+          ? {
+              userId: 'manager_1',
+              role: UserRole.MANAGER,
+              email: 'manager_1@local.erp',
+            }
+          : undefined),
+    };
+
+    prisma.client.setting.findFirst.mockResolvedValueOnce({
+      id: 'setting_1',
+      settingValue: {
+        version: 1,
+        defaultFilterId: 'filter_default',
+        filters: [
+          {
+            id: 'filter_default',
+            name: 'Default filter',
+            logic: 'AND',
+            conditions: [
+              { field: 'status', operator: 'equals', value: 'MOI_CHUA_TU_VAN' },
+            ],
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      },
+    });
+    prisma.client.setting.findFirst.mockResolvedValueOnce({ id: 'setting_1' });
+
+    const service = new CrmService(
+      prisma as any,
+      search as any,
+      runtimeSettings as any,
+      undefined,
+      cls as any,
+    );
+
+    const result = await service.deleteCustomerSavedFilter('filter_default');
+    expect(result.items).toHaveLength(0);
+    expect(result.defaultFilterId).toBeNull();
+    expect(prisma.client.setting.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'setting_1' },
       }),
     );
   });

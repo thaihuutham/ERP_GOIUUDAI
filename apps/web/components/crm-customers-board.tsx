@@ -15,6 +15,8 @@ import {
   History,
   Trash2,
   Car,
+  Filter,
+  Save,
 } from 'lucide-react';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { readStoredAuthSession } from '../lib/auth-session';
@@ -25,6 +27,7 @@ import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkModalRenderContext } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
+import { Modal } from './ui/modal';
 import { Badge, statusToBadge, type BadgeVariant } from './ui/badge';
 
 type CustomerCareStatus =
@@ -62,6 +65,23 @@ type Customer = {
   lastContactAt?: string | null;
   status?: CustomerCareStatus | string | null;
   zaloNickType?: CustomerZaloNickType | string | null;
+  contractCount?: number | null;
+  activeContractCount?: number | null;
+  nextContractExpiryAt?: string | null;
+  contractPackageNames?: string | null;
+  contractServicePhones?: string | null;
+  contractProductTypes?: string | null;
+  contractExpiryDates?: string | null;
+  telecomExpiryDates?: string | null;
+  digitalServiceNames?: string | null;
+  insuranceExpiryDates?: string | null;
+  autoInsuranceExpiryDates?: string | null;
+  motoInsuranceExpiryDates?: string | null;
+  insurancePolicyNumbers?: string | null;
+  vehicleCount?: number | null;
+  vehicleTypes?: string | null;
+  vehicleKinds?: string | null;
+  vehiclePlateNumbers?: string | null;
   updatedAt?: string | null;
 };
 
@@ -184,6 +204,88 @@ type CustomerBulkFormState = {
   tagMode: CustomerBulkTagMode;
 };
 
+type CustomerFilterLogic = 'AND' | 'OR';
+type CustomerFilterFieldKey =
+  | 'fullName'
+  | 'phone'
+  | 'email'
+  | 'customerStage'
+  | 'source'
+  | 'status'
+  | 'zaloNickType'
+  | 'segment'
+  | 'tags'
+  | 'lastContactAt'
+  | 'updatedAt'
+  | 'contractPackageNames'
+  | 'contractProductTypes'
+  | 'nextContractExpiryAt'
+  | 'contractServicePhones'
+  | 'vehicleKinds'
+  | 'vehicleTypes'
+  | 'vehiclePlateNumbers'
+  | 'insuranceExpiryDates'
+  | 'insurancePolicyNumbers'
+  | 'digitalServiceNames';
+type CustomerFilterOperator =
+  | 'contains'
+  | 'equals'
+  | 'not_equals'
+  | 'is_empty'
+  | 'is_not_empty'
+  | 'before'
+  | 'after'
+  | 'on'
+  | 'between'
+  | 'has'
+  | 'not_has';
+type CustomerFilterInputType = 'text' | 'enum' | 'date' | 'tag';
+
+type CustomerFilterCondition = {
+  id: string;
+  field: CustomerFilterFieldKey;
+  operator: CustomerFilterOperator;
+  value: string;
+  valueTo: string;
+};
+
+type CustomerFilterDraft = {
+  id?: string;
+  name: string;
+  logic: CustomerFilterLogic;
+  conditions: CustomerFilterCondition[];
+  isDefault: boolean;
+};
+
+type CustomerSavedFilter = {
+  id: string;
+  name: string;
+  logic: CustomerFilterLogic;
+  conditions: Array<{
+    field: CustomerFilterFieldKey;
+    operator: CustomerFilterOperator;
+    value?: string;
+    valueTo?: string;
+  }>;
+  isDefault?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type CustomerSavedFiltersPayload = {
+  items?: CustomerSavedFilter[];
+  defaultFilterId?: string | null;
+};
+
+type CustomerFilterFieldConfig = {
+  value: CustomerFilterFieldKey;
+  label: string;
+  group: 'Thông tin khách hàng' | 'Quan hệ khách hàng';
+  inputType: CustomerFilterInputType;
+  operators: CustomerFilterOperator[];
+  options?: string[];
+};
+
 const CUSTOMER_STATUS_OPTIONS: CustomerCareStatus[] = [
   'MOI_CHUA_TU_VAN',
   'DANG_SUY_NGHI',
@@ -235,12 +337,216 @@ const CUSTOMER_ZALO_NICK_BADGE: Record<CustomerZaloNickType, BadgeVariant> = {
   CHAN_NGUOI_LA: 'info',
   GUI_DUOC_TIN_NHAN: 'success',
 };
-const CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.customer-table-settings.v4';
+const CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.customer-table-settings.v5';
+const CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS = [
+  'code',
+  'fullName',
+  'phone',
+  'email',
+  'customerStage',
+  'totalSpent',
+  'status',
+  'zaloNickType',
+  'updatedAt',
+];
 const FETCH_LIMIT = 200;
 const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
 const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
 const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
 const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+const CUSTOMER_FILTER_OPERATOR_LABELS: Record<CustomerFilterOperator, string> = {
+  contains: 'Chứa',
+  equals: 'Bằng',
+  not_equals: 'Khác',
+  is_empty: 'Để trống',
+  is_not_empty: 'Không trống',
+  before: 'Trước ngày',
+  after: 'Sau ngày',
+  on: 'Đúng ngày',
+  between: 'Trong khoảng',
+  has: 'Có chứa',
+  not_has: 'Không chứa',
+};
+const CONTRACT_PRODUCT_TYPE_OPTIONS = ['TELECOM_PACKAGE', 'AUTO_INSURANCE', 'MOTO_INSURANCE', 'DIGITAL_SERVICE'];
+const VEHICLE_KIND_OPTIONS = ['AUTO', 'MOTO'];
+
+function createCustomerFilterConditionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `cond_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const FALLBACK_FILTER_FIELD_CONFIG: CustomerFilterFieldConfig = {
+  value: 'fullName',
+  label: 'Tên khách hàng',
+  group: 'Thông tin khách hàng',
+  inputType: 'text',
+  operators: ['contains'],
+};
+
+function buildCustomerFilterFieldConfigs(
+  stageOptions: string[],
+  sourceOptions: string[],
+  customerTagOptions: string[]
+): CustomerFilterFieldConfig[] {
+  return [
+    {
+      value: 'fullName',
+      label: 'Tên khách hàng',
+      group: 'Thông tin khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'phone',
+      label: 'Số điện thoại',
+      group: 'Thông tin khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'email',
+      label: 'Email',
+      group: 'Thông tin khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'customerStage',
+      label: 'Giai đoạn',
+      group: 'Thông tin khách hàng',
+      inputType: 'enum',
+      operators: ['equals', 'not_equals', 'is_empty', 'is_not_empty'],
+      options: stageOptions,
+    },
+    {
+      value: 'source',
+      label: 'Nguồn',
+      group: 'Thông tin khách hàng',
+      inputType: 'enum',
+      operators: ['equals', 'not_equals', 'is_empty', 'is_not_empty'],
+      options: sourceOptions,
+    },
+    {
+      value: 'status',
+      label: 'Trạng thái CSKH',
+      group: 'Thông tin khách hàng',
+      inputType: 'enum',
+      operators: ['equals', 'not_equals'],
+      options: CUSTOMER_STATUS_OPTIONS,
+    },
+    {
+      value: 'zaloNickType',
+      label: 'Loại nick Zalo',
+      group: 'Thông tin khách hàng',
+      inputType: 'enum',
+      operators: ['equals', 'not_equals'],
+      options: CUSTOMER_ZALO_NICK_TYPE_OPTIONS,
+    },
+    {
+      value: 'segment',
+      label: 'Phân khúc',
+      group: 'Thông tin khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'tags',
+      label: 'Tags khách hàng',
+      group: 'Thông tin khách hàng',
+      inputType: 'tag',
+      operators: ['has', 'not_has'],
+      options: customerTagOptions,
+    },
+    {
+      value: 'lastContactAt',
+      label: 'Lần liên hệ cuối',
+      group: 'Thông tin khách hàng',
+      inputType: 'date',
+      operators: ['before', 'after', 'on', 'between', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'updatedAt',
+      label: 'Ngày cập nhật',
+      group: 'Thông tin khách hàng',
+      inputType: 'date',
+      operators: ['before', 'after', 'on', 'between'],
+    },
+    {
+      value: 'contractPackageNames',
+      label: 'Gói cước',
+      group: 'Quan hệ khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'contractProductTypes',
+      label: 'Loại hợp đồng',
+      group: 'Quan hệ khách hàng',
+      inputType: 'enum',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+      options: CONTRACT_PRODUCT_TYPE_OPTIONS,
+    },
+    {
+      value: 'nextContractExpiryAt',
+      label: 'HĐ hết hạn gần nhất',
+      group: 'Quan hệ khách hàng',
+      inputType: 'date',
+      operators: ['before', 'after', 'on', 'between', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'contractServicePhones',
+      label: 'SĐT dịch vụ',
+      group: 'Quan hệ khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'vehicleKinds',
+      label: 'Nhóm xe',
+      group: 'Quan hệ khách hàng',
+      inputType: 'enum',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+      options: VEHICLE_KIND_OPTIONS,
+    },
+    {
+      value: 'vehicleTypes',
+      label: 'Loại xe',
+      group: 'Quan hệ khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'vehiclePlateNumbers',
+      label: 'Biển số xe',
+      group: 'Quan hệ khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'insuranceExpiryDates',
+      label: 'Ngày hết hạn bảo hiểm',
+      group: 'Quan hệ khách hàng',
+      inputType: 'date',
+      operators: ['before', 'after', 'on', 'between', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'insurancePolicyNumbers',
+      label: 'Số GCN bảo hiểm',
+      group: 'Quan hệ khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+    {
+      value: 'digitalServiceNames',
+      label: 'Dịch vụ số',
+      group: 'Quan hệ khách hàng',
+      inputType: 'text',
+      operators: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+    },
+  ];
+}
 
 function toNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') {
@@ -307,6 +613,17 @@ function formatContractProductLabel(productType: string | null | undefined) {
     default:
       return normalized || 'Khác';
   }
+}
+
+function formatContractProductList(value: string | null | undefined) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return '--';
+  }
+  return normalized
+    .split(',')
+    .map((item) => formatContractProductLabel(item))
+    .join(', ');
 }
 
 function formatContractReference(contract: CrmCustomerContract, vehicleMap: Map<string, CrmCustomerVehicle>) {
@@ -431,8 +748,267 @@ function readBulkTags(input: string) {
         .split(/[;,]/)
         .map((item) => item.trim().toLowerCase())
         .filter(Boolean)
-    )
+      )
   );
+}
+
+function createDefaultFilterCondition(
+  fieldConfigs: CustomerFilterFieldConfig[],
+  field: CustomerFilterFieldKey = 'fullName'
+): CustomerFilterCondition {
+  const fieldConfig = fieldConfigs.find((item) => item.value === field) ?? fieldConfigs[0] ?? FALLBACK_FILTER_FIELD_CONFIG;
+  return {
+    id: createCustomerFilterConditionId(),
+    field: fieldConfig.value,
+    operator: fieldConfig.operators[0] ?? 'contains',
+    value: '',
+    valueTo: '',
+  };
+}
+
+function toCustomerFilterDraft(filter: CustomerSavedFilter, fieldConfigs: CustomerFilterFieldConfig[]): CustomerFilterDraft {
+  return {
+    id: filter.id,
+    name: filter.name,
+    logic: filter.logic === 'OR' ? 'OR' : 'AND',
+    isDefault: Boolean(filter.isDefault),
+    conditions: (filter.conditions ?? []).map((condition) => {
+      const fallback = createDefaultFilterCondition(fieldConfigs);
+      const field = condition.field ?? fallback.field;
+      const fieldConfig = fieldConfigs.find((item) => item.value === field) ?? fieldConfigs[0] ?? FALLBACK_FILTER_FIELD_CONFIG;
+      const operator = fieldConfig.operators.includes(condition.operator ?? fallback.operator)
+        ? (condition.operator as CustomerFilterOperator)
+        : fieldConfig.operators[0];
+      return {
+        id: createCustomerFilterConditionId(),
+        field: fieldConfig.value,
+        operator,
+        value: String(condition.value ?? ''),
+        valueTo: String(condition.valueTo ?? ''),
+      };
+    }),
+  };
+}
+
+function toCustomerFilterQueryPayload(draft: CustomerFilterDraft | null) {
+  if (!draft || !Array.isArray(draft.conditions) || draft.conditions.length === 0) {
+    return null;
+  }
+
+  const conditions = draft.conditions
+    .map((condition) => ({
+      field: condition.field,
+      operator: condition.operator,
+      value: condition.value.trim() || undefined,
+      valueTo: condition.valueTo.trim() || undefined,
+    }))
+    .filter((condition) => condition.field && condition.operator);
+
+  if (conditions.length === 0) {
+    return null;
+  }
+
+  return {
+    logic: draft.logic === 'OR' ? 'OR' : 'AND',
+    conditions,
+  };
+}
+
+function splitListValue(input: unknown) {
+  if (Array.isArray(input)) {
+    return input.map((item) => String(item ?? '').trim()).filter(Boolean);
+  }
+  return String(input ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toComparableString(input: unknown) {
+  if (input === null || input === undefined) {
+    return '';
+  }
+  if (Array.isArray(input)) {
+    return input.map((item) => String(item ?? '').trim()).filter(Boolean).join(', ');
+  }
+  return String(input).trim();
+}
+
+function normalizeDateOnly(input: string) {
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function resolveConditionFieldValue(customer: Customer, field: CustomerFilterFieldKey): unknown {
+  switch (field) {
+    case 'fullName':
+      return customer.fullName;
+    case 'phone':
+      return customer.phone;
+    case 'email':
+      return customer.email;
+    case 'customerStage':
+      return customer.customerStage;
+    case 'source':
+      return customer.source;
+    case 'status':
+      return customer.status;
+    case 'zaloNickType':
+      return customer.zaloNickType;
+    case 'segment':
+      return customer.segment;
+    case 'tags':
+      return customer.tags ?? [];
+    case 'lastContactAt':
+      return customer.lastContactAt;
+    case 'updatedAt':
+      return customer.updatedAt;
+    case 'contractPackageNames':
+      return customer.contractPackageNames;
+    case 'contractProductTypes':
+      return customer.contractProductTypes;
+    case 'nextContractExpiryAt':
+      return customer.nextContractExpiryAt;
+    case 'contractServicePhones':
+      return customer.contractServicePhones;
+    case 'vehicleKinds':
+      return customer.vehicleKinds;
+    case 'vehicleTypes':
+      return customer.vehicleTypes;
+    case 'vehiclePlateNumbers':
+      return customer.vehiclePlateNumbers;
+    case 'insuranceExpiryDates':
+      return customer.insuranceExpiryDates;
+    case 'insurancePolicyNumbers':
+      return customer.insurancePolicyNumbers;
+    case 'digitalServiceNames':
+      return customer.digitalServiceNames;
+    default:
+      return '';
+  }
+}
+
+function evaluateFilterCondition(
+  customer: Customer,
+  condition: CustomerFilterCondition,
+  fieldConfig: CustomerFilterFieldConfig
+) {
+  const rawValue = resolveConditionFieldValue(customer, condition.field);
+  const inputValue = condition.value.trim();
+  const inputValueTo = condition.valueTo.trim();
+
+  if (fieldConfig.inputType === 'date') {
+    const values = splitListValue(rawValue).map(normalizeDateOnly).filter(Boolean);
+    const hasValue = values.length > 0;
+    if (condition.operator === 'is_empty') {
+      return !hasValue;
+    }
+    if (condition.operator === 'is_not_empty') {
+      return hasValue;
+    }
+    if (!inputValue) {
+      return true;
+    }
+    const from = normalizeDateOnly(inputValue);
+    if (!from) {
+      return true;
+    }
+    if (condition.operator === 'before') {
+      return values.some((value) => value <= from);
+    }
+    if (condition.operator === 'after') {
+      return values.some((value) => value >= from);
+    }
+    if (condition.operator === 'on') {
+      return values.some((value) => value === from);
+    }
+    if (condition.operator === 'between') {
+      const to = normalizeDateOnly(inputValueTo || inputValue);
+      if (!to) {
+        return true;
+      }
+      const left = from <= to ? from : to;
+      const right = from <= to ? to : from;
+      return values.some((value) => value >= left && value <= right);
+    }
+    return true;
+  }
+
+  if (fieldConfig.inputType === 'tag') {
+    const values = splitListValue(rawValue).map((item) => item.toLowerCase());
+    if (!inputValue) {
+      return true;
+    }
+    const keyword = inputValue.toLowerCase();
+    if (condition.operator === 'has') {
+      return values.includes(keyword);
+    }
+    if (condition.operator === 'not_has') {
+      return !values.includes(keyword);
+    }
+    return true;
+  }
+
+  const sourceText = toComparableString(rawValue);
+  const sourceTokens = splitListValue(rawValue).map((item) => item.toLowerCase());
+  const normalizedSource = sourceText.toLowerCase();
+  const normalizedInput = inputValue.toLowerCase();
+  const hasSourceValue = sourceTokens.length > 0;
+
+  if (condition.operator === 'is_empty') {
+    return !hasSourceValue;
+  }
+  if (condition.operator === 'is_not_empty') {
+    return hasSourceValue;
+  }
+  if (!inputValue) {
+    return true;
+  }
+  if (condition.operator === 'contains') {
+    return normalizedSource.includes(normalizedInput);
+  }
+  if (condition.operator === 'equals') {
+    return sourceTokens.some((item) => item === normalizedInput);
+  }
+  if (condition.operator === 'not_equals') {
+    return sourceTokens.every((item) => item !== normalizedInput);
+  }
+  return true;
+}
+
+function applyCustomerFilterDraft(
+  customers: Customer[],
+  draft: CustomerFilterDraft | null,
+  fieldConfigs: CustomerFilterFieldConfig[]
+) {
+  if (!draft || !Array.isArray(draft.conditions) || draft.conditions.length === 0) {
+    return customers;
+  }
+
+  const validConditions = draft.conditions.filter((condition) => {
+    const fieldConfig = fieldConfigs.find((item) => item.value === condition.field);
+    return Boolean(fieldConfig && fieldConfig.operators.includes(condition.operator));
+  });
+  if (validConditions.length === 0) {
+    return customers;
+  }
+
+  return customers.filter((customer) => {
+    const results = validConditions.map((condition) => {
+      const fieldConfig = fieldConfigs.find((item) => item.value === condition.field);
+      if (!fieldConfig) {
+        return true;
+      }
+      return evaluateFilterCondition(customer, condition, fieldConfig);
+    });
+    if (draft.logic === 'OR') {
+      return results.some(Boolean);
+    }
+    return results.every(Boolean);
+  });
 }
 
 export function CrmCustomersBoard() {
@@ -490,6 +1066,27 @@ export function CrmCustomersBoard() {
     segment: '',
     tags: []
   });
+  const customerFilterFieldConfigs = useMemo(
+    () => buildCustomerFilterFieldConfigs(stageOptions, sourceOptions, customerTagOptions),
+    [customerTagOptions, sourceOptions, stageOptions]
+  );
+  const [savedCustomerFilters, setSavedCustomerFilters] = useState<CustomerSavedFilter[]>([]);
+  const [defaultCustomerFilterId, setDefaultCustomerFilterId] = useState<string | null>(null);
+  const [selectedSavedFilterId, setSelectedSavedFilterId] = useState('');
+  const [appliedSavedFilterId, setAppliedSavedFilterId] = useState('');
+  const [appliedCustomFilter, setAppliedCustomFilter] = useState<CustomerFilterDraft | null>(null);
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
+  const [isLoadingCustomerFilters, setIsLoadingCustomerFilters] = useState(false);
+  const [isSavingCustomerFilter, setIsSavingCustomerFilter] = useState(false);
+  const [filterMessage, setFilterMessage] = useState<string | null>(null);
+  const [filterErrorMessage, setFilterErrorMessage] = useState<string | null>(null);
+  const [customerFilterDraft, setCustomerFilterDraft] = useState<CustomerFilterDraft>({
+    name: '',
+    logic: 'AND',
+    isDefault: false,
+    conditions: [createDefaultFilterCondition(customerFilterFieldConfigs)],
+  });
+  const [hasInitializedDefaultFilter, setHasInitializedDefaultFilter] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -501,6 +1098,35 @@ export function CrmCustomersBoard() {
   useEffect(() => {
     loadTaxonomy();
   }, [canView]);
+
+  useEffect(() => {
+    void loadCustomerSavedFilters();
+  }, [canView]);
+
+  useEffect(() => {
+    setCustomerFilterDraft((prev) => {
+      const nextConditions = prev.conditions
+        .map((condition) => {
+          const fieldConfig = customerFilterFieldConfigs.find((item) => item.value === condition.field);
+          if (!fieldConfig) {
+            return createDefaultFilterCondition(customerFilterFieldConfigs);
+          }
+          const nextOperator = fieldConfig.operators.includes(condition.operator)
+            ? condition.operator
+            : fieldConfig.operators[0];
+          return {
+            ...condition,
+            operator: nextOperator,
+          };
+        });
+      return {
+        ...prev,
+        conditions: nextConditions.length > 0
+          ? nextConditions
+          : [createDefaultFilterCondition(customerFilterFieldConfigs)],
+      };
+    });
+  }, [customerFilterFieldConfigs]);
 
   useEffect(() => {
     setIsDetailEditing(false);
@@ -524,8 +1150,23 @@ export function CrmCustomersBoard() {
     if (!canView) return;
     setIsLoading(true);
     try {
+      const appliedSavedFilter = savedCustomerFilters.find((item) => item.id === appliedSavedFilterId) ?? null;
+      const activeDraft = appliedSavedFilter
+        ? toCustomerFilterDraft(appliedSavedFilter, customerFilterFieldConfigs)
+        : (appliedCustomFilter
+            ? {
+                ...appliedCustomFilter,
+                conditions: appliedCustomFilter.conditions.map((condition) => ({ ...condition })),
+              }
+            : null);
+      const customFilter = toCustomerFilterQueryPayload(activeDraft);
       const payload = await apiRequest<any>('/crm/customers', {
-        query: { q: search, status: status !== 'ALL' ? status : undefined, limit: FETCH_LIMIT }
+        query: {
+          q: search,
+          status: status !== 'ALL' ? status : undefined,
+          limit: FETCH_LIMIT,
+          customFilter: customFilter ? JSON.stringify(customFilter) : undefined,
+        }
       });
       setCustomers(normalizeListPayload(payload) as Customer[]);
     } catch (error) {
@@ -561,6 +1202,243 @@ export function CrmCustomersBoard() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải taxonomy CRM');
       setCustomerTagOptions(DEFAULT_CUSTOMER_TAG_OPTIONS);
+    }
+  };
+
+  const normalizeSavedFiltersPayload = (
+    payload: CustomerSavedFiltersPayload
+  ): { items: CustomerSavedFilter[]; defaultFilterId: string | null } => {
+    const list = Array.isArray(payload.items) ? payload.items : [];
+    const normalized: CustomerSavedFilter[] = list
+      .map((item): CustomerSavedFilter => {
+        const logic: CustomerFilterLogic = item.logic === 'OR' ? 'OR' : 'AND';
+        return {
+          id: String(item.id ?? '').trim(),
+          name: String(item.name ?? '').trim(),
+          logic,
+          conditions: Array.isArray(item.conditions) ? item.conditions : [],
+          isDefault: Boolean(item.isDefault),
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        };
+      })
+      .filter((item) => item.id.length > 0 && item.name.length > 0);
+    const defaultId = String(payload.defaultFilterId ?? '').trim() || null;
+    return {
+      items: normalized,
+      defaultFilterId: normalized.some((item) => item.id === defaultId) ? defaultId : null,
+    };
+  };
+
+  const loadCustomerSavedFilters = async () => {
+    if (!canView) return;
+    setIsLoadingCustomerFilters(true);
+    try {
+      const payload = await apiRequest<CustomerSavedFiltersPayload>('/crm/customers/filters');
+      const normalized = normalizeSavedFiltersPayload(payload);
+      setSavedCustomerFilters(normalized.items);
+      setDefaultCustomerFilterId(normalized.defaultFilterId);
+      if (!hasInitializedDefaultFilter) {
+        if (normalized.defaultFilterId) {
+          setSelectedSavedFilterId(normalized.defaultFilterId);
+          setAppliedSavedFilterId(normalized.defaultFilterId);
+          setAppliedCustomFilter(null);
+          const defaultFilter = normalized.items.find((item) => item.id === normalized.defaultFilterId);
+          if (defaultFilter) {
+            setCustomerFilterDraft(toCustomerFilterDraft(defaultFilter, customerFilterFieldConfigs));
+          }
+        }
+        setHasInitializedDefaultFilter(true);
+      }
+      setFilterErrorMessage(null);
+    } catch (error) {
+      setFilterErrorMessage(error instanceof Error ? error.message : 'Lỗi tải bộ lọc khách hàng');
+    } finally {
+      setIsLoadingCustomerFilters(false);
+    }
+  };
+
+  const validateFilterDraft = (draft: CustomerFilterDraft) => {
+    if (!Array.isArray(draft.conditions) || draft.conditions.length === 0) {
+      return 'Vui lòng thêm ít nhất 1 điều kiện.';
+    }
+    for (const [index, condition] of draft.conditions.entries()) {
+      const fieldConfig = customerFilterFieldConfigs.find((item) => item.value === condition.field);
+      if (!fieldConfig) {
+        return `Điều kiện #${index + 1} có field không hợp lệ.`;
+      }
+      if (!fieldConfig.operators.includes(condition.operator)) {
+        return `Điều kiện #${index + 1} có toán tử không hợp lệ.`;
+      }
+      if (condition.operator === 'is_empty' || condition.operator === 'is_not_empty') {
+        continue;
+      }
+      if (!condition.value.trim()) {
+        return `Điều kiện #${index + 1} đang thiếu giá trị.`;
+      }
+      if (condition.operator === 'between' && !condition.valueTo.trim()) {
+        return `Điều kiện #${index + 1} cần thêm giá trị cuối khoảng ngày.`;
+      }
+    }
+    return null;
+  };
+
+  const resetFilterDraft = () => {
+    setCustomerFilterDraft({
+      name: '',
+      logic: 'AND',
+      isDefault: false,
+      conditions: [createDefaultFilterCondition(customerFilterFieldConfigs)],
+    });
+  };
+
+  const openFilterModal = () => {
+    if (!isFilterModalOpen) {
+      const pickedSavedFilter = savedCustomerFilters.find((item) => item.id === selectedSavedFilterId)
+        ?? savedCustomerFilters.find((item) => item.id === appliedSavedFilterId)
+        ?? null;
+      if (pickedSavedFilter) {
+        setCustomerFilterDraft(toCustomerFilterDraft(pickedSavedFilter, customerFilterFieldConfigs));
+      } else if (appliedCustomFilter) {
+        setCustomerFilterDraft({
+          ...appliedCustomFilter,
+          conditions: appliedCustomFilter.conditions.map((condition) => ({ ...condition })),
+        });
+      } else {
+        resetFilterDraft();
+      }
+    }
+    setFilterMessage(null);
+    setFilterErrorMessage(null);
+    setIsFilterModalOpen(true);
+  };
+
+  const applyCurrentFilterDraft = () => {
+    const validationError = validateFilterDraft(customerFilterDraft);
+    if (validationError) {
+      setFilterErrorMessage(validationError);
+      return;
+    }
+    setAppliedSavedFilterId('');
+    setAppliedCustomFilter({
+      ...customerFilterDraft,
+      id: undefined,
+      isDefault: false,
+      conditions: customerFilterDraft.conditions.map((condition) => ({ ...condition })),
+    });
+    setFilterMessage('Đã áp dụng bộ lọc tạm thời.');
+    setErrorMessage(null);
+    setIsFilterModalOpen(false);
+  };
+
+  const applySelectedSavedFilter = () => {
+    if (!selectedSavedFilterId) {
+      setFilterErrorMessage('Vui lòng chọn bộ lọc đã lưu để áp dụng.');
+      return;
+    }
+    setAppliedSavedFilterId(selectedSavedFilterId);
+    setAppliedCustomFilter(null);
+    setFilterMessage('Đã áp dụng bộ lọc đã lưu.');
+    setErrorMessage(null);
+    setIsFilterModalOpen(false);
+  };
+
+  const clearAppliedCustomerFilter = () => {
+    setAppliedSavedFilterId('');
+    setAppliedCustomFilter(null);
+    setSelectedSavedFilterId('');
+    setFilterMessage('Đã xóa bộ lọc đang áp dụng.');
+    setErrorMessage(null);
+  };
+
+  const saveCustomerFilterDraft = async () => {
+    const validationError = validateFilterDraft(customerFilterDraft);
+    if (validationError) {
+      setFilterErrorMessage(validationError);
+      return;
+    }
+    if (!customerFilterDraft.name.trim()) {
+      setFilterErrorMessage('Vui lòng nhập tên bộ lọc trước khi lưu.');
+      return;
+    }
+    setIsSavingCustomerFilter(true);
+    try {
+      const payload = await apiRequest<CustomerSavedFiltersPayload & { item?: CustomerSavedFilter }>('/crm/customers/filters', {
+        method: 'POST',
+        body: {
+          id: customerFilterDraft.id,
+          name: customerFilterDraft.name.trim(),
+          logic: customerFilterDraft.logic,
+          isDefault: customerFilterDraft.isDefault,
+          conditions: customerFilterDraft.conditions.map((condition) => ({
+            field: condition.field,
+            operator: condition.operator,
+            value: condition.value.trim() || undefined,
+            valueTo: condition.valueTo.trim() || undefined,
+          })),
+        },
+      });
+      const normalized = normalizeSavedFiltersPayload(payload);
+      setSavedCustomerFilters(normalized.items);
+      setDefaultCustomerFilterId(normalized.defaultFilterId);
+      const savedItem = payload.item && payload.item.id
+        ? normalized.items.find((item) => item.id === payload.item?.id) ?? null
+        : null;
+      const nextSelectedId = savedItem?.id
+        ?? normalized.defaultFilterId
+        ?? customerFilterDraft.id
+        ?? '';
+      setSelectedSavedFilterId(nextSelectedId);
+      if (nextSelectedId) {
+        setAppliedSavedFilterId(nextSelectedId);
+        setAppliedCustomFilter(null);
+      }
+      if (savedItem) {
+        setCustomerFilterDraft(toCustomerFilterDraft(savedItem, customerFilterFieldConfigs));
+      }
+      setFilterErrorMessage(null);
+      setFilterMessage('Đã lưu bộ lọc CRM.');
+      setIsFilterModalOpen(false);
+    } catch (error) {
+      setFilterErrorMessage(error instanceof Error ? error.message : 'Không thể lưu bộ lọc CRM.');
+    } finally {
+      setIsSavingCustomerFilter(false);
+    }
+  };
+
+  const deleteSelectedSavedFilter = async () => {
+    if (!selectedSavedFilterId) {
+      setFilterErrorMessage('Vui lòng chọn bộ lọc đã lưu để xóa.');
+      return;
+    }
+    const selected = savedCustomerFilters.find((item) => item.id === selectedSavedFilterId);
+    if (!selected) {
+      setFilterErrorMessage('Không tìm thấy bộ lọc đã chọn.');
+      return;
+    }
+    if (!window.confirm(`Xóa bộ lọc "${selected.name}"?`)) {
+      return;
+    }
+
+    setIsSavingCustomerFilter(true);
+    try {
+      const payload = await apiRequest<CustomerSavedFiltersPayload>(`/crm/customers/filters/${selectedSavedFilterId}`, {
+        method: 'DELETE',
+      });
+      const normalized = normalizeSavedFiltersPayload(payload);
+      setSavedCustomerFilters(normalized.items);
+      setDefaultCustomerFilterId(normalized.defaultFilterId);
+      if (appliedSavedFilterId === selectedSavedFilterId) {
+        setAppliedSavedFilterId('');
+      }
+      setSelectedSavedFilterId('');
+      setFilterMessage('Đã xóa bộ lọc CRM.');
+      setFilterErrorMessage(null);
+      resetFilterDraft();
+    } catch (error) {
+      setFilterErrorMessage(error instanceof Error ? error.message : 'Không thể xóa bộ lọc CRM.');
+    } finally {
+      setIsSavingCustomerFilter(false);
     }
   };
 
@@ -818,7 +1696,7 @@ export function CrmCustomersBoard() {
   useEffect(() => {
     const timer = setTimeout(loadCustomers, 300);
     return () => clearTimeout(timer);
-  }, [search, status]);
+  }, [appliedCustomFilter, appliedSavedFilterId, customerFilterFieldConfigs, savedCustomerFilters, search, status]);
 
   useEffect(() => {
     if (!initialCustomerId || hasAppliedInitialCustomerId) {
@@ -899,31 +1777,61 @@ export function CrmCustomersBoard() {
       detailCustomer?.tags?.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean) ?? [];
     return Array.from(new Set([...customerTagOptions, ...selectedTags]));
   }, [customerTagOptions, detailCustomer]);
+  const appliedSavedFilter = useMemo(
+    () => savedCustomerFilters.find((item) => item.id === appliedSavedFilterId) ?? null,
+    [appliedSavedFilterId, savedCustomerFilters]
+  );
+  const normalizedAppliedFilterDraft = useMemo(() => {
+    if (appliedSavedFilter) {
+      return toCustomerFilterDraft(appliedSavedFilter, customerFilterFieldConfigs);
+    }
+    if (appliedCustomFilter) {
+      return {
+        ...appliedCustomFilter,
+        conditions: appliedCustomFilter.conditions.map((condition) => ({ ...condition })),
+      };
+    }
+    return null;
+  }, [appliedCustomFilter, appliedSavedFilter, customerFilterFieldConfigs]);
+  const filteredCustomers = useMemo(
+    () => applyCustomerFilterDraft(customers, normalizedAppliedFilterDraft, customerFilterFieldConfigs),
+    [customerFilterFieldConfigs, customers, normalizedAppliedFilterDraft]
+  );
+  const appliedFilterLabel = appliedSavedFilter
+    ? appliedSavedFilter.name
+    : normalizedAppliedFilterDraft
+      ? 'Bộ lọc tạm'
+      : null;
+  const appliedFilterConditionCount = normalizedAppliedFilterDraft?.conditions.length ?? 0;
 
   const columns: ColumnDefinition<Customer>[] = [
-    { key: 'code', label: 'Mã KH' },
+    { key: 'code', label: 'Mã KH', group: 'Thông tin khách hàng' },
     { 
       key: 'fullName', 
       label: 'Khách hàng', 
+      group: 'Thông tin khách hàng',
       isLink: true,
       type: 'text'
     },
-    { key: 'phone', label: 'Điện thoại', type: 'text' },
-    { key: 'email', label: 'Email', type: 'text' },
+    { key: 'phone', label: 'Điện thoại', group: 'Thông tin khách hàng', type: 'text' },
+    { key: 'email', label: 'Email', group: 'Thông tin khách hàng', type: 'text' },
     { 
       key: 'customerStage', 
       label: 'Giai đoạn',
+      group: 'Thông tin khách hàng',
       type: 'select',
       options: customerStageColumnOptions
     },
     { 
       key: 'totalSpent', 
       label: 'Chi tiêu',
+      group: 'Thông tin khách hàng',
       render: (c) => toCurrency(c.totalSpent)
     },
     { 
       key: 'status', 
       label: 'Trạng thái',
+      group: 'Thông tin khách hàng',
       type: 'select',
       options: CUSTOMER_STATUS_OPTIONS.map((value) => ({
         label: CUSTOMER_STATUS_LABELS[value],
@@ -934,6 +1842,7 @@ export function CrmCustomersBoard() {
     {
       key: 'zaloNickType',
       label: 'Loại nick Zalo',
+      group: 'Thông tin khách hàng',
       type: 'select',
       options: CUSTOMER_ZALO_NICK_TYPE_OPTIONS.map((value) => ({
         label: CUSTOMER_ZALO_NICK_TYPE_LABELS[value],
@@ -945,9 +1854,117 @@ export function CrmCustomersBoard() {
         </Badge>
       )
     },
+    {
+      key: 'contractCount',
+      label: 'Số hợp đồng',
+      group: 'Hợp đồng',
+      description: 'Tổng số hợp đồng của khách hàng',
+      render: (c) => toNumber(c.contractCount)
+    },
+    {
+      key: 'activeContractCount',
+      label: 'Hợp đồng active',
+      group: 'Hợp đồng',
+      description: 'Số hợp đồng còn hiệu lực',
+      render: (c) => toNumber(c.activeContractCount)
+    },
+    {
+      key: 'nextContractExpiryAt',
+      label: 'HĐ hết hạn gần nhất',
+      group: 'Hợp đồng',
+      description: 'Ngày hết hạn hợp đồng active gần nhất',
+      render: (c) => toDateTime(c.nextContractExpiryAt)
+    },
+    {
+      key: 'contractPackageNames',
+      label: 'Gói cước',
+      group: 'Hợp đồng',
+      description: 'Gộp tất cả gói cước liên quan khách hàng'
+    },
+    {
+      key: 'contractServicePhones',
+      label: 'SĐT dịch vụ',
+      group: 'Hợp đồng',
+      description: 'Gộp các số điện thoại dịch vụ'
+    },
+    {
+      key: 'contractProductTypes',
+      label: 'Loại hợp đồng',
+      group: 'Hợp đồng',
+      description: 'Gộp các loại sản phẩm hợp đồng',
+      render: (c) => formatContractProductList(c.contractProductTypes)
+    },
+    {
+      key: 'contractExpiryDates',
+      label: 'Ngày hết hạn HĐ',
+      group: 'Hợp đồng',
+      description: 'Gộp ngày hết hạn từ các hợp đồng'
+    },
+    {
+      key: 'telecomExpiryDates',
+      label: 'Ngày hết hạn gói cước',
+      group: 'Hợp đồng',
+      description: 'Gộp ngày hết hạn thuê bao viễn thông'
+    },
+    {
+      key: 'digitalServiceNames',
+      label: 'Dịch vụ số',
+      group: 'Hợp đồng',
+      description: 'Gộp service/plan/provider của dịch vụ số'
+    },
+    {
+      key: 'vehicleCount',
+      label: 'Số xe',
+      group: 'Xe',
+      description: 'Số phương tiện đang active',
+      render: (c) => toNumber(c.vehicleCount)
+    },
+    {
+      key: 'vehicleTypes',
+      label: 'Loại xe',
+      group: 'Xe',
+      description: 'Gộp tất cả loại xe theo hồ sơ khách'
+    },
+    {
+      key: 'vehicleKinds',
+      label: 'Nhóm xe',
+      group: 'Xe',
+      description: 'Ô tô / xe máy...'
+    },
+    {
+      key: 'vehiclePlateNumbers',
+      label: 'Biển số xe',
+      group: 'Xe',
+      description: 'Gộp biển số các xe của khách'
+    },
+    {
+      key: 'insuranceExpiryDates',
+      label: 'Ngày hết hạn bảo hiểm',
+      group: 'Bảo hiểm',
+      description: 'Gộp ngày hết hạn bảo hiểm ô tô + xe máy'
+    },
+    {
+      key: 'autoInsuranceExpiryDates',
+      label: 'Hết hạn BH ô tô',
+      group: 'Bảo hiểm',
+      description: 'Gộp ngày hết hạn riêng bảo hiểm ô tô'
+    },
+    {
+      key: 'motoInsuranceExpiryDates',
+      label: 'Hết hạn BH xe máy',
+      group: 'Bảo hiểm',
+      description: 'Gộp ngày hết hạn riêng bảo hiểm xe máy'
+    },
+    {
+      key: 'insurancePolicyNumbers',
+      label: 'Số GCN bảo hiểm',
+      group: 'Bảo hiểm',
+      description: 'Gộp số giấy chứng nhận bảo hiểm'
+    },
     { 
       key: 'updatedAt', 
       label: 'Cập nhật',
+      group: 'Thông tin khách hàng',
       render: (c) => toDateTime(c.updatedAt)
     }
   ];
@@ -1234,6 +2251,70 @@ export function CrmCustomersBoard() {
     </>
   );
 
+  const upsertFilterDraftCondition = (
+    conditionId: string,
+    updater: (current: CustomerFilterCondition) => CustomerFilterCondition
+  ) => {
+    setCustomerFilterDraft((prev) => ({
+      ...prev,
+      conditions: prev.conditions.map((condition) => (
+        condition.id === conditionId ? updater(condition) : condition
+      )),
+    }));
+  };
+
+  const changeFilterConditionField = (conditionId: string, field: CustomerFilterFieldKey) => {
+    const fieldConfig = customerFilterFieldConfigs.find((item) => item.value === field)
+      ?? customerFilterFieldConfigs[0]
+      ?? FALLBACK_FILTER_FIELD_CONFIG;
+    upsertFilterDraftCondition(conditionId, (current) => ({
+      ...current,
+      field: fieldConfig.value,
+      operator: fieldConfig.operators[0] ?? current.operator,
+      value: '',
+      valueTo: '',
+    }));
+  };
+
+  const changeFilterConditionOperator = (conditionId: string, operator: CustomerFilterOperator) => {
+    upsertFilterDraftCondition(conditionId, (current) => ({
+      ...current,
+      operator,
+      ...(operator !== 'between' ? { valueTo: '' } : {}),
+    }));
+  };
+
+  const addFilterDraftCondition = () => {
+    setCustomerFilterDraft((prev) => ({
+      ...prev,
+      conditions: [...prev.conditions, createDefaultFilterCondition(customerFilterFieldConfigs)],
+    }));
+  };
+
+  const removeFilterDraftCondition = (conditionId: string) => {
+    setCustomerFilterDraft((prev) => {
+      const next = prev.conditions.filter((condition) => condition.id !== conditionId);
+      return {
+        ...prev,
+        conditions: next.length > 0 ? next : [createDefaultFilterCondition(customerFilterFieldConfigs)],
+      };
+    });
+  };
+
+  const loadSelectedSavedFilterIntoDraft = () => {
+    if (!selectedSavedFilterId) {
+      setFilterErrorMessage('Vui lòng chọn bộ lọc đã lưu.');
+      return;
+    }
+    const selected = savedCustomerFilters.find((item) => item.id === selectedSavedFilterId);
+    if (!selected) {
+      setFilterErrorMessage('Không tìm thấy bộ lọc đã lưu.');
+      return;
+    }
+    setCustomerFilterDraft(toCustomerFilterDraft(selected, customerFilterFieldConfigs));
+    setFilterErrorMessage(null);
+  };
+
   if (!canView) {
     return null;
   }
@@ -1296,9 +2377,40 @@ export function CrmCustomersBoard() {
 
       {/* Table Data */}
       <StandardDataTable
-        data={customers}
+        data={filteredCustomers}
         columns={columns}
         storageKey={CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY}
+        defaultVisibleColumnKeys={CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS}
+        toolbarLeftContent={(
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className={`btn ${appliedFilterLabel ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={openFilterModal}
+            >
+              <Filter size={14} />
+              Bộ lọc
+              {appliedFilterConditionCount > 0 ? ` (${appliedFilterConditionCount})` : ''}
+            </button>
+            {appliedFilterLabel ? (
+              <>
+                <span
+                  className="finance-status-pill finance-status-pill-info"
+                  style={{ margin: 0 }}
+                >
+                  {appliedFilterLabel}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={clearAppliedCustomerFilter}
+                >
+                  Xóa lọc
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
         isLoading={isLoading}
         onRowClick={(c) => setSelectedCustomer(c)}
         editableKeys={canUpdate ? ['fullName', 'phone', 'email', 'customerStage', 'status', 'zaloNickType'] : []}
@@ -1311,6 +2423,266 @@ export function CrmCustomersBoard() {
         renderBulkModalContent={renderCustomerBulkModalContent}
         renderBulkModalFooter={renderCustomerBulkModalFooter}
       />
+
+      <Modal
+        open={isFilterModalOpen}
+        onClose={() => setIsFilterModalOpen(false)}
+        title="Bộ lọc khách hàng"
+        maxWidth="880px"
+        footer={(
+          <>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setIsFilterModalOpen(false)}
+              disabled={isSavingCustomerFilter}
+            >
+              Đóng
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={applyCurrentFilterDraft}
+              disabled={isSavingCustomerFilter}
+            >
+              Áp dụng tạm
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={saveCustomerFilterDraft}
+              disabled={isSavingCustomerFilter}
+            >
+              <Save size={14} />
+              {isSavingCustomerFilter ? 'Đang lưu...' : 'Lưu bộ lọc'}
+            </button>
+          </>
+        )}
+      >
+        <div style={{ display: 'grid', gap: '0.95rem' }}>
+          {filterErrorMessage ? (
+            <div className="finance-alert finance-alert-danger" style={{ margin: 0 }}>
+              {filterErrorMessage}
+            </div>
+          ) : null}
+          {filterMessage ? (
+            <div className="finance-alert finance-alert-success" style={{ margin: 0 }}>
+              {filterMessage}
+            </div>
+          ) : null}
+
+          <div style={{ display: 'grid', gap: '0.55rem', padding: '0.7rem', border: '1px solid var(--line)', borderRadius: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+              <strong>Bộ lọc đã lưu</strong>
+              {isLoadingCustomerFilters ? <span style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>Đang tải...</span> : null}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.45rem' }}>
+              <select
+                value={selectedSavedFilterId}
+                onChange={(event) => setSelectedSavedFilterId(event.target.value)}
+              >
+                <option value="">-- Chọn bộ lọc đã lưu --</option>
+                {savedCustomerFilters.map((filter) => (
+                  <option key={filter.id} value={filter.id}>
+                    {filter.name}{filter.isDefault ? ' (Mặc định)' : ''}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="btn btn-ghost" onClick={applySelectedSavedFilter} disabled={!selectedSavedFilterId}>
+                Áp dụng
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={loadSelectedSavedFilterIntoDraft} disabled={!selectedSavedFilterId}>
+                Chỉnh sửa
+              </button>
+              <button type="button" className="btn btn-danger" onClick={deleteSelectedSavedFilter} disabled={!selectedSavedFilterId || isSavingCustomerFilter}>
+                <Trash2 size={14} />
+                Xóa
+              </button>
+            </div>
+            {defaultCustomerFilterId ? (
+              <small style={{ color: 'var(--muted)' }}>
+                Mặc định hiện tại: {savedCustomerFilters.find((item) => item.id === defaultCustomerFilterId)?.name ?? 'Không xác định'}
+              </small>
+            ) : (
+              <small style={{ color: 'var(--muted)' }}>Chưa có bộ lọc mặc định.</small>
+            )}
+            <div>
+              <button type="button" className="btn btn-ghost" onClick={clearAppliedCustomerFilter}>
+                Xóa bộ lọc đang áp dụng
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '0.6rem', padding: '0.7rem', border: '1px solid var(--line)', borderRadius: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '0.55rem' }}>
+              <div className="field">
+                <label>Tên bộ lọc</label>
+                <input
+                  value={customerFilterDraft.name}
+                  onChange={(event) =>
+                    setCustomerFilterDraft((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  placeholder="Ví dụ: Khách có xe sắp hết bảo hiểm"
+                />
+              </div>
+              <div className="field">
+                <label>Logic điều kiện</label>
+                <select
+                  value={customerFilterDraft.logic}
+                  onChange={(event) =>
+                    setCustomerFilterDraft((prev) => ({
+                      ...prev,
+                      logic: event.target.value === 'OR' ? 'OR' : 'AND',
+                    }))
+                  }
+                >
+                  <option value="AND">AND (thỏa tất cả)</option>
+                  <option value="OR">OR (thỏa một trong các điều kiện)</option>
+                </select>
+              </div>
+            </div>
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
+              <input
+                type="checkbox"
+                checked={customerFilterDraft.isDefault}
+                onChange={(event) =>
+                  setCustomerFilterDraft((prev) => ({ ...prev, isDefault: event.target.checked }))
+                }
+              />
+              <span>Đặt làm bộ lọc mặc định (tự áp dụng lần sau)</span>
+            </label>
+
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
+              {customerFilterDraft.conditions.map((condition, index) => {
+                const fieldConfig = customerFilterFieldConfigs.find((item) => item.value === condition.field)
+                  ?? customerFilterFieldConfigs[0]
+                  ?? FALLBACK_FILTER_FIELD_CONFIG;
+                const operatorOptions = fieldConfig.operators;
+                const showValueInput = !['is_empty', 'is_not_empty'].includes(condition.operator);
+                const showValueTo = condition.operator === 'between';
+                const enumOptions = fieldConfig.options ?? [];
+
+                return (
+                  <div
+                    key={condition.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: showValueTo ? '1.2fr 1fr 1fr 1fr auto' : '1.25fr 1fr 1.25fr auto',
+                      gap: '0.45rem',
+                      alignItems: 'end',
+                    }}
+                  >
+                    <div className="field">
+                      <label>Field #{index + 1}</label>
+                      <select
+                        value={condition.field}
+                        onChange={(event) => changeFilterConditionField(condition.id, event.target.value as CustomerFilterFieldKey)}
+                      >
+                        {Array.from(new Set(customerFilterFieldConfigs.map((item) => item.group))).map((groupName) => (
+                          <optgroup key={groupName} label={groupName}>
+                            {customerFilterFieldConfigs
+                              .filter((item) => item.group === groupName)
+                              .map((item) => (
+                                <option key={item.value} value={item.value}>
+                                  {item.label}
+                                </option>
+                              ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label>Toán tử</label>
+                      <select
+                        value={condition.operator}
+                        onChange={(event) => changeFilterConditionOperator(condition.id, event.target.value as CustomerFilterOperator)}
+                      >
+                        {operatorOptions.map((operator) => (
+                          <option key={`${condition.id}-${operator}`} value={operator}>
+                            {CUSTOMER_FILTER_OPERATOR_LABELS[operator]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {showValueInput ? (
+                      <div className="field">
+                        <label>Giá trị</label>
+                        {fieldConfig.inputType === 'enum' ? (
+                          <select
+                            value={condition.value}
+                            onChange={(event) =>
+                              upsertFilterDraftCondition(condition.id, (current) => ({ ...current, value: event.target.value }))
+                            }
+                          >
+                            <option value="">-- Chọn --</option>
+                            {enumOptions.map((option) => (
+                              <option key={`${condition.id}-enum-${option}`} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : fieldConfig.inputType === 'date' ? (
+                          <input
+                            type="date"
+                            value={condition.value}
+                            onChange={(event) =>
+                              upsertFilterDraftCondition(condition.id, (current) => ({ ...current, value: event.target.value }))
+                            }
+                          />
+                        ) : (
+                          <input
+                            list={fieldConfig.inputType === 'tag' ? 'crm-filter-tag-options' : undefined}
+                            value={condition.value}
+                            onChange={(event) =>
+                              upsertFilterDraftCondition(condition.id, (current) => ({ ...current, value: event.target.value }))
+                            }
+                            placeholder="Nhập giá trị..."
+                          />
+                        )}
+                      </div>
+                    ) : null}
+
+                    {showValueTo ? (
+                      <div className="field">
+                        <label>Đến ngày</label>
+                        <input
+                          type="date"
+                          value={condition.valueTo}
+                          onChange={(event) =>
+                            upsertFilterDraftCondition(condition.id, (current) => ({ ...current, valueTo: event.target.value }))
+                          }
+                        />
+                      </div>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => removeFilterDraftCondition(condition.id)}
+                      title="Xóa điều kiện"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+              <datalist id="crm-filter-tag-options">
+                {customerTagOptions.map((tag) => (
+                  <option key={`crm-filter-tag-${tag}`} value={tag} />
+                ))}
+              </datalist>
+              <div>
+                <button type="button" className="btn btn-ghost" onClick={addFilterDraftCondition}>
+                  <Plus size={14} />
+                  Thêm điều kiện
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       {/* Detail Side Panel */}
       <SidePanel

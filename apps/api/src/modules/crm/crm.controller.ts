@@ -24,8 +24,31 @@ export class CrmController {
   ) {
     const entityIdsPromise = this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.CUSTOMER, req?.query);
     return entityIdsPromise
-      .then((entityIds) => this.crmService.listCustomers(query, { status, stage, tag }, entityIds))
+      .then((entityIds) => this.crmService.listCustomers(query, {
+        status,
+        stage,
+        tag,
+        customFilter: req?.query?.customFilter,
+      }, entityIds))
       .then((result) => this.customFields.wrapResult(CustomFieldEntityType.CUSTOMER, result));
+  }
+
+  @Get('customers/filters')
+  @AuditAction({ action: 'READ_CUSTOMER_SAVED_FILTERS', entityType: 'CustomerFilter' })
+  listCustomerSavedFilters() {
+    return this.crmService.listCustomerSavedFilters();
+  }
+
+  @Post('customers/filters')
+  @AuditAction({ action: 'UPSERT_CUSTOMER_SAVED_FILTER', entityType: 'CustomerFilter' })
+  upsertCustomerSavedFilter(@Body() body: Record<string, unknown>) {
+    return this.crmService.upsertCustomerSavedFilter(body);
+  }
+
+  @Delete('customers/filters/:id')
+  @AuditAction({ action: 'DELETE_CUSTOMER_SAVED_FILTER', entityType: 'CustomerFilter', entityIdParam: 'id' })
+  deleteCustomerSavedFilter(@Param('id') id: string) {
+    return this.crmService.deleteCustomerSavedFilter(id);
   }
 
   @Get('taxonomy')

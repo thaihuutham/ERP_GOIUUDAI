@@ -200,6 +200,99 @@ describe('CRM API flow integration', () => {
     expect(taxonomyRes.body.customerTaxonomy.sources).toEqual(['ONLINE', 'REFERRAL']);
   });
 
+  it('forwards customFilter query to listCustomers service for server-side filtering', async () => {
+    const managerToken = makeAuthToken('MANAGER');
+    const customFilter = JSON.stringify({
+      logic: 'AND',
+      conditions: [
+        { field: 'status', operator: 'equals', value: 'MOI_CHUA_TU_VAN' },
+      ],
+    });
+
+    const listSpy = vi.spyOn(crmService, 'listCustomers').mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      limit: 20,
+    } as any);
+
+    const listRes = await request(app.getHttpServer())
+      .get(`/api/v1/crm/customers?limit=20&customFilter=${encodeURIComponent(customFilter)}`)
+      .set('authorization', `Bearer ${managerToken}`);
+
+    expect(listRes.status).toBe(200);
+    expect(listRes.body).toEqual(
+      expect.objectContaining({
+        items: [],
+        nextCursor: null,
+        limit: 20,
+      }),
+    );
+    expect(listSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 20 }),
+      expect.objectContaining({
+        customFilter,
+      }),
+      expect.any(Array),
+    );
+  });
+
+  it('supports customer saved filters endpoints', async () => {
+    const managerToken = makeAuthToken('MANAGER');
+
+    vi.spyOn(crmService, 'listCustomerSavedFilters').mockResolvedValue({
+      items: [],
+      defaultFilterId: null,
+    } as any);
+
+    vi.spyOn(crmService, 'upsertCustomerSavedFilter').mockResolvedValue({
+      item: {
+        id: 'filter_1',
+        name: 'Khach moi',
+        logic: 'AND',
+        conditions: [{ field: 'status', operator: 'equals', value: 'MOI_CHUA_TU_VAN' }],
+        isDefault: true,
+        createdAt: '2026-04-07T00:00:00.000Z',
+        updatedAt: '2026-04-07T00:00:00.000Z',
+      },
+      items: [],
+      defaultFilterId: 'filter_1',
+    } as any);
+
+    vi.spyOn(crmService, 'deleteCustomerSavedFilter').mockResolvedValue({
+      items: [],
+      defaultFilterId: null,
+    } as any);
+
+    const listRes = await request(app.getHttpServer())
+      .get('/api/v1/crm/customers/filters')
+      .set('authorization', `Bearer ${managerToken}`);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body).toEqual(
+      expect.objectContaining({
+        items: [],
+        defaultFilterId: null,
+      }),
+    );
+
+    const upsertRes = await request(app.getHttpServer())
+      .post('/api/v1/crm/customers/filters')
+      .set('authorization', `Bearer ${managerToken}`)
+      .send({
+        name: 'Khach moi',
+        logic: 'AND',
+        isDefault: true,
+        conditions: [{ field: 'status', operator: 'equals', value: 'MOI_CHUA_TU_VAN' }],
+      });
+    expect(upsertRes.status).toBe(201);
+    expect(upsertRes.body.defaultFilterId).toBe('filter_1');
+
+    const deleteRes = await request(app.getHttpServer())
+      .delete('/api/v1/crm/customers/filters/filter_1')
+      .set('authorization', `Bearer ${managerToken}`);
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body.defaultFilterId).toBeNull();
+  });
+
   it('supports customer import preview endpoint', async () => {
     const adminToken = makeAuthToken('ADMIN');
 

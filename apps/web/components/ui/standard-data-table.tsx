@@ -23,6 +23,8 @@ import {
 export interface ColumnDefinition<T> {
   key: string;
   label: string;
+  group?: string;
+  description?: string;
   render?: (item: T) => ReactNode;
   isLink?: boolean;
   type?: 'text' | 'number' | 'select' | 'date';
@@ -51,6 +53,8 @@ interface StandardDataTableProps<T> {
   data: T[];
   columns: ColumnDefinition<T>[];
   storageKey: string;
+  defaultVisibleColumnKeys?: string[];
+  toolbarLeftContent?: ReactNode;
   onRowClick?: (item: T) => void;
   isLoading?: boolean;
   editableKeys?: string[];
@@ -148,6 +152,8 @@ export function StandardDataTable<T extends { id: string | number }>({
   data,
   columns,
   storageKey,
+  defaultVisibleColumnKeys,
+  toolbarLeftContent,
   onRowClick,
   isLoading,
   editableKeys = [],
@@ -165,6 +171,7 @@ export function StandardDataTable<T extends { id: string | number }>({
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
+  const [columnSearch, setColumnSearch] = useState('');
   
   // Inline Editing State
   const [editingRowId, setEditingRowId] = useState<string | number | null>(null);
@@ -179,23 +186,73 @@ export function StandardDataTable<T extends { id: string | number }>({
   const [archiveViewMode, setArchiveViewMode] = useState<ArchiveViewMode>('active');
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
+  const allColumnKeys = useMemo(
+    () => columns.map((column) => column.key),
+    [columns]
+  );
+
+  const resolvedDefaultVisibleKeys = useMemo(() => {
+    const requested = Array.isArray(defaultVisibleColumnKeys) && defaultVisibleColumnKeys.length > 0
+      ? defaultVisibleColumnKeys
+      : allColumnKeys;
+    const filtered = requested.filter((key, index) => allColumnKeys.includes(key) && requested.indexOf(key) === index);
+    return filtered.length > 0 ? filtered : allColumnKeys;
+  }, [allColumnKeys, defaultVisibleColumnKeys]);
+
+  const normalizeOrderKeys = useCallback(
+    (rawOrder: unknown): string[] => {
+      const unique: string[] = Array.isArray(rawOrder)
+        ? Array.from(
+            new Set(
+              rawOrder
+                .map((item) => String(item ?? ''))
+                .filter((key) => allColumnKeys.includes(key))
+            )
+          )
+        : [];
+      for (const key of allColumnKeys) {
+        if (!unique.includes(key)) {
+          unique.push(key);
+        }
+      }
+      return unique;
+    },
+    [allColumnKeys]
+  );
+
   // Initialize from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
+    const fallbackVisible = resolvedDefaultVisibleKeys;
+    const fallbackOrder = normalizeOrderKeys(allColumnKeys);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setVisibleColumns(parsed.visible || columns.map(c => c.key));
-        setColumnOrder(parsed.order || columns.map(c => c.key));
+        const normalizedVisible: string[] = Array.isArray(parsed?.visible)
+          ? Array.from(
+              new Set(
+                parsed.visible
+                  .map((item: unknown) => String(item ?? ''))
+                  .filter((key: string) => allColumnKeys.includes(key))
+              )
+            )
+          : [];
+        const nextVisible = normalizedVisible.length > 0 ? normalizedVisible : fallbackVisible;
+        const nextOrder = normalizeOrderKeys(parsed?.order);
+        setVisibleColumns(nextVisible);
+        setColumnOrder(nextOrder);
+        saveSettings(nextVisible, nextOrder);
       } catch (e) {
-        setVisibleColumns(columns.map(c => c.key));
-        setColumnOrder(columns.map(c => c.key));
+        setVisibleColumns(fallbackVisible);
+        setColumnOrder(fallbackOrder);
+        saveSettings(fallbackVisible, fallbackOrder);
       }
     } else {
-      setVisibleColumns(columns.map(c => c.key));
-      setColumnOrder(columns.map(c => c.key));
+      setVisibleColumns(fallbackVisible);
+      setColumnOrder(fallbackOrder);
+      saveSettings(fallbackVisible, fallbackOrder);
     }
-  }, [columns, storageKey]);
+  }, [allColumnKeys, normalizeOrderKeys, resolvedDefaultVisibleKeys, storageKey]);
 
   // Save to localStorage
   const saveSettings = (visible: string[], order: string[]) => {
@@ -216,6 +273,31 @@ export function StandardDataTable<T extends { id: string | number }>({
       .map((key) => colMap.get(key))
       .filter((c): c is ColumnDefinition<T> => !!c && visibleColumns.includes(c.key));
   }, [columns, columnOrder, visibleColumns]);
+
+  const normalizedColumnSearch = columnSearch.trim().toLowerCase();
+  const columnPickerGroups = useMemo(() => {
+    const filteredColumns = columns.filter((column) => {
+      if (!normalizedColumnSearch) return true;
+      const haystack = `${column.label} ${column.group ?? ''} ${column.description ?? ''}`.toLowerCase();
+      return haystack.includes(normalizedColumnSearch);
+    });
+
+    const grouped = new Map<string, ColumnDefinition<T>[]>();
+    for (const column of filteredColumns) {
+      const groupName = column.group?.trim() || 'Khác';
+      const bucket = grouped.get(groupName);
+      if (bucket) {
+        bucket.push(column);
+      } else {
+        grouped.set(groupName, [column]);
+      }
+    }
+
+    return Array.from(grouped.entries()).map(([group, groupColumns]) => ({
+      group,
+      columns: groupColumns
+    }));
+  }, [columns, normalizedColumnSearch]);
 
   const activeRows = useMemo(
     () => (hideArchivedRows ? data.filter((item) => !isArchivedRow(item)) : data),
@@ -467,7 +549,10 @@ export function StandardDataTable<T extends { id: string | number }>({
   return (
     <div className="standard-table">
       <div className="standard-table-toolbar">
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="standard-table-toolbar-left">
+          {toolbarLeftContent}
+        </div>
+        <div className="standard-table-toolbar-right">
           <button
             className="btn btn-ghost standard-table-config-btn"
             onClick={() => setIsColumnPickerOpen(!isColumnPickerOpen)}
@@ -506,17 +591,40 @@ export function StandardDataTable<T extends { id: string | number }>({
         {isColumnPickerOpen && (
           <div className="column-picker-popover standard-column-popover">
             <div className="standard-column-popover-title">Hiển thị cột</div>
+            <input
+              type="text"
+              className="standard-column-search-input"
+              placeholder="Tìm cột..."
+              value={columnSearch}
+              onChange={(event) => setColumnSearch(event.target.value)}
+            />
             <div className="standard-column-popover-list">
-              {columns.map((col) => (
-                <label key={col.key} className="column-picker-item standard-column-picker-item">
-                  <input
-                    type="checkbox"
-                    checked={visibleColumns.includes(col.key)}
-                    onChange={() => toggleColumn(col.key)}
-                  />
-                  <span>{col.label}</span>
-                </label>
-              ))}
+              {columnPickerGroups.length === 0 ? (
+                <p className="standard-column-empty">Không tìm thấy cột phù hợp.</p>
+              ) : (
+                columnPickerGroups.map((group) => (
+                  <div key={group.group} className="standard-column-group">
+                    <div className="standard-column-group-title">{group.group}</div>
+                    <div className="standard-column-group-list">
+                      {group.columns.map((col) => (
+                        <label key={col.key} className="column-picker-item standard-column-picker-item">
+                          <input
+                            type="checkbox"
+                            checked={visibleColumns.includes(col.key)}
+                            onChange={() => toggleColumn(col.key)}
+                          />
+                          <span className="standard-column-label-wrap">
+                            <span>{col.label}</span>
+                            {col.description ? (
+                              <small>{col.description}</small>
+                            ) : null}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}

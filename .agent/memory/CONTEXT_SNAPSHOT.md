@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-07 19:40 +07
+- Time: 2026-04-08 06:27 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-07_1940_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_0627_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,130 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 06:27 (CRM server-side filter full-dataset)
+- User request:
+  - commit + push GitHub.
+  - filter CRM customers phải chạy server-side thật trên toàn dataset (không còn chỉ lọc tập rows đã load trên client).
+- Đã xử lý:
+  - `apps/api/src/modules/crm/crm.controller.ts`
+    - `GET /crm/customers` forward thêm `customFilter` từ query xuống service.
+  - `apps/api/src/modules/crm/crm.service.ts`
+    - `listCustomers(...)` nhận `customFilter`.
+    - parse/validate JSON `customFilter` theo contract filter conditions hiện có.
+    - map conditions thành Prisma where (field cơ bản + relation):
+      - cơ bản: fullName/phone/email/customerStage/source/status/zaloNickType/segment/tags/lastContactAt/updatedAt.
+      - relation: contract package/product/service phone/next expiry, vehicle kind/type/plate, insurance expiry/policy no, digital service fields.
+    - combine custom filter trực tiếp vào DB query trước pagination.
+    - khi có `customFilter` thì skip hybrid keyword branch để bảo toàn tính đúng của relation filters.
+  - `apps/web/components/crm-customers-board.tsx`
+    - thêm serialize payload query từ draft filter;
+    - `loadCustomers()` gửi `customFilter` lên `/crm/customers`;
+    - trigger reload khi applied filter đổi.
+  - Tests:
+    - `apps/api/test/crm.service.test.ts`: thêm unit test cho DB where + skip hybrid khi có customFilter.
+    - `apps/api/test/crm.api-flow.test.ts`: thêm integration check controller forward `customFilter`.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ⚠️ hiện không có `erp-postgres` (chỉ có `seo-postgres`, `seo-redis`, `codex-lb`).
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ❌.
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ❌ (DB unreachable).
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.service.test.ts` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.api-flow.test.ts` ❌ (permission guard hit DB settings, fail do DB unreachable).
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+- Notes:
+  - Không có migration/schema mới.
+  - Blocker hiện tại là local DB runtime không sẵn sàng tại `localhost:55432`.
+
+## Update 2026-04-07 22:55 (CRM custom filters: lưu server theo user + logic AND/OR + default auto-apply)
+- User request:
+  - thêm nút `Bộ lọc` bên trái cùng dòng `Cấu hình cột` trong CRM Customers table.
+  - cho phép tạo/lưu bộ lọc tùy chỉnh nhiều điều kiện, hỗ trợ `AND/OR`.
+  - điều kiện áp dụng cho cả field cơ bản và field quan hệ khách hàng.
+  - filter được lưu lại và có thể đánh dấu mặc định để lần sau tự áp dụng.
+- Đã xử lý:
+  - API lưu filter CRM theo user (không đổi DB schema):
+    - `apps/api/src/modules/crm/crm.controller.ts`
+      - `GET /crm/customers/filters`
+      - `POST /crm/customers/filters`
+      - `DELETE /crm/customers/filters/:id`
+    - `apps/api/src/modules/crm/crm.service.ts`
+      - namespace key trên `Setting` theo user hiện tại (`AUTH_USER_CONTEXT_KEY`);
+      - validate field/operator/value;
+      - hỗ trợ toggle default filter, đảm bảo một default.
+  - UI:
+    - `apps/web/components/ui/standard-data-table.tsx`
+      - thêm `toolbarLeftContent` để module cắm button trái toolbar.
+    - `apps/web/app/styles/tables.css`
+      - thêm layout `standard-table-toolbar-left/right`.
+    - `apps/web/components/crm-customers-board.tsx`
+      - thêm nút `Bộ lọc` tại toolbar trái;
+      - modal builder:
+        - add/remove điều kiện,
+        - chọn logic `AND/OR`,
+        - lưu/xóa filter đã lưu,
+        - set default,
+        - áp dụng saved filter hoặc áp dụng tạm;
+      - auto load + auto apply default filter.
+      - hỗ trợ field cơ bản + relation snapshot fields (gói cước, loại hợp đồng, loại xe, biển số, ngày hết hạn BH, số GCN, dịch vụ số...).
+  - Test:
+    - `apps/api/test/crm.service.test.ts` thêm unit tests cho save/delete default filter.
+    - `apps/api/test/crm.api-flow.test.ts` thêm route integration test cho saved filters.
+    - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts` cập nhật mock/state cho saved filter endpoints.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.service.test.ts test/crm.api-flow.test.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+- Notes:
+  - Không thêm migration/schema; tái sử dụng `Setting`.
+  - Custom filter evaluation hiện áp dụng trên tập dữ liệu CRM đã tải về UI (bao gồm relation snapshots).
+
+## Update 2026-04-07 22:24 (Mở rộng Cấu hình cột cho CRM Customers theo hướng 2, rule gộp chuỗi)
+- User request:
+  - dùng UI `Cấu hình cột` để user không IT tự bật/tắt nhiều cột;
+  - mở rộng cột thành dữ liệu liên quan khách hàng (hợp đồng/xe/bảo hiểm);
+  - rule khi nhiều bản ghi: gộp chuỗi nhiều giá trị.
+- Đã xử lý:
+  - `apps/web/components/ui/standard-data-table.tsx`
+    - `ColumnDefinition` thêm `group`, `description`.
+    - thêm prop `defaultVisibleColumnKeys`.
+    - popover cột có search + group + mô tả cột.
+    - normalize/sanitize localStorage order/visible để cột mới luôn bật được khi user tick.
+  - `apps/web/app/styles/tables.css`
+    - style search/group/description trong column picker.
+  - `apps/web/components/crm-customers-board.tsx`
+    - bump storage key `v5`, set default visible columns giữ layout gọn.
+    - mở rộng cột catalog theo nhóm:
+      - Thông tin khách hàng,
+      - Hợp đồng,
+      - Xe,
+      - Bảo hiểm.
+    - thêm các field relation snapshot vào type `Customer`.
+  - `apps/api/src/modules/crm/crm.service.ts`
+    - `listCustomers` enrich dữ liệu relation qua `enrichCustomerListRows`.
+    - gom relation từ service contracts + telecom line + auto/moto insurance + digital service + vehicles.
+    - tính thêm count và next expiry; các trường multi-record được gộp bằng `joinSet`.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.service.test.ts test/crm.api-flow.test.ts` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+- Notes:
+  - phase này tập trung hiển thị cột mở rộng; filter/sort nâng cao theo các cột relation sẽ làm phase sau nếu cần.
 
 ## Update 2026-04-07 19:40 (CRM Customers Import page riêng + simulate preview + chuẩn hóa bulk modal)
 - User request:

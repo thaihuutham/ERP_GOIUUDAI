@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
-import { CustomerCareStatus, CustomerZaloNickType, GenericStatus, Prisma, UserRole } from '@prisma/client';
+import { CustomerCareStatus, CustomerZaloNickType, GenericStatus, Prisma, ServiceContractProductType, ServiceContractStatus, UserRole, VehicleKind } from '@prisma/client';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
@@ -36,6 +37,97 @@ type CustomerImportUpsertResult = {
   customerId?: string;
 };
 
+type CustomerSavedFilterLogic = 'AND' | 'OR';
+type CustomerSavedFilterField =
+  | 'fullName'
+  | 'phone'
+  | 'email'
+  | 'customerStage'
+  | 'source'
+  | 'status'
+  | 'zaloNickType'
+  | 'segment'
+  | 'tags'
+  | 'lastContactAt'
+  | 'updatedAt'
+  | 'contractPackageNames'
+  | 'contractProductTypes'
+  | 'nextContractExpiryAt'
+  | 'contractServicePhones'
+  | 'vehicleKinds'
+  | 'vehicleTypes'
+  | 'vehiclePlateNumbers'
+  | 'insuranceExpiryDates'
+  | 'insurancePolicyNumbers'
+  | 'digitalServiceNames';
+type CustomerSavedFilterOperator =
+  | 'contains'
+  | 'equals'
+  | 'not_equals'
+  | 'is_empty'
+  | 'is_not_empty'
+  | 'before'
+  | 'after'
+  | 'on'
+  | 'between'
+  | 'has'
+  | 'not_has';
+
+type CustomerSavedFilterCondition = {
+  field: CustomerSavedFilterField;
+  operator: CustomerSavedFilterOperator;
+  value?: string;
+  valueTo?: string;
+};
+
+type CustomerSavedFilter = {
+  id: string;
+  name: string;
+  logic: CustomerSavedFilterLogic;
+  conditions: CustomerSavedFilterCondition[];
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type CustomerSavedFiltersStore = {
+  version: 1;
+  defaultFilterId: string | null;
+  filters: CustomerSavedFilter[];
+};
+
+type CustomerQueryFilter = {
+  logic: CustomerSavedFilterLogic;
+  conditions: CustomerSavedFilterCondition[];
+};
+
+const CUSTOMER_FILTER_STORE_VERSION = 1 as const;
+const CUSTOMER_FILTER_STORE_KEY_PREFIX = 'crm.customers.filters.v1.';
+
+const CUSTOMER_FILTER_FIELD_OPERATORS: Record<CustomerSavedFilterField, CustomerSavedFilterOperator[]> = {
+  fullName: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  phone: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  email: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  customerStage: ['equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  source: ['equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  status: ['equals', 'not_equals'],
+  zaloNickType: ['equals', 'not_equals'],
+  segment: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  tags: ['has', 'not_has'],
+  lastContactAt: ['before', 'after', 'on', 'between', 'is_empty', 'is_not_empty'],
+  updatedAt: ['before', 'after', 'on', 'between'],
+  contractPackageNames: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  contractProductTypes: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  nextContractExpiryAt: ['before', 'after', 'on', 'between', 'is_empty', 'is_not_empty'],
+  contractServicePhones: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  vehicleKinds: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  vehicleTypes: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  vehiclePlateNumbers: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  insuranceExpiryDates: ['before', 'after', 'on', 'between', 'is_empty', 'is_not_empty'],
+  insurancePolicyNumbers: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  digitalServiceNames: ['contains', 'equals', 'not_equals', 'is_empty', 'is_not_empty'],
+};
+
 @Injectable()
 export class CrmService {
   constructor(
@@ -46,25 +138,132 @@ export class CrmService {
     @Optional() @Inject(ClsService) private readonly cls?: ClsService
   ) {}
 
+  async listCustomerSavedFilters() {
+    const store = await this.loadCustomerSavedFiltersStore();
+    return {
+      items: [...store.filters].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      defaultFilterId: store.defaultFilterId ?? null,
+    };
+  }
+
+  async upsertCustomerSavedFilter(payload: Record<string, unknown>) {
+    const mutation = this.parseCustomerSavedFilterMutation(payload);
+    const store = await this.loadCustomerSavedFiltersStore();
+    const now = new Date().toISOString();
+
+    if (mutation.id) {
+      const currentIndex = store.filters.findIndex((item) => item.id === mutation.id);
+      if (currentIndex < 0) {
+        throw new NotFoundException('Không tìm thấy bộ lọc CRM để cập nhật.');
+      }
+
+      const current = store.filters[currentIndex];
+      const nextName = mutation.name ?? current.name;
+      const nextLogic = mutation.logic ?? current.logic;
+      const nextConditions = mutation.conditions ?? current.conditions;
+
+      if (!nextName) {
+        throw new BadRequestException('Tên bộ lọc CRM không được để trống.');
+      }
+      if (!nextConditions || nextConditions.length === 0) {
+        throw new BadRequestException('Bộ lọc CRM cần ít nhất 1 điều kiện.');
+      }
+
+      const next: CustomerSavedFilter = {
+        ...current,
+        name: nextName,
+        logic: nextLogic,
+        conditions: nextConditions,
+        updatedAt: now,
+      };
+      store.filters[currentIndex] = next;
+
+      if (mutation.isDefault === true) {
+        store.defaultFilterId = next.id;
+      } else if (mutation.isDefault === false && store.defaultFilterId === next.id) {
+        store.defaultFilterId = null;
+      }
+    } else {
+      if (!mutation.name) {
+        throw new BadRequestException('Thiếu tên bộ lọc CRM.');
+      }
+      if (!mutation.conditions || mutation.conditions.length === 0) {
+        throw new BadRequestException('Bộ lọc CRM cần ít nhất 1 điều kiện.');
+      }
+
+      const created: CustomerSavedFilter = {
+        id: randomUUID(),
+        name: mutation.name,
+        logic: mutation.logic ?? 'AND',
+        conditions: mutation.conditions,
+        isDefault: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.filters.unshift(created);
+      if (mutation.isDefault === true) {
+        store.defaultFilterId = created.id;
+      }
+    }
+
+    store.filters = this.applyCustomerSavedFilterDefaultState(store.filters, store.defaultFilterId);
+    await this.saveCustomerSavedFiltersStore(store);
+
+    const item = mutation.id
+      ? store.filters.find((filter) => filter.id === mutation.id) ?? null
+      : store.filters[0] ?? null;
+    return {
+      item,
+      items: [...store.filters].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      defaultFilterId: store.defaultFilterId ?? null,
+    };
+  }
+
+  async deleteCustomerSavedFilter(id: string) {
+    const normalizedId = this.cleanString(id);
+    if (!normalizedId) {
+      throw new BadRequestException('Thiếu ID bộ lọc CRM cần xóa.');
+    }
+
+    const store = await this.loadCustomerSavedFiltersStore();
+    const existing = store.filters.find((item) => item.id === normalizedId);
+    if (!existing) {
+      throw new NotFoundException('Không tìm thấy bộ lọc CRM để xóa.');
+    }
+
+    store.filters = store.filters.filter((item) => item.id !== normalizedId);
+    if (store.defaultFilterId === normalizedId) {
+      store.defaultFilterId = null;
+    }
+
+    store.filters = this.applyCustomerSavedFilterDefaultState(store.filters, store.defaultFilterId);
+    await this.saveCustomerSavedFiltersStore(store);
+    return {
+      items: [...store.filters].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      defaultFilterId: store.defaultFilterId ?? null,
+    };
+  }
+
   async listCustomers(
     query: PaginationQueryDto,
-    filters: { status?: CustomerCareStatus | 'ALL'; stage?: string; tag?: string } = {},
+    filters: { status?: CustomerCareStatus | 'ALL'; stage?: string; tag?: string; customFilter?: unknown } = {},
     entityIds?: string[]
   ) {
     const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
     const keyword = query.q?.trim();
     const normalizedTag = this.cleanString(filters.tag).toLowerCase();
-
-    const where: Prisma.CustomerWhereInput = {
-      ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
-    };
+    const customFilter = this.parseCustomerQueryFilter(filters.customFilter);
+    const baseWhereClauses: Prisma.CustomerWhereInput[] = [];
+    if (Array.isArray(entityIds)) {
+      baseWhereClauses.push({ id: { in: entityIds } });
+    }
 
     const scopeFilter = await this.resolveCustomerScopeFilter();
     if (!scopeFilter.companyWide) {
       if (scopeFilter.actorIds.length === 0) {
-        where.id = { in: [] };
+        baseWhereClauses.push({ id: { in: [] } });
       } else {
-        where.ownerStaffId = { in: scopeFilter.actorIds };
+        baseWhereClauses.push({ ownerStaffId: { in: scopeFilter.actorIds } });
       }
     }
 
@@ -80,18 +279,24 @@ export class CrmService {
     const normalizedStatus = filters.status && filters.status !== 'ALL' ? filters.status : undefined;
 
     if (normalizedStatus) {
-      where.status = normalizedStatus;
+      baseWhereClauses.push({ status: normalizedStatus });
     }
 
     if (normalizedStage) {
-      where.customerStage = normalizedStage;
+      baseWhereClauses.push({ customerStage: normalizedStage });
     }
 
     if (normalizedTag) {
-      where.tags = { has: normalizedTag };
+      baseWhereClauses.push({ tags: { has: normalizedTag } });
     }
 
-    if (keyword && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
+    if (customFilter) {
+      baseWhereClauses.push(this.buildCustomerCustomFilterWhere(customFilter));
+    }
+
+    const baseWhere = this.combineCustomerWhereClauses(baseWhereClauses);
+
+    if (keyword && !customFilter && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
       const rankedIds = await this.search.searchCustomerIds(
         keyword,
         this.prisma.getTenantId(),
@@ -107,35 +312,42 @@ export class CrmService {
         const lookupIds = rankedIds.slice(0, take + 1);
         const rankedRows = lookupIds.length > 0
           ? await this.prisma.client.customer.findMany({
-              where: {
-                ...where,
-                id: { in: lookupIds }
-              }
+              where: this.combineCustomerWhereClauses([
+                baseWhere,
+                { id: { in: lookupIds } },
+              ]),
             })
           : [];
 
         const orderedRows = this.rankByIds(rankedRows, lookupIds);
         const hasMore = rankedIds.length > take;
         const items = hasMore ? orderedRows.slice(0, take) : orderedRows;
+        const enrichedItems = await this.enrichCustomerListRows(items);
 
         return {
-          items,
+          items: enrichedItems,
           nextCursor: null,
           limit: take
         };
       }
     }
 
-    if (keyword) {
-      where.OR = [
-        { fullName: { contains: keyword, mode: 'insensitive' } },
-        { email: { contains: keyword, mode: 'insensitive' } },
-        { phone: { contains: keyword } }
-      ];
-    }
+    const keywordWhere = keyword
+      ? {
+          OR: [
+            { fullName: { contains: keyword, mode: 'insensitive' as const } },
+            { email: { contains: keyword, mode: 'insensitive' as const } },
+            { phone: { contains: keyword } },
+          ],
+        }
+      : null;
+    const finalWhere = this.combineCustomerWhereClauses([
+      baseWhere,
+      ...(keywordWhere ? [keywordWhere] : []),
+    ]);
 
     const rows = await this.prisma.client.customer.findMany({
-      where,
+      where: finalWhere,
       orderBy: { updatedAt: 'desc' },
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       take: take + 1
@@ -143,12 +355,293 @@ export class CrmService {
 
     const hasMore = rows.length > take;
     const items = hasMore ? rows.slice(0, take) : rows;
+    const enrichedItems = await this.enrichCustomerListRows(items);
 
     return {
-      items,
+      items: enrichedItems,
       nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
       limit: take
     };
+  }
+
+  private async enrichCustomerListRows<T extends { id: string | number }>(rows: T[]) {
+    if (rows.length === 0) {
+      return rows;
+    }
+
+    const customerIds = Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.id ?? '').trim())
+          .filter(Boolean)
+      )
+    );
+    if (customerIds.length === 0) {
+      return rows;
+    }
+
+    const [contracts, vehicles, contractCounts, activeContractCounts, nextActiveExpiries, vehicleCounts] = await Promise.all([
+      this.prisma.client.serviceContract.findMany({
+        where: {
+          customerId: { in: customerIds },
+        },
+        orderBy: [{ endsAt: 'desc' }, { updatedAt: 'desc' }],
+        select: {
+          customerId: true,
+          productType: true,
+          endsAt: true,
+          telecomLine: {
+            select: {
+              packageName: true,
+              servicePhone: true,
+              currentExpiryAt: true,
+            }
+          },
+          autoInsuranceDetail: {
+            select: {
+              policyToAt: true,
+              soGCN: true,
+            }
+          },
+          motoInsuranceDetail: {
+            select: {
+              policyToAt: true,
+              soGCN: true,
+            }
+          },
+          digitalServiceDetail: {
+            select: {
+              serviceName: true,
+              planName: true,
+              provider: true,
+            }
+          },
+        }
+      }),
+      this.prisma.client.vehicle.findMany({
+        where: {
+          ownerCustomerId: { in: customerIds },
+          status: GenericStatus.ACTIVE,
+        },
+        orderBy: [{ updatedAt: 'desc' }],
+        select: {
+          ownerCustomerId: true,
+          vehicleKind: true,
+          vehicleType: true,
+          plateNumber: true,
+        }
+      }),
+      this.prisma.client.serviceContract.groupBy({
+        by: ['customerId'],
+        where: {
+          customerId: { in: customerIds },
+        },
+        _count: {
+          _all: true,
+        }
+      }),
+      this.prisma.client.serviceContract.groupBy({
+        by: ['customerId'],
+        where: {
+          customerId: { in: customerIds },
+          status: ServiceContractStatus.ACTIVE,
+        },
+        _count: {
+          _all: true,
+        }
+      }),
+      this.prisma.client.serviceContract.groupBy({
+        by: ['customerId'],
+        where: {
+          customerId: { in: customerIds },
+          status: ServiceContractStatus.ACTIVE,
+          endsAt: {
+            gte: new Date(),
+          }
+        },
+        _min: {
+          endsAt: true,
+        }
+      }),
+      this.prisma.client.vehicle.groupBy({
+        by: ['ownerCustomerId'],
+        where: {
+          ownerCustomerId: { in: customerIds },
+          status: GenericStatus.ACTIVE,
+        },
+        _count: {
+          _all: true,
+        }
+      }),
+    ]);
+
+    type RelatedSnapshot = {
+      packageNames: Set<string>;
+      servicePhones: Set<string>;
+      productTypes: Set<string>;
+      contractExpiryDates: Set<string>;
+      telecomExpiryDates: Set<string>;
+      digitalServices: Set<string>;
+      insuranceExpiryDates: Set<string>;
+      autoInsuranceExpiryDates: Set<string>;
+      motoInsuranceExpiryDates: Set<string>;
+      insurancePolicyNumbers: Set<string>;
+      vehicleTypes: Set<string>;
+      vehicleKinds: Set<string>;
+      vehiclePlateNumbers: Set<string>;
+    };
+
+    const snapshotByCustomer = new Map<string, RelatedSnapshot>();
+    const ensureSnapshot = (customerId: string) => {
+      const existing = snapshotByCustomer.get(customerId);
+      if (existing) {
+        return existing;
+      }
+      const created: RelatedSnapshot = {
+        packageNames: new Set<string>(),
+        servicePhones: new Set<string>(),
+        productTypes: new Set<string>(),
+        contractExpiryDates: new Set<string>(),
+        telecomExpiryDates: new Set<string>(),
+        digitalServices: new Set<string>(),
+        insuranceExpiryDates: new Set<string>(),
+        autoInsuranceExpiryDates: new Set<string>(),
+        motoInsuranceExpiryDates: new Set<string>(),
+        insurancePolicyNumbers: new Set<string>(),
+        vehicleTypes: new Set<string>(),
+        vehicleKinds: new Set<string>(),
+        vehiclePlateNumbers: new Set<string>(),
+      };
+      snapshotByCustomer.set(customerId, created);
+      return created;
+    };
+
+    for (const contract of contracts) {
+      const customerId = String(contract.customerId ?? '').trim();
+      if (!customerId) continue;
+      const snapshot = ensureSnapshot(customerId);
+      snapshot.productTypes.add(String(contract.productType));
+      const contractExpiryDate = this.toCompactDateString(contract.endsAt);
+      if (contractExpiryDate) {
+        snapshot.contractExpiryDates.add(contractExpiryDate);
+      }
+
+      if (contract.telecomLine) {
+        const packageName = this.cleanString(contract.telecomLine.packageName);
+        const servicePhone = this.cleanString(contract.telecomLine.servicePhone);
+        if (packageName) {
+          snapshot.packageNames.add(packageName);
+        }
+        if (servicePhone) {
+          snapshot.servicePhones.add(servicePhone);
+        }
+        const telecomExpiryDate = this.toCompactDateString(contract.telecomLine.currentExpiryAt);
+        if (telecomExpiryDate) {
+          snapshot.telecomExpiryDates.add(telecomExpiryDate);
+        }
+      }
+
+      if (contract.autoInsuranceDetail) {
+        const autoExpiryDate = this.toCompactDateString(contract.autoInsuranceDetail.policyToAt);
+        if (autoExpiryDate) {
+          snapshot.autoInsuranceExpiryDates.add(autoExpiryDate);
+          snapshot.insuranceExpiryDates.add(autoExpiryDate);
+        }
+        const policyNo = this.cleanString(contract.autoInsuranceDetail.soGCN);
+        if (policyNo) {
+          snapshot.insurancePolicyNumbers.add(policyNo);
+        }
+      }
+
+      if (contract.motoInsuranceDetail) {
+        const motoExpiryDate = this.toCompactDateString(contract.motoInsuranceDetail.policyToAt);
+        if (motoExpiryDate) {
+          snapshot.motoInsuranceExpiryDates.add(motoExpiryDate);
+          snapshot.insuranceExpiryDates.add(motoExpiryDate);
+        }
+        const policyNo = this.cleanString(contract.motoInsuranceDetail.soGCN);
+        if (policyNo) {
+          snapshot.insurancePolicyNumbers.add(policyNo);
+        }
+      }
+
+      if (contract.digitalServiceDetail) {
+        const serviceName = this.cleanString(contract.digitalServiceDetail.serviceName);
+        const planName = this.cleanString(contract.digitalServiceDetail.planName);
+        const provider = this.cleanString(contract.digitalServiceDetail.provider);
+        const composed = [serviceName, planName, provider].filter(Boolean).join(' / ');
+        if (composed) {
+          snapshot.digitalServices.add(composed);
+        }
+      }
+    }
+
+    for (const vehicle of vehicles) {
+      const customerId = String(vehicle.ownerCustomerId ?? '').trim();
+      if (!customerId) continue;
+      const snapshot = ensureSnapshot(customerId);
+      const vehicleType = this.cleanString(vehicle.vehicleType);
+      const vehicleKind = this.cleanString(vehicle.vehicleKind);
+      const plate = this.cleanString(vehicle.plateNumber);
+      if (vehicleType) {
+        snapshot.vehicleTypes.add(vehicleType);
+      }
+      if (vehicleKind) {
+        snapshot.vehicleKinds.add(vehicleKind);
+      }
+      if (plate) {
+        snapshot.vehiclePlateNumbers.add(plate);
+      }
+    }
+
+    const contractCountMap = new Map<string, number>();
+    for (const row of contractCounts) {
+      contractCountMap.set(String(row.customerId), row._count._all);
+    }
+    const activeContractCountMap = new Map<string, number>();
+    for (const row of activeContractCounts) {
+      activeContractCountMap.set(String(row.customerId), row._count._all);
+    }
+    const nextActiveExpiryMap = new Map<string, string>();
+    for (const row of nextActiveExpiries) {
+      if (!row._min.endsAt) continue;
+      const compact = this.toCompactDateString(row._min.endsAt);
+      if (compact) {
+        nextActiveExpiryMap.set(String(row.customerId), compact);
+      }
+    }
+    const vehicleCountMap = new Map<string, number>();
+    for (const row of vehicleCounts) {
+      const key = String(row.ownerCustomerId ?? '').trim();
+      if (!key) continue;
+      vehicleCountMap.set(key, row._count._all);
+    }
+
+    return rows.map((row) => {
+      const customerId = String(row.id ?? '').trim();
+      const snapshot = snapshotByCustomer.get(customerId);
+      const enrichedRow: Record<string, unknown> = {
+        ...row as Record<string, unknown>,
+        contractCount: contractCountMap.get(customerId) ?? 0,
+        activeContractCount: activeContractCountMap.get(customerId) ?? 0,
+        nextContractExpiryAt: nextActiveExpiryMap.get(customerId) ?? null,
+        vehicleCount: vehicleCountMap.get(customerId) ?? 0,
+        contractPackageNames: this.joinSet(snapshot?.packageNames),
+        contractServicePhones: this.joinSet(snapshot?.servicePhones),
+        contractProductTypes: this.joinSet(snapshot?.productTypes),
+        contractExpiryDates: this.joinSet(snapshot?.contractExpiryDates),
+        telecomExpiryDates: this.joinSet(snapshot?.telecomExpiryDates),
+        digitalServiceNames: this.joinSet(snapshot?.digitalServices),
+        insuranceExpiryDates: this.joinSet(snapshot?.insuranceExpiryDates),
+        autoInsuranceExpiryDates: this.joinSet(snapshot?.autoInsuranceExpiryDates),
+        motoInsuranceExpiryDates: this.joinSet(snapshot?.motoInsuranceExpiryDates),
+        insurancePolicyNumbers: this.joinSet(snapshot?.insurancePolicyNumbers),
+        vehicleTypes: this.joinSet(snapshot?.vehicleTypes),
+        vehicleKinds: this.joinSet(snapshot?.vehicleKinds),
+        vehiclePlateNumbers: this.joinSet(snapshot?.vehiclePlateNumbers),
+      };
+      return enrichedRow as T;
+    });
   }
 
   async getCustomerTaxonomy() {
@@ -1051,6 +1544,789 @@ export class CrmService {
     return customer;
   }
 
+  private async loadCustomerSavedFiltersStore(): Promise<CustomerSavedFiltersStore> {
+    const settingKey = this.resolveCustomerSavedFiltersSettingKey();
+    const row = await this.prisma.client.setting.findFirst({
+      where: { settingKey },
+    });
+    return this.normalizeCustomerSavedFiltersStore(row?.settingValue);
+  }
+
+  private async saveCustomerSavedFiltersStore(store: CustomerSavedFiltersStore) {
+    const settingKey = this.resolveCustomerSavedFiltersSettingKey();
+    const normalizedStore = this.normalizeCustomerSavedFiltersStore(store);
+    const existing = await this.prisma.client.setting.findFirst({
+      where: { settingKey },
+    });
+
+    if (existing) {
+      await this.prisma.client.setting.updateMany({
+        where: { id: existing.id },
+        data: {
+          settingValue: normalizedStore as Prisma.InputJsonValue,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.client.setting.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        settingKey,
+        settingValue: normalizedStore as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private resolveCustomerSavedFiltersSettingKey() {
+    const actor = this.resolveCustomerActor();
+    const actorKeyRaw = this.cleanString(actor.userId)
+      || this.cleanString(actor.sub)
+      || this.cleanString(actor.email)
+      || this.cleanString(actor.role).toLowerCase()
+      || 'anonymous';
+    const actorKey = actorKeyRaw
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 80) || 'anonymous';
+    return `${CUSTOMER_FILTER_STORE_KEY_PREFIX}${actorKey}`;
+  }
+
+  private normalizeCustomerSavedFiltersStore(input: unknown): CustomerSavedFiltersStore {
+    const now = new Date().toISOString();
+    const record = this.ensureRecord(input);
+    const filtersInput = Array.isArray(record.filters) ? record.filters : [];
+    const filters: CustomerSavedFilter[] = [];
+
+    filtersInput.forEach((item) => {
+      const parsed = this.normalizeStoredCustomerSavedFilter(item, now);
+      if (parsed) {
+        filters.push(parsed);
+      }
+    });
+
+    const defaultFilterIdRaw = this.cleanString(record.defaultFilterId);
+    const defaultFilterId = filters.some((item) => item.id === defaultFilterIdRaw)
+      ? defaultFilterIdRaw
+      : null;
+
+    return {
+      version: CUSTOMER_FILTER_STORE_VERSION,
+      defaultFilterId,
+      filters: this.applyCustomerSavedFilterDefaultState(filters, defaultFilterId),
+    };
+  }
+
+  private normalizeStoredCustomerSavedFilter(
+    input: unknown,
+    fallbackIso: string
+  ): CustomerSavedFilter | null {
+    const record = this.ensureRecord(input);
+    const id = this.cleanString(record.id);
+    const name = this.cleanString(record.name);
+    const logicRaw = this.cleanString(record.logic).toUpperCase();
+    const logic: CustomerSavedFilterLogic = logicRaw === 'OR' ? 'OR' : 'AND';
+
+    if (!id || !name) {
+      return null;
+    }
+
+    const conditionsInput = Array.isArray(record.conditions) ? record.conditions : [];
+    const conditions = conditionsInput
+      .map((condition, index) => {
+        try {
+          return this.normalizeCustomerSavedFilterCondition(condition, index + 1);
+        } catch {
+          return null;
+        }
+      })
+      .filter((condition): condition is CustomerSavedFilterCondition => condition !== null);
+    if (conditions.length === 0) {
+      return null;
+    }
+
+    const createdAt = this.normalizeIsoDateTimeString(record.createdAt, fallbackIso);
+    const updatedAt = this.normalizeIsoDateTimeString(record.updatedAt, createdAt);
+
+    return {
+      id,
+      name,
+      logic,
+      conditions,
+      isDefault: false,
+      createdAt,
+      updatedAt,
+    };
+  }
+
+  private parseCustomerSavedFilterMutation(payload: Record<string, unknown>) {
+    const hasConditions = this.hasOwn(payload, 'conditions');
+    const hasName = this.hasOwn(payload, 'name');
+    const hasLogic = this.hasOwn(payload, 'logic');
+
+    const id = this.cleanString(payload.id) || undefined;
+    const name = hasName ? this.cleanString(payload.name) : undefined;
+    const logicRaw = hasLogic ? this.cleanString(payload.logic).toUpperCase() : '';
+    const logic: CustomerSavedFilterLogic | undefined = logicRaw === 'AND' || logicRaw === 'OR'
+      ? (logicRaw as CustomerSavedFilterLogic)
+      : undefined;
+    const isDefault = typeof payload.isDefault === 'boolean' ? payload.isDefault : undefined;
+
+    if (hasName && !name) {
+      throw new BadRequestException('Tên bộ lọc CRM không được để trống.');
+    }
+    if (hasLogic && !logic) {
+      throw new BadRequestException('Logic bộ lọc CRM chỉ chấp nhận AND hoặc OR.');
+    }
+
+    const conditions = hasConditions ? this.parseCustomerSavedFilterConditions(payload.conditions) : undefined;
+    if (!id && (!name || !conditions || conditions.length === 0)) {
+      throw new BadRequestException('Tạo bộ lọc CRM mới cần đủ: name + conditions.');
+    }
+
+    return {
+      id,
+      name,
+      logic,
+      conditions,
+      isDefault,
+    };
+  }
+
+  private parseCustomerSavedFilterConditions(input: unknown) {
+    if (!Array.isArray(input)) {
+      throw new BadRequestException('Điều kiện bộ lọc CRM phải là mảng.');
+    }
+    if (input.length === 0) {
+      throw new BadRequestException('Bộ lọc CRM cần ít nhất 1 điều kiện.');
+    }
+    if (input.length > 20) {
+      throw new BadRequestException('Bộ lọc CRM tối đa 20 điều kiện.');
+    }
+    return input.map((condition, index) => this.normalizeCustomerSavedFilterCondition(condition, index + 1));
+  }
+
+  private normalizeCustomerSavedFilterCondition(
+    input: unknown,
+    rowIndex: number
+  ): CustomerSavedFilterCondition {
+    const record = this.ensureRecord(input);
+    const fieldRaw = this.cleanString(record.field) as CustomerSavedFilterField;
+    const operatorRaw = this.cleanString(record.operator) as CustomerSavedFilterOperator;
+    const fieldOperators = CUSTOMER_FILTER_FIELD_OPERATORS[fieldRaw];
+
+    if (!fieldOperators) {
+      throw new BadRequestException(`Điều kiện #${rowIndex}: field '${fieldRaw}' không hợp lệ.`);
+    }
+    if (!fieldOperators.includes(operatorRaw)) {
+      throw new BadRequestException(
+        `Điều kiện #${rowIndex}: operator '${operatorRaw}' không hợp lệ cho field '${fieldRaw}'.`
+      );
+    }
+
+    const expectsValue = !['is_empty', 'is_not_empty'].includes(operatorRaw);
+    const expectsValueTo = operatorRaw === 'between';
+    const rawValue = this.cleanString(record.value);
+    const rawValueTo = this.cleanString(record.valueTo);
+
+    let value = rawValue || undefined;
+    let valueTo = rawValueTo || undefined;
+
+    if (expectsValue && !value) {
+      throw new BadRequestException(`Điều kiện #${rowIndex}: thiếu giá trị value.`);
+    }
+    if (expectsValueTo && !valueTo) {
+      throw new BadRequestException(`Điều kiện #${rowIndex}: thiếu giá trị valueTo cho toán tử between.`);
+    }
+
+    if (['before', 'after', 'on', 'between'].includes(operatorRaw)) {
+      value = value ? this.normalizeDateInput(value, `Điều kiện #${rowIndex}: value`) : undefined;
+      valueTo = valueTo ? this.normalizeDateInput(valueTo, `Điều kiện #${rowIndex}: valueTo`) : undefined;
+    }
+
+    return {
+      field: fieldRaw,
+      operator: operatorRaw,
+      ...(value ? { value } : {}),
+      ...(valueTo ? { valueTo } : {}),
+    };
+  }
+
+  private parseCustomerQueryFilter(input: unknown): CustomerQueryFilter | null {
+    if (input === null || input === undefined || this.cleanString(input) === '') {
+      return null;
+    }
+
+    let payload: unknown = input;
+    if (typeof input === 'string') {
+      try {
+        payload = JSON.parse(input);
+      } catch {
+        throw new BadRequestException('customFilter phải là JSON hợp lệ.');
+      }
+    }
+
+    const record = this.ensureRecord(payload);
+    const logicRaw = this.cleanString(record.logic).toUpperCase();
+    if (logicRaw && logicRaw !== 'AND' && logicRaw !== 'OR') {
+      throw new BadRequestException('customFilter.logic chỉ chấp nhận AND hoặc OR.');
+    }
+
+    const conditions = this.parseCustomerSavedFilterConditions(record.conditions);
+    return {
+      logic: logicRaw === 'OR' ? 'OR' : 'AND',
+      conditions,
+    };
+  }
+
+  private combineCustomerWhereClauses(clauses: Prisma.CustomerWhereInput[]) {
+    const valid = clauses.filter((item) => Object.keys(item ?? {}).length > 0);
+    if (valid.length === 0) {
+      return {};
+    }
+    if (valid.length === 1) {
+      return valid[0];
+    }
+    return { AND: valid };
+  }
+
+  private buildCustomerCustomFilterWhere(filter: CustomerQueryFilter): Prisma.CustomerWhereInput {
+    const conditionWheres = filter.conditions.map((condition) =>
+      this.buildCustomerCustomFilterConditionWhere(condition)
+    );
+
+    if (conditionWheres.length === 0) {
+      return {};
+    }
+
+    if (filter.logic === 'OR') {
+      return { OR: conditionWheres };
+    }
+    return { AND: conditionWheres };
+  }
+
+  private buildCustomerCustomFilterConditionWhere(condition: CustomerSavedFilterCondition): Prisma.CustomerWhereInput {
+    switch (condition.field) {
+      case 'fullName':
+        return this.buildCustomerStringFilterCondition('fullName', condition.operator, condition.value, {
+          nullable: false,
+          caseInsensitive: true,
+        });
+      case 'phone':
+        return this.buildCustomerStringFilterCondition('phone', condition.operator, condition.value, {
+          nullable: true,
+          caseInsensitive: true,
+        });
+      case 'email':
+        return this.buildCustomerStringFilterCondition('email', condition.operator, condition.value, {
+          nullable: true,
+          caseInsensitive: true,
+        });
+      case 'customerStage':
+        return this.buildCustomerStringFilterCondition('customerStage', condition.operator, condition.value, {
+          nullable: true,
+          caseInsensitive: true,
+        });
+      case 'source':
+        return this.buildCustomerStringFilterCondition('source', condition.operator, condition.value, {
+          nullable: true,
+          caseInsensitive: true,
+        });
+      case 'segment':
+        return this.buildCustomerStringFilterCondition('segment', condition.operator, condition.value, {
+          nullable: true,
+          caseInsensitive: true,
+        });
+      case 'status': {
+        const status = this.normalizeCustomerCareStatusFilterValue(condition.value);
+        if (condition.operator === 'equals') {
+          return { status };
+        }
+        if (condition.operator === 'not_equals') {
+          return { NOT: { status } };
+        }
+        break;
+      }
+      case 'zaloNickType': {
+        const nickType = this.normalizeCustomerZaloNickTypeFilterValue(condition.value);
+        if (condition.operator === 'equals') {
+          return { zaloNickType: nickType };
+        }
+        if (condition.operator === 'not_equals') {
+          return { NOT: { zaloNickType: nickType } };
+        }
+        break;
+      }
+      case 'tags': {
+        const tagValue = this.cleanString(condition.value).toLowerCase();
+        if (!tagValue) {
+          throw new BadRequestException('Điều kiện tags thiếu value.');
+        }
+        if (condition.operator === 'has') {
+          return { tags: { has: tagValue } };
+        }
+        if (condition.operator === 'not_has') {
+          return { NOT: { tags: { has: tagValue } } };
+        }
+        break;
+      }
+      case 'lastContactAt': {
+        if (condition.operator === 'is_empty') {
+          return { lastContactAt: null };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { NOT: { lastContactAt: null } };
+        }
+        return {
+          lastContactAt: this.buildCustomerDateFilter(condition.operator, condition.value, condition.valueTo),
+        };
+      }
+      case 'updatedAt':
+        return {
+          updatedAt: this.buildCustomerDateFilter(condition.operator, condition.value, condition.valueTo),
+        };
+      case 'contractPackageNames': {
+        const relationHasValue: Prisma.ServiceContractWhereInput = {
+          telecomLine: { isNot: null },
+        };
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: relationHasValue } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: relationHasValue } };
+        }
+        const rawValue = this.cleanString(condition.value);
+        if (!rawValue) {
+          throw new BadRequestException('Điều kiện contractPackageNames thiếu value.');
+        }
+        const equalsFilter = { equals: rawValue, mode: 'insensitive' as const };
+        if (condition.operator === 'not_equals') {
+          return {
+            serviceContracts: {
+              none: {
+                telecomLine: { is: { packageName: equalsFilter } },
+              },
+            },
+          };
+        }
+        const packageNameFilter = condition.operator === 'contains'
+          ? { contains: rawValue, mode: 'insensitive' as const }
+          : equalsFilter;
+        return {
+          serviceContracts: {
+            some: {
+              telecomLine: { is: { packageName: packageNameFilter } },
+            },
+          },
+        };
+      }
+      case 'contractProductTypes': {
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: {} } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: {} } };
+        }
+        const productType = this.normalizeServiceContractProductTypeFilterValue(condition.value);
+        if (condition.operator === 'not_equals') {
+          return {
+            serviceContracts: {
+              none: { productType },
+            },
+          };
+        }
+        return {
+          serviceContracts: {
+            some: { productType },
+          },
+        };
+      }
+      case 'nextContractExpiryAt': {
+        const activeFutureContract: Prisma.ServiceContractWhereInput = {
+          status: ServiceContractStatus.ACTIVE,
+          endsAt: { gte: new Date() },
+        };
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: activeFutureContract } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: activeFutureContract } };
+        }
+        return {
+          serviceContracts: {
+            some: {
+              AND: [
+                activeFutureContract,
+                { endsAt: this.buildCustomerDateFilter(condition.operator, condition.value, condition.valueTo) },
+              ],
+            },
+          },
+        };
+      }
+      case 'contractServicePhones': {
+        const relationHasValue: Prisma.ServiceContractWhereInput = {
+          telecomLine: { isNot: null },
+        };
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: relationHasValue } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: relationHasValue } };
+        }
+        const rawValue = this.cleanString(condition.value);
+        if (!rawValue) {
+          throw new BadRequestException('Điều kiện contractServicePhones thiếu value.');
+        }
+        const equalsFilter = { equals: rawValue, mode: 'insensitive' as const };
+        if (condition.operator === 'not_equals') {
+          return {
+            serviceContracts: {
+              none: {
+                telecomLine: { is: { servicePhone: equalsFilter } },
+              },
+            },
+          };
+        }
+        const phoneFilter = condition.operator === 'contains'
+          ? { contains: rawValue, mode: 'insensitive' as const }
+          : equalsFilter;
+        return {
+          serviceContracts: {
+            some: {
+              telecomLine: { is: { servicePhone: phoneFilter } },
+            },
+          },
+        };
+      }
+      case 'vehicleKinds': {
+        const activeVehicle: Prisma.VehicleWhereInput = { status: GenericStatus.ACTIVE };
+        if (condition.operator === 'is_empty') {
+          return { ownedVehicles: { none: activeVehicle } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { ownedVehicles: { some: activeVehicle } };
+        }
+        const kind = this.normalizeVehicleKindFilterValue(condition.value);
+        if (condition.operator === 'not_equals') {
+          return {
+            ownedVehicles: {
+              none: { ...activeVehicle, vehicleKind: kind },
+            },
+          };
+        }
+        return {
+          ownedVehicles: {
+            some: { ...activeVehicle, vehicleKind: kind },
+          },
+        };
+      }
+      case 'vehicleTypes': {
+        const activeVehicle: Prisma.VehicleWhereInput = { status: GenericStatus.ACTIVE };
+        if (condition.operator === 'is_empty') {
+          return { ownedVehicles: { none: activeVehicle } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { ownedVehicles: { some: activeVehicle } };
+        }
+        const rawValue = this.cleanString(condition.value);
+        if (!rawValue) {
+          throw new BadRequestException('Điều kiện vehicleTypes thiếu value.');
+        }
+        const equalsFilter = { equals: rawValue, mode: 'insensitive' as const };
+        if (condition.operator === 'not_equals') {
+          return {
+            ownedVehicles: {
+              none: { ...activeVehicle, vehicleType: equalsFilter },
+            },
+          };
+        }
+        const typeFilter = condition.operator === 'contains'
+          ? { contains: rawValue, mode: 'insensitive' as const }
+          : equalsFilter;
+        return {
+          ownedVehicles: {
+            some: { ...activeVehicle, vehicleType: typeFilter },
+          },
+        };
+      }
+      case 'vehiclePlateNumbers': {
+        const activeVehicle: Prisma.VehicleWhereInput = { status: GenericStatus.ACTIVE };
+        if (condition.operator === 'is_empty') {
+          return { ownedVehicles: { none: activeVehicle } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { ownedVehicles: { some: activeVehicle } };
+        }
+        const rawValue = this.cleanString(condition.value);
+        if (!rawValue) {
+          throw new BadRequestException('Điều kiện vehiclePlateNumbers thiếu value.');
+        }
+        const equalsFilter = { equals: rawValue, mode: 'insensitive' as const };
+        if (condition.operator === 'not_equals') {
+          return {
+            ownedVehicles: {
+              none: { ...activeVehicle, plateNumber: equalsFilter },
+            },
+          };
+        }
+        const plateFilter = condition.operator === 'contains'
+          ? { contains: rawValue, mode: 'insensitive' as const }
+          : equalsFilter;
+        return {
+          ownedVehicles: {
+            some: { ...activeVehicle, plateNumber: plateFilter },
+          },
+        };
+      }
+      case 'insuranceExpiryDates': {
+        const hasInsuranceDetail: Prisma.ServiceContractWhereInput = {
+          OR: [
+            { autoInsuranceDetail: { isNot: null } },
+            { motoInsuranceDetail: { isNot: null } },
+          ],
+        };
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: hasInsuranceDetail } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: hasInsuranceDetail } };
+        }
+        const dateFilter = this.buildCustomerDateFilter(condition.operator, condition.value, condition.valueTo);
+        return {
+          serviceContracts: {
+            some: {
+              OR: [
+                { autoInsuranceDetail: { is: { policyToAt: dateFilter } } },
+                { motoInsuranceDetail: { is: { policyToAt: dateFilter } } },
+              ],
+            },
+          },
+        };
+      }
+      case 'insurancePolicyNumbers': {
+        const hasInsuranceDetail: Prisma.ServiceContractWhereInput = {
+          OR: [
+            { autoInsuranceDetail: { isNot: null } },
+            { motoInsuranceDetail: { isNot: null } },
+          ],
+        };
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: hasInsuranceDetail } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: hasInsuranceDetail } };
+        }
+        const rawValue = this.cleanString(condition.value);
+        if (!rawValue) {
+          throw new BadRequestException('Điều kiện insurancePolicyNumbers thiếu value.');
+        }
+        const equalsFilter = { equals: rawValue, mode: 'insensitive' as const };
+        const relationEquals: Prisma.ServiceContractWhereInput = {
+          OR: [
+            { autoInsuranceDetail: { is: { soGCN: equalsFilter } } },
+            { motoInsuranceDetail: { is: { soGCN: equalsFilter } } },
+          ],
+        };
+        if (condition.operator === 'not_equals') {
+          return { serviceContracts: { none: relationEquals } };
+        }
+        const textFilter = condition.operator === 'contains'
+          ? { contains: rawValue, mode: 'insensitive' as const }
+          : equalsFilter;
+        return {
+          serviceContracts: {
+            some: {
+              OR: [
+                { autoInsuranceDetail: { is: { soGCN: textFilter } } },
+                { motoInsuranceDetail: { is: { soGCN: textFilter } } },
+              ],
+            },
+          },
+        };
+      }
+      case 'digitalServiceNames': {
+        const hasDigitalService: Prisma.ServiceContractWhereInput = {
+          digitalServiceDetail: { isNot: null },
+        };
+        if (condition.operator === 'is_empty') {
+          return { serviceContracts: { none: hasDigitalService } };
+        }
+        if (condition.operator === 'is_not_empty') {
+          return { serviceContracts: { some: hasDigitalService } };
+        }
+        const rawValue = this.cleanString(condition.value);
+        if (!rawValue) {
+          throw new BadRequestException('Điều kiện digitalServiceNames thiếu value.');
+        }
+        const equalsFilter = { equals: rawValue, mode: 'insensitive' as const };
+        const serviceNameEquals: Prisma.ServiceContractWhereInput = {
+          digitalServiceDetail: {
+            is: {
+              OR: [
+                { serviceName: equalsFilter },
+                { planName: equalsFilter },
+                { provider: equalsFilter },
+              ],
+            },
+          },
+        };
+        if (condition.operator === 'not_equals') {
+          return { serviceContracts: { none: serviceNameEquals } };
+        }
+        const textFilter = condition.operator === 'contains'
+          ? { contains: rawValue, mode: 'insensitive' as const }
+          : equalsFilter;
+        return {
+          serviceContracts: {
+            some: {
+              digitalServiceDetail: {
+                is: {
+                  OR: [
+                    { serviceName: textFilter },
+                    { planName: textFilter },
+                    { provider: textFilter },
+                  ],
+                },
+              },
+            },
+          },
+        };
+      }
+      default:
+        break;
+    }
+
+    throw new BadRequestException(
+      `Điều kiện customFilter không hợp lệ cho field '${condition.field}' với operator '${condition.operator}'.`
+    );
+  }
+
+  private buildCustomerStringFilterCondition(
+    field: string,
+    operator: CustomerSavedFilterOperator,
+    value: string | undefined,
+    options: { nullable: boolean; caseInsensitive: boolean }
+  ): Prisma.CustomerWhereInput {
+    const rawValue = this.cleanString(value);
+    const mode = options.caseInsensitive ? { mode: 'insensitive' as const } : {};
+    const fieldWhere = (fieldFilter: unknown) => ({ [field]: fieldFilter } as unknown as Prisma.CustomerWhereInput);
+
+    if (operator === 'is_empty') {
+      if (options.nullable) {
+        return {
+          OR: [
+            fieldWhere(null),
+            fieldWhere({ equals: '' }),
+          ],
+        };
+      }
+      return fieldWhere({ equals: '' });
+    }
+
+    if (operator === 'is_not_empty') {
+      if (options.nullable) {
+        return {
+          AND: [
+            { NOT: fieldWhere(null) },
+            { NOT: fieldWhere({ equals: '' }) },
+          ],
+        };
+      }
+      return { NOT: fieldWhere({ equals: '' }) };
+    }
+
+    if (!rawValue) {
+      throw new BadRequestException(`Điều kiện customFilter cho '${field}' đang thiếu value.`);
+    }
+
+    if (operator === 'contains') {
+      return fieldWhere({ contains: rawValue, ...mode });
+    }
+    if (operator === 'equals') {
+      return fieldWhere({ equals: rawValue, ...mode });
+    }
+    if (operator === 'not_equals') {
+      return { NOT: fieldWhere({ equals: rawValue, ...mode }) };
+    }
+
+    throw new BadRequestException(
+      `Operator '${operator}' không hỗ trợ cho customFilter field '${field}'.`
+    );
+  }
+
+  private buildCustomerDateFilter(
+    operator: CustomerSavedFilterOperator,
+    value: string | undefined,
+    valueTo: string | undefined
+  ): Prisma.DateTimeFilter {
+    if (!['before', 'after', 'on', 'between'].includes(operator)) {
+      throw new BadRequestException(`Operator '${operator}' không hỗ trợ cho điều kiện ngày.`);
+    }
+
+    const fromDate = this.toStartOfDayUtc(value, 'customFilter.value');
+    if (operator === 'before') {
+      return { lt: this.toNextDayUtc(fromDate) };
+    }
+    if (operator === 'after') {
+      return { gte: fromDate };
+    }
+    if (operator === 'on') {
+      return { gte: fromDate, lt: this.toNextDayUtc(fromDate) };
+    }
+
+    const toDate = this.toStartOfDayUtc(valueTo ?? value, 'customFilter.valueTo');
+    const left = fromDate <= toDate ? fromDate : toDate;
+    const right = fromDate <= toDate ? toDate : fromDate;
+    return {
+      gte: left,
+      lt: this.toNextDayUtc(right),
+    };
+  }
+
+  private toStartOfDayUtc(input: string | undefined, fieldName: string) {
+    const value = this.cleanString(input);
+    if (!value) {
+      throw new BadRequestException(`${fieldName} không được để trống.`);
+    }
+    const normalized = this.normalizeDateInput(value, fieldName);
+    return new Date(`${normalized}T00:00:00.000Z`);
+  }
+
+  private toNextDayUtc(day: Date) {
+    return new Date(day.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  private applyCustomerSavedFilterDefaultState(
+    filters: CustomerSavedFilter[],
+    defaultFilterId: string | null
+  ) {
+    return filters.map((filter) => ({
+      ...filter,
+      isDefault: Boolean(defaultFilterId) && filter.id === defaultFilterId,
+    }));
+  }
+
+  private normalizeIsoDateTimeString(input: unknown, fallback: string) {
+    const candidate = this.cleanString(input);
+    if (!candidate) {
+      return fallback;
+    }
+    const parsed = new Date(candidate);
+    if (Number.isNaN(parsed.getTime())) {
+      return fallback;
+    }
+    return parsed.toISOString();
+  }
+
+  private normalizeDateInput(input: string, fieldName: string) {
+    const parsed = new Date(String(input));
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${fieldName} không phải ngày hợp lệ.`);
+    }
+    return parsed.toISOString().slice(0, 10);
+  }
+
   private parseTags(input: unknown, allowedValues: string[] = [], fieldName = 'tags'): string[] {
     const normalizedAllowList = Array.from(
       new Set(
@@ -1181,6 +2457,53 @@ export class CrmService {
     return inputStage ?? undefined;
   }
 
+  private normalizeServiceContractProductTypeFilterValue(input: string | undefined) {
+    const candidate = this.cleanString(input).toUpperCase();
+    if ((Object.values(ServiceContractProductType) as string[]).includes(candidate)) {
+      return candidate as ServiceContractProductType;
+    }
+    throw new BadRequestException(`Giá trị productType '${candidate}' không hợp lệ cho customFilter.`);
+  }
+
+  private normalizeVehicleKindFilterValue(input: string | undefined) {
+    const candidate = this.cleanString(input).toUpperCase();
+    if ((Object.values(VehicleKind) as string[]).includes(candidate)) {
+      return candidate as VehicleKind;
+    }
+    throw new BadRequestException(`Giá trị vehicleKind '${candidate}' không hợp lệ cho customFilter.`);
+  }
+
+  private normalizeCustomerCareStatusFilterValue(input: string | undefined) {
+    const candidate = this.cleanString(input).toUpperCase();
+    if (
+      candidate === CustomerCareStatus.MOI_CHUA_TU_VAN
+      || candidate === CustomerCareStatus.DANG_SUY_NGHI
+      || candidate === CustomerCareStatus.DONG_Y_CHUYEN_THANH_KH
+      || candidate === CustomerCareStatus.KH_TU_CHOI
+      || candidate === CustomerCareStatus.KH_DA_MUA_BEN_KHAC
+      || candidate === CustomerCareStatus.NGUOI_NHA_LAM_THUE_BAO
+      || candidate === CustomerCareStatus.KHONG_NGHE_MAY_LAN_1
+      || candidate === CustomerCareStatus.KHONG_NGHE_MAY_LAN_2
+      || candidate === CustomerCareStatus.SAI_SO_KHONG_TON_TAI_BO_QUA_XOA
+    ) {
+      return candidate as CustomerCareStatus;
+    }
+    throw new BadRequestException(`Giá trị status '${candidate}' không hợp lệ cho customFilter.`);
+  }
+
+  private normalizeCustomerZaloNickTypeFilterValue(input: string | undefined) {
+    const candidate = this.cleanString(input).toUpperCase();
+    if (
+      candidate === CustomerZaloNickType.CHUA_KIEM_TRA
+      || candidate === CustomerZaloNickType.CHUA_CO_NICK_ZALO
+      || candidate === CustomerZaloNickType.CHAN_NGUOI_LA
+      || candidate === CustomerZaloNickType.GUI_DUOC_TIN_NHAN
+    ) {
+      return candidate as CustomerZaloNickType;
+    }
+    throw new BadRequestException(`Giá trị zaloNickType '${candidate}' không hợp lệ cho customFilter.`);
+  }
+
   private parseCustomerCareStatus(input: unknown, fallback: CustomerCareStatus): CustomerCareStatus {
     const candidate = this.cleanString(input).toUpperCase();
     if (
@@ -1213,6 +2536,27 @@ export class CrmService {
       return candidate as CustomerZaloNickType;
     }
     return fallback;
+  }
+
+  private joinSet(values?: Set<string> | null) {
+    if (!values || values.size === 0) {
+      return null;
+    }
+    const normalized = Array.from(values)
+      .map((value) => this.cleanString(value))
+      .filter(Boolean);
+    return normalized.length > 0 ? normalized.join(', ') : null;
+  }
+
+  private toCompactDateString(value: Date | string | null | undefined) {
+    if (!value) {
+      return null;
+    }
+    const parsed = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    return parsed.toISOString().slice(0, 10);
   }
 
   private parseDecimal(input: unknown, fieldName: string) {
@@ -1344,13 +2688,17 @@ export class CrmService {
     const role = (Object.values(UserRole) as string[]).includes(roleRaw)
       ? (roleRaw as UserRole)
       : null;
+    const sub = this.cleanString(auth.sub);
+    const email = this.cleanString(auth.email);
     const userId = this.cleanString(auth.userId)
-      || this.cleanString(auth.sub)
-      || this.cleanString(auth.email);
+      || sub
+      || email;
 
     return {
       role,
       userId,
+      sub,
+      email,
     };
   }
 }

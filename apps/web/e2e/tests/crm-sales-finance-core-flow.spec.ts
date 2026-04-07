@@ -62,14 +62,32 @@ type PaymentAllocation = {
   note?: string;
 };
 
+type SavedCustomerFilter = {
+  id: string;
+  name: string;
+  logic: 'AND' | 'OR';
+  isDefault: boolean;
+  conditions: Array<{
+    field: string;
+    operator: string;
+    value?: string;
+    valueTo?: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type MockState = {
   customers: Customer[];
+  savedCustomerFilters: SavedCustomerFilter[];
+  defaultCustomerFilterId: string | null;
   orders: SalesOrder[];
   invoices: FinanceInvoice[];
   approvals: Array<{ id: string; targetId: string; status: string; createdAt: string }>;
   allocations: Record<string, PaymentAllocation[]>;
   seq: {
     customer: number;
+    filter: number;
     order: number;
     invoice: number;
     item: number;
@@ -118,6 +136,70 @@ async function mockCoreErpApis(page: Page, state: MockState) {
           stages: ['MOI', 'DANG_CHAM_SOC', 'CHOT_DON'],
           sources: ['ONLINE', 'REFERRAL']
         }
+      });
+    }
+
+    if (method === 'GET' && path === '/api/v1/crm/customers/filters') {
+      return json(route, {
+        items: state.savedCustomerFilters,
+        defaultFilterId: state.defaultCustomerFilterId,
+      });
+    }
+
+    if (method === 'POST' && path === '/api/v1/crm/customers/filters') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const now = new Date().toISOString();
+      const id = String(body.id ?? '').trim() || `filter_e2e_${state.seq.filter++}`;
+      const existingIndex = state.savedCustomerFilters.findIndex((item) => item.id === id);
+      const nextFilter: SavedCustomerFilter = {
+        id,
+        name: String(body.name ?? 'Bộ lọc'),
+        logic: String(body.logic ?? 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND',
+        isDefault: Boolean(body.isDefault),
+        conditions: Array.isArray(body.conditions)
+          ? (body.conditions as Array<Record<string, unknown>>).map((item) => ({
+              field: String(item.field ?? ''),
+              operator: String(item.operator ?? ''),
+              value: item.value ? String(item.value) : undefined,
+              valueTo: item.valueTo ? String(item.valueTo) : undefined,
+            }))
+          : [],
+        createdAt: existingIndex >= 0 ? state.savedCustomerFilters[existingIndex].createdAt : now,
+        updatedAt: now,
+      };
+
+      if (existingIndex >= 0) {
+        state.savedCustomerFilters[existingIndex] = nextFilter;
+      } else {
+        state.savedCustomerFilters.unshift(nextFilter);
+      }
+
+      state.defaultCustomerFilterId = nextFilter.isDefault ? nextFilter.id : state.defaultCustomerFilterId;
+      state.savedCustomerFilters = state.savedCustomerFilters.map((item) => ({
+        ...item,
+        isDefault: item.id === state.defaultCustomerFilterId,
+      }));
+
+      return json(route, {
+        item: nextFilter,
+        items: state.savedCustomerFilters,
+        defaultFilterId: state.defaultCustomerFilterId,
+      }, 201);
+    }
+
+    if (method === 'DELETE' && /\/api\/v1\/crm\/customers\/filters\/[^/]+$/.test(path)) {
+      const filterId = path.split('/')[6];
+      state.savedCustomerFilters = state.savedCustomerFilters.filter((item) => item.id !== filterId);
+      if (state.defaultCustomerFilterId === filterId) {
+        state.defaultCustomerFilterId = null;
+      }
+      state.savedCustomerFilters = state.savedCustomerFilters.map((item) => ({
+        ...item,
+        isDefault: item.id === state.defaultCustomerFilterId,
+      }));
+      return json(route, {
+        items: state.savedCustomerFilters,
+        defaultFilterId: state.defaultCustomerFilterId,
       });
     }
 
@@ -526,12 +608,15 @@ async function mockCoreErpApis(page: Page, state: MockState) {
 test('runs CRM -> Sales -> Finance core flow via Operations Boards', async ({ page }) => {
   const state: MockState = {
     customers: [],
+    savedCustomerFilters: [],
+    defaultCustomerFilterId: null,
     orders: [],
     invoices: [],
     approvals: [],
     allocations: {},
     seq: {
       customer: 1,
+      filter: 1,
       order: 1,
       invoice: 1,
       item: 1,
@@ -676,10 +761,13 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
         createdAt: '2026-04-01T03:10:00.000Z'
       }
     ],
+    savedCustomerFilters: [],
+    defaultCustomerFilterId: null,
     approvals: [],
     allocations: {},
     seq: {
       customer: 3,
+      filter: 1,
       order: 3,
       invoice: 3,
       item: 3,
@@ -794,12 +882,15 @@ test('supports CRM customer import page with preview + import flow', async ({ pa
         updatedAt: '2026-04-01T01:00:00.000Z',
       },
     ],
+    savedCustomerFilters: [],
+    defaultCustomerFilterId: null,
     orders: [],
     invoices: [],
     approvals: [],
     allocations: {},
     seq: {
       customer: 10,
+      filter: 1,
       order: 1,
       invoice: 1,
       item: 1,
