@@ -50,7 +50,7 @@ describe('CRM API flow integration', () => {
         phone: '0912345678',
         email: 'a@example.com',
         customerStage: 'MOI',
-        status: 'ACTIVE',
+        status: 'MOI_CHUA_TU_VAN',
         tags: ['moi']
       },
       paymentRequest: {

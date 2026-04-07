@@ -77,7 +77,7 @@ describe('Hybrid search API flow', () => {
         email: 'a@example.com',
         phone: '0909',
         tags: ['vip'],
-        status: 'ACTIVE',
+        status: 'MOI_CHUA_TU_VAN',
         customerStage: 'MOI'
       },
       {
@@ -87,7 +87,7 @@ describe('Hybrid search API flow', () => {
         email: 'b@example.com',
         phone: '0908',
         tags: ['moi'],
-        status: 'ACTIVE',
+        status: 'MOI_CHUA_TU_VAN',
         customerStage: 'MOI'
       }
     ] as any);

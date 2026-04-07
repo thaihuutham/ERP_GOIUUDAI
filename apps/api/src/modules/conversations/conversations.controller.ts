@@ -48,6 +48,16 @@ export class ConversationsController {
     return this.conversationsService.updateThreadTags(threadId, body);
   }
 
+  @Post('threads/:id/link-customer')
+  linkThreadCustomer(@Param('id') threadId: string, @Body() body: Record<string, unknown>) {
+    return this.conversationsService.linkThreadCustomer(threadId, body);
+  }
+
+  @Post('threads/:id/quick-create-customer')
+  quickCreateCustomerFromThread(@Param('id') threadId: string, @Body() body: Record<string, unknown>) {
+    return this.conversationsService.quickCreateCustomerFromThread(threadId, body);
+  }
+
   @Get('threads/:id/evaluation/latest')
   getLatestEvaluation(@Param('id') threadId: string) {
     return this.conversationsService.getLatestEvaluation(threadId);

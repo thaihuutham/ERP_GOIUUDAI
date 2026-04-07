@@ -1,8 +1,10 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ClsService } from 'nestjs-cls';
 import {
   ContractRenewalReminderStatus,
   ConversationChannel,
+  CustomerCareStatus,
   CustomerSocialPlatform,
   GenericStatus,
   InboundPolicyExtractionStatus,
@@ -13,8 +15,10 @@ import {
   ServiceContractSourceType,
   ServiceContractStatus,
   TelecomBeneficiaryType,
+  UserRole,
   VehicleKind
 } from '@prisma/client';
+import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
@@ -42,6 +46,19 @@ type IngestionSummary = {
   errors: Array<Record<string, unknown>>;
 };
 
+type VehicleImportError = {
+  rowIndex: number;
+  plateNumber?: string;
+  message: string;
+};
+
+type VehicleImportSummary = {
+  totalRows: number;
+  importedCount: number;
+  skippedCount: number;
+  errors: VehicleImportError[];
+};
+
 @Injectable()
 export class CrmContractsService {
   private readonly logger = new Logger(CrmContractsService.name);
@@ -50,7 +67,8 @@ export class CrmContractsService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
     @Inject(ConfigService) private readonly config: ConfigService,
-    @Inject(NotificationsService) private readonly notifications: NotificationsService
+    @Inject(NotificationsService) private readonly notifications: NotificationsService,
+    @Optional() @Inject(ClsService) private readonly cls?: ClsService
   ) {}
 
   async getCustomerDetail(customerId: string) {
@@ -101,6 +119,55 @@ export class CrmContractsService {
       },
       recentContracts: contracts.slice(0, 30),
       vehicles
+    };
+  }
+
+  async getCustomer360(customerId: string) {
+    const id = this.requiredString(customerId, 'Thiếu customerId.');
+    const detail = await this.getCustomerDetail(id);
+
+    const [ordersCount, recentOrders, recentInteractions] = await Promise.all([
+      this.prisma.client.order.count({
+        where: {
+          customerId: id
+        }
+      }),
+      this.prisma.client.order.findMany({
+        where: {
+          customerId: id
+        },
+        include: {
+          items: true,
+          invoices: {
+            select: {
+              id: true,
+              invoiceNo: true,
+              status: true,
+              createdAt: true
+            }
+          }
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 30
+      }),
+      this.prisma.client.customerInteraction.findMany({
+        where: {
+          customerId: id
+        },
+        orderBy: [{ interactionAt: 'desc' }],
+        take: 50
+      })
+    ]);
+
+    return {
+      ...detail,
+      orderSummary: {
+        totalOrders: ordersCount,
+        totalSpent: detail.customer.totalSpent ?? null,
+        lastOrderAt: detail.customer.lastOrderAt ?? recentOrders[0]?.createdAt ?? null
+      },
+      recentOrders,
+      recentInteractions
     };
   }
 
@@ -456,7 +523,8 @@ export class CrmContractsService {
           select: {
             id: true,
             fullName: true,
-            phone: true
+            phone: true,
+            ownerStaffId: true
           }
         }
       },
@@ -476,17 +544,21 @@ export class CrmContractsService {
   }
 
   async createVehicle(payload: Record<string, unknown>) {
+    const body = this.ensureRecord(payload);
     const vehicleKind = this.parseVehicleKind(payload.vehicleKind);
     const ownerCustomerId = this.cleanString(payload.ownerCustomerId) || null;
+    const ownerCustomer = ownerCustomerId ? await this.findCustomerOwnership(ownerCustomerId) : null;
 
-    if (ownerCustomerId) {
-      await this.ensureCustomerExists(ownerCustomerId);
+    await this.assertVehicleWriteAccess(ownerCustomerId, this.cleanString(ownerCustomer?.ownerStaffId) || null);
+    const ownerFullName = this.cleanString(body.ownerFullName) || this.cleanString(ownerCustomer?.fullName);
+    if (!ownerFullName) {
+      throw new BadRequestException('Thiếu ownerFullName.');
     }
 
     const data = {
       tenant_Id: this.prisma.getTenantId(),
       ownerCustomerId,
-      ownerFullName: this.requiredString(payload.ownerFullName, 'Thiếu ownerFullName.'),
+      ownerFullName,
       ownerAddress: this.cleanString(payload.ownerAddress) || null,
       plateNumber: this.requiredString(payload.plateNumber, 'Thiếu plateNumber.').toUpperCase(),
       chassisNumber: this.requiredString(payload.chassisNumber, 'Thiếu chassisNumber.').toUpperCase(),
@@ -499,6 +571,222 @@ export class CrmContractsService {
     };
 
     return this.prisma.client.vehicle.create({ data });
+  }
+
+  async importVehicles(payload: Record<string, unknown>): Promise<VehicleImportSummary> {
+    const actor = this.resolveVehicleActor();
+    if (actor.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Chỉ admin được phép import dữ liệu xe bằng Excel.');
+    }
+
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length === 0) {
+      throw new BadRequestException('Thiếu dữ liệu rows để import xe.');
+    }
+
+    const maxRows = 1000;
+    const slicedRows = rows.slice(0, maxRows);
+    const errors: VehicleImportError[] = [];
+    let importedCount = 0;
+
+    for (let index = 0; index < slicedRows.length; index += 1) {
+      const rowRaw = slicedRows[index];
+      const row = this.ensureRecord(rowRaw);
+      const rowIndex = index + 1;
+      const plateNumber = this.cleanString(row.plateNumber) || undefined;
+
+      try {
+        const ownerCustomerId = await this.resolveVehicleImportOwnerCustomerId(row);
+        await this.createVehicle({
+          ...row,
+          ownerCustomerId
+        });
+        importedCount += 1;
+      } catch (error) {
+        errors.push({
+          rowIndex,
+          plateNumber,
+          message: error instanceof Error ? error.message : 'Không thể import dòng dữ liệu xe.'
+        });
+      }
+    }
+
+    return {
+      totalRows: slicedRows.length,
+      importedCount,
+      skippedCount: slicedRows.length - importedCount,
+      errors
+    };
+  }
+
+  async updateVehicle(vehicleId: string, payload: Record<string, unknown>) {
+    const id = this.requiredString(vehicleId, 'Thiếu vehicleId.');
+    const body = this.ensureRecord(payload);
+    const existing = await this.prisma.client.vehicle.findFirst({
+      where: { id },
+      include: {
+        ownerCustomer: {
+          select: {
+            id: true,
+            fullName: true,
+            ownerStaffId: true
+          }
+        }
+      }
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Không tìm thấy xe.');
+    }
+
+    await this.assertVehicleWriteAccess(
+      existing.ownerCustomerId,
+      this.cleanString(existing.ownerCustomer?.ownerStaffId) || null
+    );
+
+    let nextOwnerCustomerId = existing.ownerCustomerId;
+    let nextOwnerCustomer = existing.ownerCustomer;
+    if (this.hasOwn(body, 'ownerCustomerId')) {
+      const requestedOwnerCustomerId = this.cleanString(body.ownerCustomerId) || null;
+      nextOwnerCustomerId = requestedOwnerCustomerId;
+      nextOwnerCustomer = requestedOwnerCustomerId ? await this.findCustomerOwnership(requestedOwnerCustomerId) : null;
+      await this.assertVehicleWriteAccess(
+        requestedOwnerCustomerId,
+        this.cleanString(nextOwnerCustomer?.ownerStaffId) || null
+      );
+    }
+
+    const data: Prisma.VehicleUncheckedUpdateManyInput = {};
+
+    if (this.hasOwn(body, 'ownerCustomerId')) {
+      data.ownerCustomerId = nextOwnerCustomerId;
+    }
+
+    if (this.hasOwn(body, 'ownerFullName')) {
+      const ownerFullName = this.cleanString(body.ownerFullName) || this.cleanString(nextOwnerCustomer?.fullName);
+      if (!ownerFullName) {
+        throw new BadRequestException('Thiếu ownerFullName.');
+      }
+      data.ownerFullName = ownerFullName;
+    }
+
+    if (this.hasOwn(body, 'ownerAddress')) {
+      data.ownerAddress = this.cleanString(body.ownerAddress) || null;
+    }
+
+    if (this.hasOwn(body, 'plateNumber')) {
+      data.plateNumber = this.requiredString(body.plateNumber, 'Thiếu plateNumber.').toUpperCase();
+    }
+
+    if (this.hasOwn(body, 'chassisNumber')) {
+      data.chassisNumber = this.requiredString(body.chassisNumber, 'Thiếu chassisNumber.').toUpperCase();
+    }
+
+    if (this.hasOwn(body, 'engineNumber')) {
+      data.engineNumber = this.requiredString(body.engineNumber, 'Thiếu engineNumber.').toUpperCase();
+    }
+
+    if (this.hasOwn(body, 'vehicleKind')) {
+      data.vehicleKind = this.parseVehicleKind(body.vehicleKind);
+    }
+
+    if (this.hasOwn(body, 'vehicleType')) {
+      data.vehicleType = this.requiredString(body.vehicleType, 'Thiếu vehicleType.');
+    }
+
+    if (this.hasOwn(body, 'seatCount')) {
+      data.seatCount = this.toOptionalInt(body.seatCount, 'seatCount');
+    }
+
+    if (this.hasOwn(body, 'loadKg')) {
+      data.loadKg = this.toOptionalInt(body.loadKg, 'loadKg');
+    }
+
+    if (this.hasOwn(body, 'status')) {
+      const status = this.optionalGenericStatus(body.status);
+      if (!status) {
+        throw new BadRequestException('status không hợp lệ.');
+      }
+      data.status = status;
+    }
+
+    if (Object.keys(data).length > 0) {
+      await this.prisma.client.vehicle.updateMany({
+        where: { id },
+        data
+      });
+    }
+
+    const updated = await this.prisma.client.vehicle.findFirst({
+      where: { id },
+      include: {
+        ownerCustomer: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            ownerStaffId: true
+          }
+        }
+      }
+    });
+
+    if (!updated) {
+      throw new NotFoundException('Không tìm thấy xe sau khi cập nhật.');
+    }
+
+    return updated;
+  }
+
+  async archiveVehicle(vehicleId: string) {
+    const id = this.requiredString(vehicleId, 'Thiếu vehicleId.');
+    const existing = await this.prisma.client.vehicle.findFirst({
+      where: { id },
+      include: {
+        ownerCustomer: {
+          select: {
+            id: true,
+            ownerStaffId: true
+          }
+        }
+      }
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Không tìm thấy xe.');
+    }
+
+    await this.assertVehicleWriteAccess(
+      existing.ownerCustomerId,
+      this.cleanString(existing.ownerCustomer?.ownerStaffId) || null
+    );
+
+    await this.prisma.client.vehicle.updateMany({
+      where: { id },
+      data: {
+        status: GenericStatus.ARCHIVED
+      }
+    });
+
+    const archived = await this.prisma.client.vehicle.findFirst({
+      where: { id },
+      include: {
+        ownerCustomer: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            ownerStaffId: true
+          }
+        }
+      }
+    });
+
+    if (!archived) {
+      throw new NotFoundException('Không tìm thấy xe sau khi lưu trữ.');
+    }
+
+    return archived;
   }
 
   async getVehiclePolicies(vehicleId: string) {
@@ -1131,7 +1419,7 @@ export class CrmContractsService {
         email: this.cleanString(customerData.email) || null,
         emailNormalized: emailNormalized || null,
         source: this.cleanString(customerData.source) || 'EXTERNAL_SYNC',
-        status: GenericStatus.ACTIVE
+        status: CustomerCareStatus.MOI_CHUA_TU_VAN
       }
     });
 
@@ -1325,7 +1613,7 @@ export class CrmContractsService {
   async resolveCustomerIdForExternalIdentity(
     channel: ConversationChannel,
     senderExternalId?: string,
-    fallbackPhone?: string
+    _fallbackPhone?: string
   ) {
     const externalId = this.cleanString(senderExternalId);
     const platform = this.mapConversationChannelToSocialPlatform(channel);
@@ -1342,21 +1630,6 @@ export class CrmContractsService {
       });
       if (bySocial?.customerId) {
         return bySocial.customerId;
-      }
-    }
-
-    const phoneNormalized = normalizeVietnamPhone(this.cleanString(fallbackPhone));
-    if (phoneNormalized) {
-      const byPhone = await this.prisma.client.customer.findFirst({
-        where: {
-          phoneNormalized
-        },
-        select: {
-          id: true
-        }
-      });
-      if (byPhone?.id) {
-        return byPhone.id;
       }
     }
 
@@ -1568,6 +1841,10 @@ export class CrmContractsService {
     return input as Record<string, unknown>;
   }
 
+  private hasOwn(input: Record<string, unknown>, key: string) {
+    return Object.prototype.hasOwnProperty.call(input, key);
+  }
+
   private toDbJson(value: unknown): Prisma.InputJsonValue | null {
     if (value === null || value === undefined) {
       return null;
@@ -1596,5 +1873,89 @@ export class CrmContractsService {
       throw new NotFoundException(`Không tìm thấy xe: ${vehicleId}`);
     }
     return existing;
+  }
+
+  private async findCustomerOwnership(customerId: string) {
+    const existing = await this.prisma.client.customer.findFirst({
+      where: { id: customerId },
+      select: {
+        id: true,
+        fullName: true,
+        ownerStaffId: true
+      }
+    });
+    if (!existing) {
+      throw new NotFoundException(`Không tìm thấy khách hàng: ${customerId}`);
+    }
+    return existing;
+  }
+
+  private async resolveVehicleImportOwnerCustomerId(row: Record<string, unknown>) {
+    const ownerCustomerId = this.cleanString(row.ownerCustomerId) || this.cleanString(row.customerId);
+    if (ownerCustomerId) {
+      return ownerCustomerId;
+    }
+
+    const ownerPhoneRaw = this.cleanString(row.ownerCustomerPhone)
+      || this.cleanString(row.customerPhone)
+      || this.cleanString(row.ownerPhone)
+      || this.cleanString(row.phone);
+    if (!ownerPhoneRaw) {
+      throw new BadRequestException('Thiếu ownerCustomerId hoặc ownerCustomerPhone.');
+    }
+
+    const normalizedPhone = normalizeVietnamPhone(ownerPhoneRaw);
+    if (!normalizedPhone) {
+      throw new BadRequestException('ownerCustomerPhone không hợp lệ.');
+    }
+
+    const customer = await this.prisma.client.customer.findFirst({
+      where: {
+        phoneNormalized: normalizedPhone
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Không tìm thấy khách hàng theo số điện thoại ${ownerPhoneRaw}.`);
+    }
+
+    return customer.id;
+  }
+
+  private resolveVehicleActor() {
+    const auth = this.ensureRecord(this.cls?.get(AUTH_USER_CONTEXT_KEY));
+    const roleRaw = this.cleanString(auth.role).toUpperCase();
+    const role = (Object.values(UserRole) as string[]).includes(roleRaw)
+      ? (roleRaw as UserRole)
+      : null;
+    const userId = this.cleanString(auth.userId)
+      || this.cleanString(auth.sub)
+      || this.cleanString(auth.email);
+    return {
+      role,
+      userId
+    };
+  }
+
+  private async assertVehicleWriteAccess(ownerCustomerId: string | null, ownerStaffId: string | null) {
+    const actor = this.resolveVehicleActor();
+    if (actor.role === UserRole.ADMIN) {
+      return;
+    }
+
+    if (!ownerCustomerId) {
+      throw new ForbiddenException('Bạn chỉ được thao tác xe thuộc khách hàng mình phụ trách.');
+    }
+
+    if (!actor.userId) {
+      throw new ForbiddenException('Không xác định được người dùng hiện tại để thao tác xe.');
+    }
+
+    if (!ownerStaffId || ownerStaffId !== actor.userId) {
+      throw new ForbiddenException('Bạn chỉ được thao tác xe thuộc khách hàng mình phụ trách.');
+    }
   }
 }

@@ -30,6 +30,21 @@
    - `PRIORITIZE_RECENT_INTERACTION`
    - `AVOID_PREVIOUSLY_INTERACTED_ACCOUNT`
 6. Snapshot khách khi start campaign, không tự thêm khách mới trong lúc chạy.
+7. Snapshot không còn phụ thuộc `Customer.status = ACTIVE`; thay bằng filter `zaloNickType`.
+8. `recipientFilterJson.zaloNickTypes` hỗ trợ multi-select để giới hạn tập nhận.
+9. Nếu admin không chọn `zaloNickTypes`:
+   - mặc định lấy `CHUA_KIEM_TRA` + `GUI_DUOC_TIN_NHAN`;
+   - tự loại `CHUA_CO_NICK_ZALO`.
+10. Rule gửi theo `zaloNickType`:
+   - `CHAN_NGUOI_LA`: chỉ gửi bằng nick đã từng tương tác gần nhất; không có nick phù hợp thì skip.
+   - `GUI_DUOC_TIN_NHAN`: gửi theo `selectionPolicy` hiện tại.
+   - `CHUA_CO_NICK_ZALO`: luôn skip khỏi tập chạy.
+   - `CHUA_KIEM_TRA`: cho phép chạy theo logic lookup/sending hiện tại.
+11. Auto update `Customer.zaloNickType` sau campaign:
+   - lookup UID không ra -> `CHUA_CO_NICK_ZALO`
+   - gửi thành công -> `GUI_DUOC_TIN_NHAN`
+   - lỗi match mẫu “chặn người lạ” -> `CHAN_NGUOI_LA`
+   - lỗi khác -> giữ nguyên
 
 ## 5. Variable + Spin Strategy
 - Cú pháp biến: `{{variable_key}}`.
@@ -59,6 +74,27 @@
 6. Thành công: mark `SENT`, ghi CRM interaction, cập nhật nextSendAt.
 7. Thất bại: tăng error counter; đạt ngưỡng thì pause account.
 8. Không còn recipient hợp lệ thì campaign kết thúc.
+
+## 8.1 Recipient filter JSON (API)
+- Trường nằm trong payload tạo/cập nhật campaign: `recipientFilterJson`.
+- Key hỗ trợ:
+  - `customerIds: string[]`
+  - `tags: string[]`
+  - `stage: string`
+  - `source: string`
+  - `zaloNickTypes: CustomerZaloNickType[]`
+  - `defaultPromoCode: string`
+- Ví dụ:
+```json
+{
+  "recipientFilterJson": {
+    "stage": "MOI",
+    "tags": ["lead-moi"],
+    "zaloNickTypes": ["CHUA_KIEM_TRA", "GUI_DUOC_TIN_NHAN"],
+    "defaultPromoCode": "SPRING-2026"
+  }
+}
+```
 
 ## 9. Decision Log
 1. Chọn ERP-native campaign module thay vì n8n orchestration cho V1.

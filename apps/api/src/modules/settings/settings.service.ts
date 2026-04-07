@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { GenericStatus } from '@prisma/client';
+import { CustomerCareStatus, GenericStatus } from '@prisma/client';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import {
   decryptSettingsSecret,
@@ -1165,15 +1165,14 @@ export class SettingsService {
           email,
           segment: level || 'CTV',
           source: 'BHTOT_CTV',
-          status: this.mapUserStatus(user.status)
+          status: this.mapUserToCustomerCareStatus(user.status)
         },
         update: {
           fullName,
           phone,
           email,
           segment: level || 'CTV',
-          source: 'BHTOT_CTV',
-          status: this.mapUserStatus(user.status)
+          source: 'BHTOT_CTV'
         }
       });
       customers += 1;
@@ -1348,6 +1347,10 @@ export class SettingsService {
       return GenericStatus.PENDING;
     }
     return GenericStatus.ACTIVE;
+  }
+
+  private mapUserToCustomerCareStatus(_input: unknown): CustomerCareStatus {
+    return CustomerCareStatus.MOI_CHUA_TU_VAN;
   }
 
   private mapOrderStatus(input: unknown): GenericStatus {

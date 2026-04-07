@@ -18,6 +18,12 @@
   - Nếu backend cần object JSON, UI phải map từ field nghiệp vụ thân thiện (`input/select/checkbox/date`) sang object khi submit.
   - Không thêm mới `type: 'json'` trong module definitions và parser form chung.
   - Giữ tương thích ngược API: backend tiếp tục nhận key cũ và hỗ trợ alias thân thiện để UI thống nhất.
+- Checklist bắt buộc cho mọi tính năng Import Excel (user-facing):
+  - Luôn dùng component chuẩn: `apps/web/components/ui/excel-import-block.tsx`.
+  - Bắt buộc có nút `Tải file mẫu` ngay trong block import.
+  - File mẫu phải có đúng header nghiệp vụ + ít nhất 1 dòng ví dụ hợp lệ.
+  - Sau import phải hiển thị rõ: `Tổng dòng`, `Import thành công`, `Bỏ qua/Lỗi`, và danh sách lỗi theo dòng.
+  - Nếu có kiểm soát quyền (RBAC), UI phải hiển thị thông báo quyền khi user không được import.
 
 ## 3. Documentation
 - Quyết định kỹ thuật phải có ADR trong `docs/decisions/`.

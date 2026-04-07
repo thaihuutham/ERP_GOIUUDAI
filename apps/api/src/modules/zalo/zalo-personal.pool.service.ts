@@ -91,7 +91,15 @@ export class ZaloPersonalPoolService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    void this.restoreConnectedPersonalSessions();
+    if (!this.isPrismaReady()) {
+      this.logger.warn('Skip restoring personal sessions: Prisma service is not ready.');
+      return;
+    }
+
+    void this.restoreConnectedPersonalSessions()
+      .catch((error) => {
+        this.logger.warn(`Failed restoring personal sessions on init: ${this.normalizeErrorMessage(error)}`);
+      });
   }
 
   async startQrLogin(accountId: string): Promise<void> {
@@ -1116,6 +1124,10 @@ export class ZaloPersonalPoolService implements OnModuleInit {
   }
 
   private async resolveOrgId(accountId: string) {
+    if (!this.isPrismaReady()) {
+      return '';
+    }
+
     const cached = this.orgIdByAccount.get(accountId);
     if (cached) {
       return cached;
@@ -1133,6 +1145,10 @@ export class ZaloPersonalPoolService implements OnModuleInit {
   }
 
   private async restoreConnectedPersonalSessions() {
+    if (!this.isPrismaReady()) {
+      return;
+    }
+
     const tenantId = this.prisma.getTenantId();
     const accounts = await this.prisma.client.zaloAccount.findMany({
       where: {
@@ -1163,5 +1179,13 @@ export class ZaloPersonalPoolService implements OnModuleInit {
         this.logger.warn(`Failed restoring personal listener for ${account.id}: ${this.normalizeErrorMessage(error)}`);
       }
     }
+  }
+
+  private isPrismaReady() {
+    return Boolean(
+      this.prisma
+      && this.prisma.client
+      && typeof this.prisma.getTenantId === 'function',
+    );
   }
 }

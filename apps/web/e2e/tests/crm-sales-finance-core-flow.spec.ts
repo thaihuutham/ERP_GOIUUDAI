@@ -136,7 +136,7 @@ async function mockCoreErpApis(page: Page, state: MockState) {
         email: String(body.email ?? ''),
         customerStage: String(body.customerStage ?? 'MOI'),
         source: String(body.source ?? 'ONLINE'),
-        status: 'ACTIVE',
+        status: 'MOI_CHUA_TU_VAN',
         tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
         updatedAt: now
       };
@@ -162,7 +162,7 @@ async function mockCoreErpApis(page: Page, state: MockState) {
       if (!customer) {
         return json(route, { message: 'Không tìm thấy khách hàng.' }, 404);
       }
-      customer.status = 'ARCHIVED';
+      customer.status = 'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA';
       customer.updatedAt = new Date().toISOString();
       return json(route, { ok: true });
     }
@@ -496,7 +496,7 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
         email: 'bulk1@example.com',
         customerStage: 'MOI',
         source: 'ONLINE',
-        status: 'ACTIVE',
+        status: 'MOI_CHUA_TU_VAN',
         tags: [],
         updatedAt: '2026-04-01T01:00:00.000Z'
       },
@@ -507,7 +507,7 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
         email: 'bulk2@example.com',
         customerStage: 'MOI',
         source: 'ONLINE',
-        status: 'ACTIVE',
+        status: 'MOI_CHUA_TU_VAN',
         tags: [],
         updatedAt: '2026-04-01T01:00:00.000Z'
       }
@@ -598,9 +598,9 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
   }
   await expect(page.getByRole('button', { name: 'Khách bulk 1' })).toBeVisible();
   await checkAllVisibleRows();
-  await page.getByRole('button', { name: 'Set INACTIVE' }).click();
-  await expect(page.locator('.finance-alert-success')).toContainText('Set trạng thái INACTIVE: thành công 2/2.');
-  expect(state.customers.every((item) => item.status === 'INACTIVE')).toBe(true);
+  await page.getByRole('button', { name: 'Đổi: KH Từ chối' }).click();
+  await expect(page.locator('.finance-alert-success')).toContainText('Set trạng thái KH Từ chối: thành công 2/2.');
+  expect(state.customers.every((item) => item.status === 'KH_TU_CHOI')).toBe(true);
 
   await page.goto('/modules/sales');
   await expect(page.getByRole('button', { name: 'SO-BULK-001' })).toBeVisible();

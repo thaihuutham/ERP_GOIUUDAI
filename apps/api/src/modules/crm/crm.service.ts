@@ -1,5 +1,7 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { GenericStatus, Prisma } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
+import { CustomerCareStatus, CustomerZaloNickType, GenericStatus, Prisma, UserRole } from '@prisma/client';
+import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { assertValidVietnamPhone, normalizeVietnamPhone } from '../../common/validation/phone.validation';
@@ -7,18 +9,32 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
 import { SearchService } from '../search/search.service';
 
+type CustomerImportError = {
+  rowIndex: number;
+  identifier?: string;
+  message: string;
+};
+
+type CustomerImportSummary = {
+  totalRows: number;
+  importedCount: number;
+  skippedCount: number;
+  errors: CustomerImportError[];
+};
+
 @Injectable()
 export class CrmService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SearchService) private readonly search: SearchService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
-    @Optional() @Inject(IamScopeFilterService) private readonly iamScopeFilter?: IamScopeFilterService
+    @Optional() @Inject(IamScopeFilterService) private readonly iamScopeFilter?: IamScopeFilterService,
+    @Optional() @Inject(ClsService) private readonly cls?: ClsService
   ) {}
 
   async listCustomers(
     query: PaginationQueryDto,
-    filters: { status?: GenericStatus | 'ALL'; stage?: string; tag?: string } = {},
+    filters: { status?: CustomerCareStatus | 'ALL'; stage?: string; tag?: string } = {},
     entityIds?: string[]
   ) {
     const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
@@ -149,10 +165,27 @@ export class CrmService {
       this.optionalString(payload.source),
       salesPolicy.customerTaxonomy
     );
+    const parsedStatus = this.parseCustomerCareStatus(
+      payload.status,
+      CustomerCareStatus.MOI_CHUA_TU_VAN
+    );
+    const parsedZaloNickType = this.parseCustomerZaloNickType(
+      payload.zaloNickType,
+      CustomerZaloNickType.CHUA_KIEM_TRA
+    );
 
     const duplicate = await this.findDuplicateCustomer(phone, email);
     if (duplicate) {
       const mergedTags = this.mergeTags(duplicate.tags, tags);
+      const nextStatus = this.parseCustomerCareStatus(payload.status, duplicate.status);
+      const nextStage = this.resolveCustomerStageForStatus(
+        normalizedTaxonomy.stage ?? duplicate.customerStage,
+        nextStatus
+      );
+      const nextZaloNickType = this.parseCustomerZaloNickType(
+        payload.zaloNickType,
+        duplicate.zaloNickType
+      );
       await this.prisma.client.customer.updateMany({
         where: { id: duplicate.id },
         data: {
@@ -163,11 +196,13 @@ export class CrmService {
           emailNormalized: email ?? duplicate.emailNormalized,
           segment: this.optionalString(payload.segment) ?? duplicate.segment,
           source: normalizedTaxonomy.source ?? duplicate.source,
+          needsSummary: this.optionalString(payload.needsSummary) ?? duplicate.needsSummary,
           ownerStaffId: this.optionalString(payload.ownerStaffId) ?? duplicate.ownerStaffId,
           consentStatus: this.optionalString(payload.consentStatus) ?? duplicate.consentStatus,
-          customerStage: normalizedTaxonomy.stage ?? duplicate.customerStage,
-          status: this.parseStatus(payload.status, duplicate.status),
-          tags: mergedTags
+          customerStage: nextStage ?? duplicate.customerStage,
+          status: nextStatus,
+          zaloNickType: nextZaloNickType,
+          tags: mergedTags,
         }
       });
 
@@ -193,11 +228,13 @@ export class CrmService {
         code: this.optionalString(payload.code) ?? null,
         segment: this.optionalString(payload.segment) ?? null,
         source: normalizedTaxonomy.source ?? null,
+        needsSummary: this.optionalString(payload.needsSummary) ?? null,
         ownerStaffId: this.optionalString(payload.ownerStaffId) ?? null,
         consentStatus: this.optionalString(payload.consentStatus) ?? null,
-        customerStage: normalizedTaxonomy.stage ?? 'MOI',
-        status: this.parseStatus(payload.status, GenericStatus.ACTIVE),
-        tags
+        customerStage: this.resolveCustomerStageForStatus(normalizedTaxonomy.stage ?? 'MOI', parsedStatus) ?? 'MOI',
+        status: parsedStatus,
+        zaloNickType: parsedZaloNickType,
+        tags,
       }
     });
     await this.search.syncCustomerUpsert(created);
@@ -236,6 +273,21 @@ export class CrmService {
       throw new BadRequestException('Số điện thoại hoặc email đã được dùng bởi khách hàng khác.');
     }
 
+    const hasStatusField = this.hasOwn(payload, 'status');
+    const hasZaloNickTypeField = this.hasOwn(payload, 'zaloNickType');
+    const hasCustomerStageField = this.hasOwn(payload, 'customerStage');
+    const nextStatus = hasStatusField
+      ? this.parseCustomerCareStatus(payload.status, current.status)
+      : current.status;
+    const nextZaloNickType = hasZaloNickTypeField
+      ? this.parseCustomerZaloNickType(payload.zaloNickType, current.zaloNickType)
+      : current.zaloNickType;
+    const nextCustomerStage = this.resolveCustomerStageForStatus(
+      hasCustomerStageField ? normalizedTaxonomy.stage : current.customerStage,
+      nextStatus
+    );
+    const shouldUpdateCustomerStage = hasCustomerStageField || hasStatusField;
+
     const parsedTags = payload.tags !== undefined
       ? this.parseTags(payload.tags, salesPolicy.tagRegistry.customerTags, 'customer.tags')
       : current.tags;
@@ -258,10 +310,14 @@ export class CrmService {
         code: payload.code ? String(payload.code) : undefined,
         segment: payload.segment ? String(payload.segment) : undefined,
         source: payload.source ? normalizedTaxonomy.source : undefined,
+        needsSummary: payload.needsSummary !== undefined
+          ? (this.optionalString(payload.needsSummary) ?? null)
+          : undefined,
         ownerStaffId: payload.ownerStaffId ? String(payload.ownerStaffId) : undefined,
         consentStatus: payload.consentStatus ? String(payload.consentStatus) : undefined,
-        customerStage: payload.customerStage ? normalizedTaxonomy.stage : undefined,
-        status: payload.status ? this.parseStatus(payload.status, current.status) : undefined,
+        customerStage: shouldUpdateCustomerStage ? (nextCustomerStage ?? null) : undefined,
+        status: hasStatusField ? nextStatus : undefined,
+        zaloNickType: hasZaloNickTypeField ? nextZaloNickType : undefined,
         tags: parsedTags,
         totalSpent: nextTotalSpent,
         totalOrders: nextTotalOrders,
@@ -277,17 +333,17 @@ export class CrmService {
     return customer;
   }
 
-  async archiveCustomer(id: string) {
+  async softSkipCustomer(id: string) {
     const current = await this.prisma.client.customer.findFirst({ where: { id } });
     if (!current) {
       throw new NotFoundException('Không tìm thấy khách hàng.');
     }
 
-    if (current.status !== GenericStatus.ARCHIVED) {
+    if (current.status !== CustomerCareStatus.SAI_SO_KHONG_TON_TAI_BO_QUA_XOA) {
       await this.prisma.client.customer.updateMany({
         where: { id },
         data: {
-          status: GenericStatus.ARCHIVED
+          status: CustomerCareStatus.SAI_SO_KHONG_TON_TAI_BO_QUA_XOA
         }
       });
     }
@@ -528,6 +584,67 @@ export class CrmService {
     return this.prisma.client.paymentRequest.findFirst({ where: { id: row.id } });
   }
 
+  async importCustomers(payload: Record<string, unknown>): Promise<CustomerImportSummary> {
+    const actor = this.resolveCustomerActor();
+    if (actor.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Chỉ admin được phép import dữ liệu khách hàng bằng Excel.');
+    }
+
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length === 0) {
+      throw new BadRequestException('Thiếu dữ liệu rows để import khách hàng.');
+    }
+
+    const maxRows = 2_000;
+    const slicedRows = rows.slice(0, maxRows);
+    const errors: CustomerImportError[] = [];
+    const importedCustomerIds = new Set<string>();
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+
+    for (let index = 0; index < slicedRows.length; index += 1) {
+      const rowIndex = index + 1;
+      const row = this.ensureRecord(slicedRows[index]);
+      const identifier = this.cleanString(row.phone)
+        || this.cleanString(row.phoneNormalized)
+        || this.cleanString(row.email)
+        || this.cleanString(row.emailNormalized)
+        || this.cleanString(row.fullName)
+        || undefined;
+
+      try {
+        const customer = await this.upsertCustomerImportRow(row, salesPolicy);
+        importedCustomerIds.add(customer.id);
+      } catch (error) {
+        errors.push({
+          rowIndex,
+          identifier,
+          message: error instanceof Error ? error.message : 'Không thể import dòng dữ liệu khách hàng.',
+        });
+      }
+    }
+
+    if (importedCustomerIds.size > 0) {
+      const customers = await this.prisma.client.customer.findMany({
+        where: {
+          id: {
+            in: [...importedCustomerIds],
+          },
+        },
+      });
+      for (const customer of customers) {
+        await this.search.syncCustomerUpsert(customer);
+      }
+    }
+
+    const importedCount = slicedRows.length - errors.length;
+    return {
+      totalRows: slicedRows.length,
+      importedCount,
+      skippedCount: errors.length,
+      errors,
+    };
+  }
+
   async getDedupCandidates() {
     const customers = await this.prisma.client.customer.findMany({
       select: {
@@ -663,6 +780,151 @@ export class CrmService {
       customer,
       summary: moved
     };
+  }
+
+  private async upsertCustomerImportRow(
+    row: Record<string, unknown>,
+    salesPolicy: {
+      customerTaxonomy: { stages: string[]; sources: string[] };
+      tagRegistry: { customerTags: string[] };
+    }
+  ) {
+    const phoneInput = this.optionalString(row.phoneNormalized) ?? this.optionalString(row.phone);
+    const emailInput = this.optionalString(row.emailNormalized) ?? this.optionalString(row.email);
+    const phoneNormalized = normalizeVietnamPhone(phoneInput);
+    const emailNormalized = this.normalizeEmail(emailInput);
+
+    assertValidVietnamPhone(phoneNormalized);
+    this.assertValidEmail(emailNormalized);
+
+    if (!phoneNormalized && !emailNormalized) {
+      throw new BadRequestException('Mỗi dòng import cần ít nhất phone hoặc email.');
+    }
+
+    let existing = null;
+    if (phoneNormalized) {
+      existing = await this.prisma.client.customer.findFirst({
+        where: { phoneNormalized },
+      });
+    }
+    if (!existing && emailNormalized) {
+      existing = await this.prisma.client.customer.findFirst({
+        where: { emailNormalized },
+      });
+    }
+
+    const duplicate = await this.findDuplicateCustomer(phoneNormalized, emailNormalized, existing?.id);
+    if (duplicate) {
+      throw new BadRequestException('Số điện thoại hoặc email đã được dùng bởi khách hàng khác.');
+    }
+
+    const normalizedTaxonomy = this.resolveCustomerTaxonomy(
+      this.optionalString(row.customerStage),
+      this.optionalString(row.source),
+      salesPolicy.customerTaxonomy
+    );
+
+    const tags = this.hasOwn(row, 'tags')
+      ? this.parseTags(row.tags, salesPolicy.tagRegistry.customerTags, 'customer.tags')
+      : (existing?.tags ?? []);
+
+    const nextStatus = this.parseCustomerCareStatus(
+      row.status,
+      existing?.status ?? CustomerCareStatus.MOI_CHUA_TU_VAN
+    );
+    const nextZaloNickType = this.parseCustomerZaloNickType(
+      row.zaloNickType,
+      existing?.zaloNickType ?? CustomerZaloNickType.CHUA_KIEM_TRA
+    );
+    const nextCustomerStage = this.resolveCustomerStageForStatus(
+      normalizedTaxonomy.stage ?? existing?.customerStage ?? 'MOI',
+      nextStatus
+    ) ?? 'MOI';
+
+    const totalSpent = this.hasOwn(row, 'totalSpent')
+      ? this.parseOptionalDecimal(row.totalSpent, 'totalSpent')
+      : undefined;
+    const totalOrders = this.hasOwn(row, 'totalOrders')
+      ? this.parseOptionalInteger(row.totalOrders, 'totalOrders')
+      : undefined;
+    const lastOrderAt = this.hasOwn(row, 'lastOrderAt')
+      ? this.parseOptionalDate(row.lastOrderAt, 'lastOrderAt')
+      : undefined;
+    const lastContactAt = this.hasOwn(row, 'lastContactAt')
+      ? this.parseOptionalDate(row.lastContactAt, 'lastContactAt')
+      : undefined;
+
+    if (existing) {
+      const fullName = this.optionalString(row.fullName) ?? existing.fullName;
+      if (!fullName) {
+        throw new BadRequestException('Thiếu fullName cho khách hàng cần cập nhật.');
+      }
+
+      await this.prisma.client.customer.updateMany({
+        where: { id: existing.id },
+        data: {
+          code: this.hasOwn(row, 'code') ? (this.optionalString(row.code) ?? null) : undefined,
+          fullName,
+          email: this.hasOwn(row, 'email') ? (this.optionalString(row.email) ?? null) : undefined,
+          emailNormalized: this.hasOwn(row, 'email') || this.hasOwn(row, 'emailNormalized')
+            ? (emailNormalized ?? null)
+            : undefined,
+          phone: this.hasOwn(row, 'phone') ? (this.optionalString(row.phone) ?? null) : undefined,
+          phoneNormalized: this.hasOwn(row, 'phone') || this.hasOwn(row, 'phoneNormalized')
+            ? (phoneNormalized ?? null)
+            : undefined,
+          tags,
+          customerStage: nextCustomerStage,
+          ownerStaffId: this.hasOwn(row, 'ownerStaffId') ? (this.optionalString(row.ownerStaffId) ?? null) : undefined,
+          consentStatus: this.hasOwn(row, 'consentStatus') ? (this.optionalString(row.consentStatus) ?? null) : undefined,
+          segment: this.hasOwn(row, 'segment') ? (this.optionalString(row.segment) ?? null) : undefined,
+          source: this.hasOwn(row, 'source')
+            ? (normalizedTaxonomy.source ?? null)
+            : undefined,
+          needsSummary: this.hasOwn(row, 'needsSummary') ? (this.optionalString(row.needsSummary) ?? null) : undefined,
+          totalSpent: this.hasOwn(row, 'totalSpent') ? totalSpent : undefined,
+          totalOrders: this.hasOwn(row, 'totalOrders') ? (totalOrders ?? undefined) : undefined,
+          lastOrderAt: this.hasOwn(row, 'lastOrderAt') ? lastOrderAt : undefined,
+          lastContactAt: this.hasOwn(row, 'lastContactAt') ? lastContactAt : undefined,
+          status: nextStatus,
+          zaloNickType: nextZaloNickType,
+        },
+      });
+
+      const updated = await this.prisma.client.customer.findFirst({
+        where: { id: existing.id },
+      });
+      if (!updated) {
+        throw new NotFoundException('Không tìm thấy khách hàng sau khi cập nhật import.');
+      }
+      return updated;
+    }
+
+    const fullName = this.requiredString(row.fullName, 'Thiếu fullName cho dòng import khách hàng mới.');
+    return this.prisma.client.customer.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        code: this.optionalString(row.code) ?? null,
+        fullName,
+        email: this.optionalString(row.email) ?? null,
+        emailNormalized: emailNormalized ?? null,
+        phone: this.optionalString(row.phone) ?? null,
+        phoneNormalized: phoneNormalized ?? null,
+        tags,
+        customerStage: nextCustomerStage,
+        ownerStaffId: this.optionalString(row.ownerStaffId) ?? null,
+        consentStatus: this.optionalString(row.consentStatus) ?? null,
+        segment: this.optionalString(row.segment) ?? null,
+        source: normalizedTaxonomy.source ?? null,
+        needsSummary: this.optionalString(row.needsSummary) ?? null,
+        totalSpent: totalSpent ?? null,
+        totalOrders: totalOrders ?? 0,
+        lastOrderAt: lastOrderAt ?? null,
+        lastContactAt: lastContactAt ?? null,
+        status: nextStatus,
+        zaloNickType: nextZaloNickType,
+      },
+    });
   }
 
   private async findDuplicateCustomer(phone?: string, email?: string, excludeId?: string) {
@@ -829,18 +1091,46 @@ export class CrmService {
     }
   }
 
-  private parseStatus(input: unknown, fallback: GenericStatus): GenericStatus {
+  private resolveCustomerStageForStatus(
+    inputStage: string | null | undefined,
+    status: CustomerCareStatus
+  ) {
+    if (status === CustomerCareStatus.DONG_Y_CHUYEN_THANH_KH) {
+      return 'DA_MUA';
+    }
+    return inputStage ?? undefined;
+  }
+
+  private parseCustomerCareStatus(input: unknown, fallback: CustomerCareStatus): CustomerCareStatus {
     const candidate = this.cleanString(input).toUpperCase();
     if (
-      candidate === GenericStatus.ACTIVE
-      || candidate === GenericStatus.INACTIVE
-      || candidate === GenericStatus.DRAFT
-      || candidate === GenericStatus.PENDING
-      || candidate === GenericStatus.APPROVED
-      || candidate === GenericStatus.REJECTED
-      || candidate === GenericStatus.ARCHIVED
+      candidate === CustomerCareStatus.MOI_CHUA_TU_VAN
+      || candidate === CustomerCareStatus.DANG_SUY_NGHI
+      || candidate === CustomerCareStatus.DONG_Y_CHUYEN_THANH_KH
+      || candidate === CustomerCareStatus.KH_TU_CHOI
+      || candidate === CustomerCareStatus.KH_DA_MUA_BEN_KHAC
+      || candidate === CustomerCareStatus.NGUOI_NHA_LAM_THUE_BAO
+      || candidate === CustomerCareStatus.KHONG_NGHE_MAY_LAN_1
+      || candidate === CustomerCareStatus.KHONG_NGHE_MAY_LAN_2
+      || candidate === CustomerCareStatus.SAI_SO_KHONG_TON_TAI_BO_QUA_XOA
     ) {
-      return candidate as GenericStatus;
+      return candidate as CustomerCareStatus;
+    }
+    return fallback;
+  }
+
+  private parseCustomerZaloNickType(
+    input: unknown,
+    fallback: CustomerZaloNickType
+  ): CustomerZaloNickType {
+    const candidate = this.cleanString(input).toUpperCase();
+    if (
+      candidate === CustomerZaloNickType.CHUA_KIEM_TRA
+      || candidate === CustomerZaloNickType.CHUA_CO_NICK_ZALO
+      || candidate === CustomerZaloNickType.CHAN_NGUOI_LA
+      || candidate === CustomerZaloNickType.GUI_DUOC_TIN_NHAN
+    ) {
+      return candidate as CustomerZaloNickType;
     }
     return fallback;
   }
@@ -867,6 +1157,38 @@ export class CrmService {
       throw new BadRequestException(`${fieldName} không hợp lệ.`);
     }
     return value;
+  }
+
+  private parseOptionalDecimal(input: unknown, fieldName: string) {
+    if (input === null || input === undefined || this.cleanString(input) === '') {
+      return null;
+    }
+    return this.parseDecimal(input, fieldName);
+  }
+
+  private parseOptionalInteger(input: unknown, fieldName: string) {
+    if (input === null || input === undefined || this.cleanString(input) === '') {
+      return null;
+    }
+    return this.parseInteger(input, fieldName);
+  }
+
+  private parseOptionalDate(input: unknown, fieldName: string) {
+    if (input === null || input === undefined || this.cleanString(input) === '') {
+      return null;
+    }
+    return this.parseDate(input, fieldName);
+  }
+
+  private ensureRecord(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return {};
+    }
+    return input as Record<string, unknown>;
+  }
+
+  private hasOwn(source: Record<string, unknown>, key: string) {
+    return Object.prototype.hasOwnProperty.call(source, key);
   }
 
   private optionalString(input: unknown) {
@@ -933,6 +1255,22 @@ export class CrmService {
     return {
       companyWide: scope.companyWide,
       actorIds: scope.actorIds
+    };
+  }
+
+  private resolveCustomerActor() {
+    const auth = this.ensureRecord(this.cls?.get(AUTH_USER_CONTEXT_KEY));
+    const roleRaw = this.cleanString(auth.role).toUpperCase();
+    const role = (Object.values(UserRole) as string[]).includes(roleRaw)
+      ? (roleRaw as UserRole)
+      : null;
+    const userId = this.cleanString(auth.userId)
+      || this.cleanString(auth.sub)
+      || this.cleanString(auth.email);
+
+    return {
+      role,
+      userId,
     };
   }
 }

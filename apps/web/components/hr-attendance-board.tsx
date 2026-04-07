@@ -1,11 +1,13 @@
 'use client';
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, RefreshCw, Undo2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { readStoredAuthSession } from '../lib/auth-session';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { downloadExcelTemplate } from '../lib/excel-template';
 import { useAccessPolicy } from './access-policy-context';
+import { ExcelImportBlock } from './ui/excel-import-block';
 import { useUserRole } from './user-role-context';
 
 type AttendanceMethod = 'REMOTE_TRACKED' | 'OFFICE_EXCEL' | 'EXEMPT';
@@ -410,8 +412,7 @@ export function HrAttendanceBoard() {
     }
   };
 
-  const handleOfficeFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const handleOfficeFileUpload = async (file: File) => {
     if (!file) {
       return;
     }
@@ -439,8 +440,26 @@ export function HrAttendanceBoard() {
       setErrorMessage(error instanceof Error ? error.message : 'Không thể import file chấm công văn phòng.');
     } finally {
       setIsImportingOfficeFile(false);
-      event.target.value = '';
     }
+  };
+
+  const handleDownloadOfficeImportTemplate = () => {
+    downloadExcelTemplate('attendance-office-import-template.xlsx', 'Attendance', [
+      {
+        employeeCode: 'NV001',
+        workDate: '2026-04-01',
+        workedHours: 8,
+        workedMinutes: 0,
+        note: 'Di lam full ngay'
+      },
+      {
+        employeeCode: 'NV002',
+        workDate: '2026-04-01',
+        workedHours: 7,
+        workedMinutes: 30,
+        note: 'Co tang ca 30 phut'
+      }
+    ]);
   };
 
   const handleToggleExemptDay = async (employeeId: string, day: number, isCurrentlyExempt: boolean) => {
@@ -850,55 +869,19 @@ export function HrAttendanceBoard() {
         </div>
       </section>
 
-      <section className="module-card">
-        <h3>Import công văn phòng (.xlsx)</h3>
-        <p style={{ color: 'var(--muted)', marginBottom: '0.9rem' }}>
-          Frontend đọc file và gửi JSON rows lên API import để cập nhật công theo ngày.
-        </p>
-
-        {canManageAttendance ? (
-          <div className="field" style={{ maxWidth: '420px' }}>
-            <label>File chấm công văn phòng</label>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={(event) => void handleOfficeFileUpload(event)}
-              disabled={isImportingOfficeFile}
-            />
-          </div>
-        ) : (
-          <p style={{ color: 'var(--muted)' }}>Chỉ admin được import công văn phòng.</p>
-        )}
-
-        {isImportingOfficeFile ? <p style={{ marginTop: '0.75rem' }}>Đang parse và import file...</p> : null}
-
-        {importResult ? (
-          <div style={{ marginTop: '0.9rem', display: 'grid', gap: '0.35rem' }}>
-            <div>
-              <strong>Tổng dòng:</strong> {importResult.totalRows}
-            </div>
-            <div>
-              <strong>Import thành công:</strong> {importResult.importedCount}
-            </div>
-            <div>
-              <strong>Bỏ qua/Lỗi:</strong> {importResult.skippedCount}
-            </div>
-            {importResult.errors.length > 0 ? (
-              <div style={{ marginTop: '0.35rem' }}>
-                <strong>Chi tiết lỗi:</strong>
-                <ul style={{ marginTop: '0.35rem', paddingLeft: '1.1rem' }}>
-                  {importResult.errors.slice(0, 12).map((error) => (
-                    <li key={`import-error-${error.rowIndex}-${error.employeeCode ?? 'unknown'}`}>
-                      Dòng {error.rowIndex}
-                      {error.employeeCode ? ` (${error.employeeCode})` : ''}: {error.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
+      <ExcelImportBlock<OfficeImportError>
+        title="Import công văn phòng (.xlsx)"
+        description="Frontend đọc file và gửi JSON rows lên API import để cập nhật công theo ngày."
+        fileLabel="File chấm công văn phòng"
+        onDownloadTemplate={handleDownloadOfficeImportTemplate}
+        onFileSelected={handleOfficeFileUpload}
+        canImport={canManageAttendance}
+        deniedMessage="Chỉ admin được import công văn phòng."
+        isLoading={isImportingOfficeFile}
+        loadingText="Đang parse và import file..."
+        summary={importResult}
+        formatError={(error) => `Dòng ${error.rowIndex}${error.employeeCode ? ` (${error.employeeCode})` : ''}: ${error.message}`}
+      />
     </article>
   );
 }

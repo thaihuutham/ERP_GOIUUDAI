@@ -163,7 +163,7 @@
 
 .zalo-chat-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 3fr);
+  grid-template-columns: minmax(260px, 1.1fr) minmax(360px, 2fr) minmax(340px, 1.6fr);
   gap: 0.8rem;
   min-height: 0;
   flex: 1 1 auto;
@@ -171,7 +171,8 @@
 }
 
 .zalo-chat-conversation-panel,
-.zalo-chat-message-panel {
+.zalo-chat-message-panel,
+.zalo-chat-customer-panel {
   min-height: 0;
   height: 100%;
   display: flex;
@@ -282,6 +283,110 @@
 .zalo-chat-tag-form {
   display: grid;
   gap: 0.4rem;
+}
+
+.zalo-c360-unmatched {
+  display: grid;
+  gap: 0.5rem;
+  border: 1px solid #dce9df;
+  border-radius: var(--radius-lg);
+  background: #f9fcfa;
+  padding: 0.55rem;
+}
+
+.zalo-c360-suggested {
+  border: 1px solid #f2de9a;
+  border-radius: var(--radius-md);
+  background: #fffaf0;
+  padding: 0.45rem 0.5rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.zalo-c360-content {
+  display: grid;
+  gap: 0.55rem;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.zalo-c360-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.zalo-c360-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.zalo-c360-kpi-card {
+  border: 1px solid #dce9df;
+  border-radius: var(--radius-md);
+  background: #f9fcfa;
+  padding: 0.44rem 0.5rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.zalo-c360-kpi-card span {
+  color: #486856;
+  font-size: 0.74rem;
+}
+
+.zalo-c360-kpi-card strong {
+  color: #194f32;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.zalo-c360-interaction-form {
+  border: 1px solid #dce9df;
+  border-radius: var(--radius-lg);
+  background: #fbfefc;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.44rem;
+}
+
+.zalo-c360-interaction-form h3,
+.zalo-c360-history h3 {
+  font-size: 0.9rem;
+}
+
+.zalo-c360-history {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.zalo-c360-history-list {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.zalo-c360-history-item {
+  border: 1px solid #deebe2;
+  border-radius: var(--radius-md);
+  background: #fff;
+  padding: 0.44rem 0.5rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.zalo-c360-history-item header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.zalo-c360-history-item p {
+  margin: 0;
 }
 
 .zalo-chat-message-item {
@@ -641,7 +746,8 @@ tr.is-selected-row:hover {
   }
 
   .zalo-chat-conversation-panel,
-  .zalo-chat-message-panel {
+  .zalo-chat-message-panel,
+  .zalo-chat-customer-panel {
     min-height: 0;
     height: auto;
   }

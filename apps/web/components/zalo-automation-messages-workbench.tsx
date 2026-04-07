@@ -6,23 +6,34 @@ import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { getZaloAutomationSocket, resolveZaloAutomationOrgId } from '../lib/zalo-automation-socket';
 import { useAccessPolicy } from './access-policy-context';
+import { Modal } from './ui/modal';
 import { Badge, statusToBadge } from './ui';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
 type ZaloPermissionLevel = 'READ' | 'CHAT' | 'ADMIN';
+type ThreadMatchStatus = 'matched' | 'unmatched' | 'suggested';
 
 type ThreadRow = {
   id: string;
   channel: ConversationChannel;
   channelAccountId?: string | null;
   externalThreadId: string;
+  customerId?: string | null;
   tags?: string[] | null;
   customerDisplayName?: string | null;
+  matchStatus?: ThreadMatchStatus;
+  suggestedCustomer?: CustomerPreview | null;
+  identityHint?: {
+    platform?: string;
+    externalUserId?: string;
+  } | null;
   unreadCount?: number | null;
   lastMessageAt?: string | null;
   customer?: {
+    id?: string | null;
     fullName?: string | null;
     phone?: string | null;
+    email?: string | null;
   } | null;
   channelAccount?: {
     displayName?: string | null;
@@ -48,6 +59,65 @@ type ZaloAccount = {
   accountType?: string | null;
   status?: string | null;
   currentPermissionLevel?: ZaloPermissionLevel | null;
+};
+
+type CustomerPreview = {
+  id: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  ownerStaffId?: string | null;
+};
+
+type Customer360Payload = {
+  customer?: CustomerPreview & {
+    totalSpent?: number | string | null;
+    totalOrders?: number | null;
+    lastOrderAt?: string | null;
+    lastContactAt?: string | null;
+    needsSummary?: string | null;
+  };
+  socialIdentities?: Array<{
+    id: string;
+    platform?: string | null;
+    externalUserId?: string | null;
+    displayName?: string | null;
+    phoneHint?: string | null;
+  }>;
+  contractSummary?: {
+    totalContracts?: number;
+    activeContracts?: number;
+    expiredContracts?: number;
+    nextExpiringAt?: string | null;
+  } | null;
+  vehicles?: Array<{
+    id: string;
+    plateNumber?: string | null;
+    vehicleKind?: string | null;
+    status?: string | null;
+  }>;
+  recentOrders?: Array<{
+    id: string;
+    orderNo?: string | null;
+    totalAmount?: number | string | null;
+    createdAt?: string | null;
+    status?: string | null;
+  }>;
+  recentInteractions?: Array<{
+    id: string;
+    interactionType?: string | null;
+    channel?: string | null;
+    content?: string | null;
+    resultTag?: string | null;
+    interactionAt?: string | null;
+    nextActionAt?: string | null;
+    staffName?: string | null;
+  }>;
+  orderSummary?: {
+    totalOrders?: number | null;
+    totalSpent?: number | string | null;
+    lastOrderAt?: string | null;
+  } | null;
 };
 
 type SocketChatMessagePayload = {
@@ -77,6 +147,34 @@ function toDateTime(value: string | null | undefined) {
     return value;
   }
   return formatRuntimeDateTime(parsed.toISOString());
+}
+
+function toThreadMatchStatus(value: unknown): ThreadMatchStatus {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'matched' || normalized === 'unmatched' || normalized === 'suggested') {
+    return normalized as ThreadMatchStatus;
+  }
+  return 'unmatched';
+}
+
+function threadMatchStatusLabel(status: ThreadMatchStatus) {
+  if (status === 'matched') {
+    return 'Đã nhận diện';
+  }
+  if (status === 'suggested') {
+    return 'Có gợi ý';
+  }
+  return 'Chưa nhận diện';
+}
+
+function threadMatchBadge(status: ThreadMatchStatus) {
+  if (status === 'matched') {
+    return 'success' as const;
+  }
+  if (status === 'suggested') {
+    return 'warning' as const;
+  }
+  return 'neutral' as const;
 }
 
 function normalizePermission(value: string | null | undefined) {
@@ -213,6 +311,29 @@ export function ZaloAutomationMessagesWorkbench() {
   const [zaloAccounts, setZaloAccounts] = useState<ZaloAccount[]>([]);
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [customer360, setCustomer360] = useState<Customer360Payload | null>(null);
+  const [isLoadingCustomer360, setIsLoadingCustomer360] = useState(false);
+  const [needsSummaryDraft, setNeedsSummaryDraft] = useState('');
+  const [isSavingNeedsSummary, setIsSavingNeedsSummary] = useState(false);
+  const [linkCustomerPhoneInput, setLinkCustomerPhoneInput] = useState('');
+  const [isLinkingCustomer, setIsLinkingCustomer] = useState(false);
+  const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
+  const [isQuickCreating, setIsQuickCreating] = useState(false);
+  const [quickCreateForm, setQuickCreateForm] = useState({
+    fullName: '',
+    phone: '',
+    email: '',
+    needsSummary: '',
+    ownerStaffId: ''
+  });
+  const [isSavingInteraction, setIsSavingInteraction] = useState(false);
+  const [interactionForm, setInteractionForm] = useState({
+    interactionType: 'TU_VAN',
+    channel: 'CHAT',
+    content: '',
+    resultTag: '',
+    nextActionAt: ''
+  });
 
   const [threadQuery, setThreadQuery] = useState('');
   const [threadTagQuery, setThreadTagQuery] = useState('');
@@ -226,6 +347,14 @@ export function ZaloAutomationMessagesWorkbench() {
     () => threads.find((thread) => thread.id === selectedThreadId) ?? null,
     [threads, selectedThreadId]
   );
+  const selectedThreadMatchStatus = useMemo(
+    () => toThreadMatchStatus(selectedThread?.matchStatus),
+    [selectedThread?.matchStatus]
+  );
+  const resolvedCustomerId = useMemo(
+    () => String(selectedThread?.customerId || selectedThread?.customer?.id || '').trim() || null,
+    [selectedThread?.customer?.id, selectedThread?.customerId]
+  );
   const selectedThreadTags = useMemo(
     () => (Array.isArray(selectedThread?.tags) ? selectedThread.tags.filter(Boolean) : []),
     [selectedThread]
@@ -234,6 +363,31 @@ export function ZaloAutomationMessagesWorkbench() {
   useEffect(() => {
     setSelectedThreadTagsInput(selectedThreadTags.join(', '));
   }, [selectedThreadId, selectedThreadTags]);
+
+  useEffect(() => {
+    if (selectedThread?.suggestedCustomer?.id) {
+      setLinkCustomerPhoneInput(selectedThread.suggestedCustomer.phone || '');
+      return;
+    }
+    setLinkCustomerPhoneInput('');
+  }, [selectedThread?.id, selectedThread?.suggestedCustomer?.id, selectedThread?.suggestedCustomer?.phone]);
+
+  useEffect(() => {
+    setQuickCreateForm({
+      fullName: selectedThread?.customerDisplayName || selectedThread?.customer?.fullName || '',
+      phone: selectedThread?.suggestedCustomer?.phone || '',
+      email: selectedThread?.suggestedCustomer?.email || '',
+      needsSummary: '',
+      ownerStaffId: selectedThread?.suggestedCustomer?.ownerStaffId || ''
+    });
+  }, [
+    selectedThread?.id,
+    selectedThread?.customerDisplayName,
+    selectedThread?.customer?.fullName,
+    selectedThread?.suggestedCustomer?.phone,
+    selectedThread?.suggestedCustomer?.email,
+    selectedThread?.suggestedCustomer?.ownerStaffId
+  ]);
 
   const unreadByAccount = useMemo(() => {
     const unreadMap = new Map<string, number>();
@@ -333,12 +487,18 @@ export function ZaloAutomationMessagesWorkbench() {
       });
       const rows = (normalizeListPayload(payload) as ThreadRow[])
         .filter((row) => row.channel === 'ZALO_PERSONAL' || row.channel === 'ZALO_OA');
-      setThreads(rows);
+      const normalizedRows = rows.map((row) => ({
+        ...row,
+        matchStatus: toThreadMatchStatus(row.matchStatus),
+        suggestedCustomer: row.suggestedCustomer ?? null,
+        identityHint: row.identityHint ?? null
+      }));
+      setThreads(normalizedRows);
       setSelectedThreadId((prev) => {
-        if (prev && rows.some((thread) => thread.id === prev)) {
+        if (prev && normalizedRows.some((thread) => thread.id === prev)) {
           return prev;
         }
-        return rows[0]?.id ?? '';
+        return normalizedRows[0]?.id ?? '';
       });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách hội thoại.');
@@ -361,6 +521,39 @@ export function ZaloAutomationMessagesWorkbench() {
     } finally {
       setIsLoadingMessages(false);
     }
+  };
+
+  const loadCustomer360 = async (customerId: string) => {
+    const id = String(customerId || '').trim();
+    if (!id) {
+      setCustomer360(null);
+      setNeedsSummaryDraft('');
+      return;
+    }
+
+    setIsLoadingCustomer360(true);
+    try {
+      const payload = await apiRequest<Customer360Payload>(`/crm/customers/${id}/customer-360`);
+      const normalized = normalizeObjectPayload(payload) as Customer360Payload | null;
+      setCustomer360(normalized ?? null);
+      setNeedsSummaryDraft(String(normalized?.customer?.needsSummary ?? '').trim());
+    } catch (error) {
+      setCustomer360(null);
+      setNeedsSummaryDraft('');
+      setErrorMessage(error instanceof Error ? error.message : 'Không tải được Customer 360.');
+    } finally {
+      setIsLoadingCustomer360(false);
+    }
+  };
+
+  const upsertThreadState = (thread: ThreadRow) => {
+    setThreads((prev) => {
+      const found = prev.some((item) => item.id === thread.id);
+      if (found) {
+        return prev.map((item) => (item.id === thread.id ? { ...item, ...thread } : item));
+      }
+      return [thread, ...prev];
+    });
   };
 
   const refreshAll = async () => {
@@ -389,6 +582,20 @@ export function ZaloAutomationMessagesWorkbench() {
     }
     void loadMessages(selectedThreadId);
   }, [canView, selectedThreadId]);
+
+  useEffect(() => {
+    if (!canView || !selectedThread) {
+      setCustomer360(null);
+      setNeedsSummaryDraft('');
+      return;
+    }
+    if (!resolvedCustomerId) {
+      setCustomer360(null);
+      setNeedsSummaryDraft('');
+      return;
+    }
+    void loadCustomer360(resolvedCustomerId);
+  }, [canView, selectedThread?.id, resolvedCustomerId]);
 
   useEffect(() => {
     if (!canView) {
@@ -471,6 +678,167 @@ export function ZaloAutomationMessagesWorkbench() {
       setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật tag hội thoại.');
     } finally {
       setIsSavingThreadTags(false);
+    }
+  };
+
+  const onLinkCustomer = async (options?: { customerId?: string; customerPhone?: string }) => {
+    clearNotice();
+    if (!selectedThread) {
+      setErrorMessage('Vui lòng chọn hội thoại trước khi gán khách hàng.');
+      return;
+    }
+    const customerId = String(options?.customerId ?? '').trim();
+    const customerPhone = String(options?.customerPhone ?? linkCustomerPhoneInput).trim();
+    if (!customerId && !customerPhone) {
+      setErrorMessage('Vui lòng nhập số điện thoại khách hàng cần gán.');
+      return;
+    }
+
+    setIsLinkingCustomer(true);
+    try {
+      const payload = await apiRequest<ThreadRow>(`/conversations/threads/${selectedThread.id}/link-customer`, {
+        method: 'POST',
+        body: {
+          customerId: customerId || undefined,
+          customerPhone: customerPhone || undefined
+        }
+      });
+      const linkedThread = (normalizeObjectPayload(payload) as ThreadRow | null) ?? null;
+      if (linkedThread) {
+        upsertThreadState({
+          ...linkedThread,
+          matchStatus: toThreadMatchStatus(linkedThread.matchStatus)
+        });
+      }
+      setResultMessage('Đã gán hội thoại vào khách hàng thành công.');
+      setIsQuickCreateOpen(false);
+      const linkedCustomerId = String(linkedThread?.customerId ?? linkedThread?.customer?.id ?? '').trim();
+      if (linkedCustomerId) {
+        await Promise.all([loadThreads(), loadCustomer360(linkedCustomerId)]);
+      } else {
+        await loadThreads();
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể gán khách hàng cho hội thoại.');
+    } finally {
+      setIsLinkingCustomer(false);
+    }
+  };
+
+  const onQuickCreateCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    clearNotice();
+    if (!selectedThread) {
+      setErrorMessage('Vui lòng chọn hội thoại trước khi tạo khách hàng.');
+      return;
+    }
+
+    setIsQuickCreating(true);
+    try {
+      const payload = await apiRequest<{
+        customer?: CustomerPreview;
+        thread?: ThreadRow;
+        deduplicated?: boolean;
+      }>(`/conversations/threads/${selectedThread.id}/quick-create-customer`, {
+        method: 'POST',
+        body: {
+          fullName: quickCreateForm.fullName || undefined,
+          phone: quickCreateForm.phone || undefined,
+          email: quickCreateForm.email || undefined,
+          needsSummary: quickCreateForm.needsSummary || undefined,
+          ownerStaffId: quickCreateForm.ownerStaffId || undefined
+        }
+      });
+
+      const thread = normalizeObjectPayload(payload.thread) as ThreadRow | null;
+      const customer = normalizeObjectPayload(payload.customer) as CustomerPreview | null;
+
+      if (thread) {
+        upsertThreadState({
+          ...thread,
+          matchStatus: toThreadMatchStatus(thread.matchStatus)
+        });
+        setSelectedThreadId(thread.id);
+      }
+      if (customer?.id) {
+        await loadCustomer360(customer.id);
+      }
+
+      setIsQuickCreateOpen(false);
+      setResultMessage(payload.deduplicated
+        ? 'Đã tìm thấy khách hàng sẵn có và liên kết hội thoại.'
+        : 'Đã tạo khách hàng nhanh và liên kết hội thoại thành công.');
+      await loadThreads();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo khách hàng nhanh.');
+    } finally {
+      setIsQuickCreating(false);
+    }
+  };
+
+  const onSaveNeedsSummary = async () => {
+    clearNotice();
+    const customerId = resolvedCustomerId;
+    if (!customerId) {
+      setErrorMessage('Không tìm thấy khách hàng để cập nhật nhu cầu.');
+      return;
+    }
+
+    setIsSavingNeedsSummary(true);
+    try {
+      await apiRequest(`/crm/customers/${customerId}`, {
+        method: 'PATCH',
+        body: {
+          needsSummary: needsSummaryDraft || null
+        }
+      });
+      setResultMessage('Đã cập nhật tóm tắt nhu cầu khách hàng.');
+      await loadCustomer360(customerId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật needsSummary.');
+    } finally {
+      setIsSavingNeedsSummary(false);
+    }
+  };
+
+  const onLogInteraction = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    clearNotice();
+    const customerId = resolvedCustomerId;
+    if (!customerId) {
+      setErrorMessage('Không tìm thấy khách hàng để ghi nhận tương tác.');
+      return;
+    }
+    if (!interactionForm.content.trim()) {
+      setErrorMessage('Nội dung tương tác không được để trống.');
+      return;
+    }
+
+    setIsSavingInteraction(true);
+    try {
+      await apiRequest('/crm/interactions', {
+        method: 'POST',
+        body: {
+          customerId,
+          interactionType: interactionForm.interactionType,
+          channel: interactionForm.channel,
+          content: interactionForm.content.trim(),
+          resultTag: interactionForm.resultTag || undefined,
+          nextActionAt: interactionForm.nextActionAt ? new Date(interactionForm.nextActionAt).toISOString() : undefined
+        }
+      });
+      setInteractionForm((prev) => ({
+        ...prev,
+        content: '',
+        resultTag: '',
+        nextActionAt: ''
+      }));
+      setResultMessage('Đã ghi nhận lịch sử chăm sóc.');
+      await loadCustomer360(customerId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể lưu lịch sử chăm sóc.');
+    } finally {
+      setIsSavingInteraction(false);
     }
   };
 
@@ -633,6 +1001,11 @@ export function ZaloAutomationMessagesWorkbench() {
                     <div className="zalo-chat-thread-item-meta">
                       <span>{thread.channelAccount?.displayName || thread.channelAccountId || '--'}</span>
                     </div>
+                    <div className="zalo-chat-thread-item-meta">
+                      <Badge variant={threadMatchBadge(toThreadMatchStatus(thread.matchStatus))}>
+                        {threadMatchStatusLabel(toThreadMatchStatus(thread.matchStatus))}
+                      </Badge>
+                    </div>
                     {Array.isArray(thread.tags) && thread.tags.length > 0 ? (
                       <div className="zalo-chat-tag-list">
                         {thread.tags.map((tag) => (
@@ -752,7 +1125,288 @@ export function ZaloAutomationMessagesWorkbench() {
             </div>
           </form>
         </section>
+
+        <section className="panel-surface crm-panel zalo-chat-customer-panel">
+          <div className="crm-panel-head">
+            <h2>Customer 360</h2>
+            <Badge variant={threadMatchBadge(selectedThreadMatchStatus)}>
+              {threadMatchStatusLabel(selectedThreadMatchStatus)}
+            </Badge>
+          </div>
+
+          {!selectedThread ? <p className="muted">Chọn một hội thoại để xem hồ sơ khách hàng.</p> : null}
+
+          {selectedThread ? (
+            <>
+              <p className="muted">
+                Thread ID: {selectedThread.externalThreadId}
+              </p>
+              <p className="muted">
+                Social ID: {selectedThread.identityHint?.externalUserId || selectedThread.externalThreadId}
+              </p>
+            </>
+          ) : null}
+
+          {selectedThread && !resolvedCustomerId ? (
+            <div className="zalo-c360-unmatched">
+              <p className="muted">
+                Chưa nhận diện khách hàng cho hội thoại này. Bạn có thể gán thủ công hoặc tạo nhanh hồ sơ mới.
+              </p>
+
+              {selectedThread.suggestedCustomer ? (
+                <div className="zalo-c360-suggested">
+                  <p>
+                    Gợi ý: <strong>{selectedThread.suggestedCustomer.fullName}</strong>
+                    {selectedThread.suggestedCustomer.phone ? ` • ${selectedThread.suggestedCustomer.phone}` : ''}
+                  </p>
+                  <div className="action-buttons">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={isLinkingCustomer}
+                      onClick={() => void onLinkCustomer({
+                        customerId: selectedThread.suggestedCustomer?.id,
+                        customerPhone: selectedThread.suggestedCustomer?.phone || undefined
+                      })}
+                    >
+                      {isLinkingCustomer ? 'Đang gán...' : 'Gán khách gợi ý'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="field">
+                <label htmlFor="zalo-link-customer-phone">Gán thủ công theo số điện thoại</label>
+                <input
+                  id="zalo-link-customer-phone"
+                  value={linkCustomerPhoneInput}
+                  onChange={(event) => setLinkCustomerPhoneInput(event.target.value)}
+                  placeholder="Nhập SĐT khách hàng, ví dụ 090..."
+                />
+              </div>
+              <div className="action-buttons">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={isLinkingCustomer}
+                  onClick={() => void onLinkCustomer({ customerPhone: linkCustomerPhoneInput })}
+                >
+                  {isLinkingCustomer ? 'Đang gán...' : 'Gán khách hàng'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setIsQuickCreateOpen(true)}
+                >
+                  Tạo khách nhanh
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {selectedThread && resolvedCustomerId && isLoadingCustomer360 ? (
+            <p className="muted">Đang tải Customer 360...</p>
+          ) : null}
+
+          {selectedThread && resolvedCustomerId && !isLoadingCustomer360 && customer360?.customer ? (
+            <div className="zalo-c360-content">
+              <div className="zalo-c360-header-row">
+                <div>
+                  <strong>{customer360.customer.fullName}</strong>
+                  <p className="muted">{customer360.customer.phone || '--'} • {customer360.customer.email || '--'}</p>
+                </div>
+                <Link className="btn btn-ghost" href={`/modules/crm?customerId=${customer360.customer.id}`}>
+                  Mở hồ sơ đầy đủ
+                </Link>
+              </div>
+
+              <div className="zalo-c360-kpi-grid">
+                <div className="zalo-c360-kpi-card">
+                  <span>Đơn hàng</span>
+                  <strong>{customer360.orderSummary?.totalOrders ?? customer360.customer.totalOrders ?? 0}</strong>
+                </div>
+                <div className="zalo-c360-kpi-card">
+                  <span>Hợp đồng</span>
+                  <strong>{customer360.contractSummary?.totalContracts ?? 0}</strong>
+                </div>
+                <div className="zalo-c360-kpi-card">
+                  <span>Xe/Tài sản</span>
+                  <strong>{customer360.vehicles?.length ?? 0}</strong>
+                </div>
+                <div className="zalo-c360-kpi-card">
+                  <span>Lần liên hệ gần nhất</span>
+                  <strong>{toDateTime(customer360.customer.lastContactAt)}</strong>
+                </div>
+              </div>
+
+              <div className="field">
+                <label htmlFor="zalo-c360-needs-summary">Tóm tắt nhu cầu</label>
+                <textarea
+                  id="zalo-c360-needs-summary"
+                  value={needsSummaryDraft}
+                  onChange={(event) => setNeedsSummaryDraft(event.target.value)}
+                  placeholder="Mô tả nhu cầu hiện tại của khách hàng..."
+                />
+              </div>
+              <div className="action-buttons">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={isSavingNeedsSummary}
+                  onClick={() => void onSaveNeedsSummary()}
+                >
+                  {isSavingNeedsSummary ? 'Đang lưu...' : 'Lưu nhu cầu'}
+                </button>
+              </div>
+
+              <form className="zalo-c360-interaction-form" onSubmit={onLogInteraction}>
+                <h3>Log tương tác nhanh</h3>
+                <div className="field">
+                  <label htmlFor="zalo-c360-interaction-type">Loại tương tác</label>
+                  <select
+                    id="zalo-c360-interaction-type"
+                    value={interactionForm.interactionType}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, interactionType: event.target.value }))}
+                  >
+                    <option value="TU_VAN">Tư vấn</option>
+                    <option value="CHAM_SOC">Chăm sóc</option>
+                    <option value="NHAC_HAN">Nhắc hạn</option>
+                    <option value="FOLLOW_UP">Follow-up</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="zalo-c360-interaction-channel">Kênh</label>
+                  <select
+                    id="zalo-c360-interaction-channel"
+                    value={interactionForm.channel}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, channel: event.target.value }))}
+                  >
+                    <option value="CHAT">CHAT</option>
+                    <option value="CALL">CALL</option>
+                    <option value="DIRECT">DIRECT</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="zalo-c360-interaction-content">Nội dung</label>
+                  <textarea
+                    id="zalo-c360-interaction-content"
+                    value={interactionForm.content}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, content: event.target.value }))}
+                    placeholder="Nội dung trao đổi/chăm sóc khách hàng..."
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="zalo-c360-interaction-result-tag">Kết quả (tag)</label>
+                  <input
+                    id="zalo-c360-interaction-result-tag"
+                    value={interactionForm.resultTag}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, resultTag: event.target.value }))}
+                    placeholder="ví dụ: da_hen, can_goi_lai"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="zalo-c360-next-action-at">Lần hành động tiếp theo</label>
+                  <input
+                    id="zalo-c360-next-action-at"
+                    type="datetime-local"
+                    value={interactionForm.nextActionAt}
+                    onChange={(event) => setInteractionForm((prev) => ({ ...prev, nextActionAt: event.target.value }))}
+                  />
+                </div>
+                <div className="action-buttons">
+                  <button type="submit" className="btn btn-primary" disabled={isSavingInteraction}>
+                    {isSavingInteraction ? 'Đang lưu...' : 'Ghi nhận tương tác'}
+                  </button>
+                </div>
+              </form>
+
+              <div className="zalo-c360-history">
+                <h3>Lịch sử chăm sóc gần đây</h3>
+                {Array.isArray(customer360.recentInteractions) && customer360.recentInteractions.length > 0 ? (
+                  <div className="zalo-c360-history-list">
+                    {customer360.recentInteractions.slice(0, 8).map((interaction) => (
+                      <article key={interaction.id} className="zalo-c360-history-item">
+                        <header>
+                          <strong>{interaction.interactionType || '--'} • {interaction.channel || '--'}</strong>
+                          <span>{toDateTime(interaction.interactionAt)}</span>
+                        </header>
+                        <p>{interaction.content || '--'}</p>
+                        <p className="muted">
+                          Kết quả: {interaction.resultTag || '--'} • Next: {toDateTime(interaction.nextActionAt)}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted">Chưa có lịch sử chăm sóc.</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </section>
       </section>
+
+      <Modal open={isQuickCreateOpen} onClose={() => setIsQuickCreateOpen(false)} title="Tạo khách hàng nhanh từ hội thoại">
+        <form className="form-grid" onSubmit={onQuickCreateCustomer}>
+          <p className="muted">
+            Kênh: {selectedThread?.channel ? CHANNEL_LABELS[selectedThread.channel] : '--'} •
+            Social ID: {selectedThread?.identityHint?.externalUserId || selectedThread?.externalThreadId || '--'}
+          </p>
+          <div className="field">
+            <label htmlFor="quick-create-full-name">Họ tên</label>
+            <input
+              id="quick-create-full-name"
+              value={quickCreateForm.fullName}
+              onChange={(event) => setQuickCreateForm((prev) => ({ ...prev, fullName: event.target.value }))}
+              placeholder="Nhập họ tên khách hàng"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="quick-create-phone">Điện thoại</label>
+            <input
+              id="quick-create-phone"
+              value={quickCreateForm.phone}
+              onChange={(event) => setQuickCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
+              placeholder="090..."
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="quick-create-email">Email</label>
+            <input
+              id="quick-create-email"
+              value={quickCreateForm.email}
+              onChange={(event) => setQuickCreateForm((prev) => ({ ...prev, email: event.target.value }))}
+              placeholder="khach@example.com"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="quick-create-owner">Owner staff ID</label>
+            <input
+              id="quick-create-owner"
+              value={quickCreateForm.ownerStaffId}
+              onChange={(event) => setQuickCreateForm((prev) => ({ ...prev, ownerStaffId: event.target.value }))}
+              placeholder="Nhập mã nhân sự phụ trách (nếu có)"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="quick-create-needs-summary">Tóm tắt nhu cầu</label>
+            <textarea
+              id="quick-create-needs-summary"
+              value={quickCreateForm.needsSummary}
+              onChange={(event) => setQuickCreateForm((prev) => ({ ...prev, needsSummary: event.target.value }))}
+              placeholder="Nhu cầu chính của khách..."
+            />
+          </div>
+          <div className="action-buttons">
+            <button type="button" className="btn btn-ghost" onClick={() => setIsQuickCreateOpen(false)}>
+              Hủy
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={isQuickCreating}>
+              {isQuickCreating ? 'Đang tạo...' : 'Tạo & liên kết'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </article>
   );
 }

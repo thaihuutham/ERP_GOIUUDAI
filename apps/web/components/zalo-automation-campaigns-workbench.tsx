@@ -14,6 +14,11 @@ type CampaignAccountStatus = 'READY' | 'PAUSED_ERROR' | 'DONE' | 'DISABLED';
 type CampaignRecipientStatus = 'PENDING' | 'IN_PROGRESS' | 'SENT' | 'SKIPPED' | 'FAILED';
 type CampaignAttemptStatus = 'SENT' | 'FAILED' | 'SKIPPED';
 type SelectionPolicy = 'PRIORITIZE_RECENT_INTERACTION' | 'AVOID_PREVIOUSLY_INTERACTED_ACCOUNT';
+type CustomerZaloNickType =
+  | 'CHUA_KIEM_TRA'
+  | 'CHUA_CO_NICK_ZALO'
+  | 'CHAN_NGUOI_LA'
+  | 'GUI_DUOC_TIN_NHAN';
 
 type CampaignStats = {
   pending?: number;
@@ -149,6 +154,7 @@ type CreateCampaignForm = {
   tags: string;
   stage: string;
   source: string;
+  zaloNickTypes: CustomerZaloNickType[];
   defaultPromoCode: string;
 };
 
@@ -169,6 +175,13 @@ const SELECTION_POLICY_OPTIONS: Array<{ value: SelectionPolicy; label: string }>
   },
 ];
 
+const CUSTOMER_ZALO_NICK_TYPE_OPTIONS: Array<{ value: CustomerZaloNickType; label: string }> = [
+  { value: 'CHUA_KIEM_TRA', label: 'Chưa kiểm tra' },
+  { value: 'CHUA_CO_NICK_ZALO', label: 'Chưa có nick Zalo' },
+  { value: 'CHAN_NGUOI_LA', label: 'Chặn người lạ' },
+  { value: 'GUI_DUOC_TIN_NHAN', label: 'Gửi được tin nhắn' },
+];
+
 type CampaignFieldHelpKey =
   | 'name'
   | 'code'
@@ -182,6 +195,7 @@ type CampaignFieldHelpKey =
   | 'tags'
   | 'stage'
   | 'source'
+  | 'zaloNickTypes'
   | 'defaultPromoCode'
   | 'operatorCampaign'
   | 'accountQuota'
@@ -301,6 +315,15 @@ const CAMPAIGN_FIELD_HELP: Record<CampaignFieldHelpKey, CampaignFieldHelpContent
       'Nên thống nhất cách đặt source trong CRM để tránh lệch dữ liệu.',
     ],
     example: 'ZALO',
+  },
+  zaloNickTypes: {
+    title: 'Lọc theo loại nick Zalo',
+    description: 'Chọn nhóm khách theo khả năng gửi tin trên Zalo.',
+    details: [
+      'Nếu không chọn gì, backend mặc định lấy CHUA_KIEM_TRA + GUI_DUOC_TIN_NHAN.',
+      'CHUA_CO_NICK_ZALO sẽ bị loại khỏi tập gửi.',
+      'CHAN_NGUOI_LA chỉ gửi được bằng nick đã từng tương tác gần nhất.',
+    ],
   },
   defaultPromoCode: {
     title: 'Promo code mặc định',
@@ -439,6 +462,7 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
     tags: '',
     stage: '',
     source: '',
+    zaloNickTypes: [],
     defaultPromoCode: '',
   });
 
@@ -716,6 +740,9 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
     if (createForm.source.trim()) {
       recipientFilterJson.source = createForm.source.trim();
     }
+    if (createForm.zaloNickTypes.length > 0) {
+      recipientFilterJson.zaloNickTypes = createForm.zaloNickTypes;
+    }
     if (createForm.defaultPromoCode.trim()) {
       recipientFilterJson.defaultPromoCode = createForm.defaultPromoCode.trim();
     }
@@ -746,6 +773,7 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
         ...prev,
         name: '',
         code: '',
+        zaloNickTypes: [],
       }));
       setSelectedOperatorIds([]);
       setAccountDrafts((prev) => {
@@ -1051,6 +1079,28 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
                     onChange={(event) => setCreateForm((prev) => ({ ...prev, source: event.target.value }))}
                     placeholder="ZALO"
                   />
+                </label>
+                <label>
+                  {renderFieldLabel('Loại nick Zalo (tuỳ chọn)', 'zaloNickTypes')}
+                  <select
+                    multiple
+                    value={createForm.zaloNickTypes}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        zaloNickTypes: Array.from(event.target.selectedOptions).map(
+                          (option) => option.value as CustomerZaloNickType,
+                        ),
+                      }))
+                    }
+                    size={Math.min(Math.max(CUSTOMER_ZALO_NICK_TYPE_OPTIONS.length, 3), 6)}
+                  >
+                    {CUSTOMER_ZALO_NICK_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   {renderFieldLabel('Promo code mặc định (tuỳ chọn)', 'defaultPromoCode')}

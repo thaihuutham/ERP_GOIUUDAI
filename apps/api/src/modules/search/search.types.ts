@@ -1,4 +1,4 @@
-import { GenericStatus } from '@prisma/client';
+import { CustomerCareStatus, GenericStatus } from '@prisma/client';
 
 export const SEARCH_ENTITIES = ['customers', 'orders', 'products'] as const;
 
@@ -6,7 +6,7 @@ export type SearchEntity = (typeof SEARCH_ENTITIES)[number];
 export type SearchReindexEntity = SearchEntity | 'all';
 
 export type SearchCustomersFilters = {
-  status?: GenericStatus;
+  status?: CustomerCareStatus;
   stage?: string;
   tag?: string;
 };

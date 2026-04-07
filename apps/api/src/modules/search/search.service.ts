@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GenericStatus, Prisma } from '@prisma/client';
+import { CustomerCareStatus, GenericStatus, Prisma } from '@prisma/client';
 import { MeiliSearch } from 'meilisearch';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -23,7 +23,7 @@ type CustomerSearchSource = {
   email: string | null;
   phone: string | null;
   tags: string[];
-  status: GenericStatus;
+  status: CustomerCareStatus;
   customerStage: string | null;
   totalSpent: Prisma.Decimal | number | string | null;
   updatedAt: Date;

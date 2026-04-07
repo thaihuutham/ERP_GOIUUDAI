@@ -108,7 +108,11 @@ function getCurrentModuleTitle(pathname: string) {
   }
 
   if (pathname.startsWith('/modules/crm/conversations')) {
-    return 'Hội thoại khách hàng';
+    return 'Zalo Automation • Tin nhắn';
+  }
+
+  if (pathname.startsWith('/modules/crm/vehicles')) {
+    return 'CRM • Quản lý xe';
   }
 
   if (pathname.startsWith('/modules/crm/zalo-accounts')) {
@@ -204,7 +208,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const isModuleLinkActive = (moduleKey: string) => {
     if (moduleKey === 'crm') {
-      return pathname === '/modules/crm';
+      return pathname === '/modules/crm' || pathname.startsWith('/modules/crm/vehicles');
     }
     if (moduleKey === 'hr') {
       return isHrPath;

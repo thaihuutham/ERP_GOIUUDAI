@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CustomerZaloNickType,
   ConversationChannel,
   Prisma,
   ZaloCampaignAccountStatus,
@@ -137,6 +138,10 @@ const DEFAULT_WINDOW_MORNING_START = 7 * 60;
 const DEFAULT_WINDOW_MORNING_END = 11 * 60 + 30;
 const DEFAULT_WINDOW_AFTERNOON_START = 14 * 60;
 const DEFAULT_WINDOW_AFTERNOON_END = 20 * 60;
+const DEFAULT_RECIPIENT_ZALO_NICK_TYPES: CustomerZaloNickType[] = [
+  CustomerZaloNickType.CHUA_KIEM_TRA,
+  CustomerZaloNickType.GUI_DUOC_TIN_NHAN,
+];
 
 @Injectable()
 export class ZaloCampaignService {
@@ -998,6 +1003,7 @@ export class ZaloCampaignService {
           },
           data: {
             lastContactAt: now,
+            zaloNickType: CustomerZaloNickType.GUI_DUOC_TIN_NHAN,
           },
         });
       });
@@ -1009,6 +1015,8 @@ export class ZaloCampaignService {
       };
     } catch (error) {
       const errorMessage = this.normalizeError(error);
+      const shouldMarkNoZaloNick = this.isLookupUidNotFoundError(errorMessage);
+      const shouldMarkStrangerBlocked = this.isStrangerBlockedError(errorMessage);
       const shouldFailRecipient = recipient.attemptCount >= MAX_RECIPIENT_ATTEMPTS;
       const recipientNextStatus = shouldFailRecipient
         ? ZaloCampaignRecipientStatus.FAILED
@@ -1062,6 +1070,20 @@ export class ZaloCampaignService {
             lastErrorMessage: errorMessage,
           },
         });
+
+        if (shouldMarkNoZaloNick || shouldMarkStrangerBlocked) {
+          await tx.customer.updateMany({
+            where: {
+              id: recipient.customerId,
+              tenant_Id: this.prisma.getTenantId(),
+            },
+            data: {
+              zaloNickType: shouldMarkStrangerBlocked
+                ? CustomerZaloNickType.CHAN_NGUOI_LA
+                : CustomerZaloNickType.CHUA_CO_NICK_ZALO,
+            },
+          });
+        }
       });
 
       return {
@@ -1101,8 +1123,11 @@ export class ZaloCampaignService {
     for (const candidate of candidates) {
       const compatibility = this.evaluateRecipientCompatibility(campaign, account, candidate);
       if (!compatibility.allowed) {
-        if (compatibility.reason === 'NO_THREAD') {
-          await this.skipRecipientNoThread(campaign.id, account.id, candidate.id, now);
+        if (compatibility.reason === 'NO_THREAD' || compatibility.reason === 'NO_ZALO_NICK') {
+          const skipReason = compatibility.reason === 'NO_ZALO_NICK'
+            ? 'NO_ZALO_NICK'
+            : 'NO_TARGET_THREAD';
+          await this.skipRecipientByReason(campaign.id, account.id, candidate.id, skipReason, now);
         }
         continue;
       }
@@ -1148,10 +1173,11 @@ export class ZaloCampaignService {
     return null;
   }
 
-  private async skipRecipientNoThread(
+  private async skipRecipientByReason(
     campaignId: string,
     campaignAccountId: string,
     recipientId: string,
+    reason: string,
     now: Date,
   ) {
     await this.prisma.client.$transaction(async (tx) => {
@@ -1169,7 +1195,7 @@ export class ZaloCampaignService {
         where: { id: recipientId },
         data: {
           status: ZaloCampaignRecipientStatus.SKIPPED,
-          skippedReason: 'NO_TARGET_THREAD',
+          skippedReason: reason,
         },
       });
 
@@ -1181,7 +1207,7 @@ export class ZaloCampaignService {
           recipientId,
           customerId: recipient.customerId,
           status: ZaloCampaignAttemptStatus.SKIPPED,
-          errorMessage: 'NO_TARGET_THREAD',
+          errorMessage: reason,
           attemptedAt: now,
         },
       });
@@ -1194,6 +1220,18 @@ export class ZaloCampaignService {
           },
         },
       });
+
+      if (reason === 'NO_TARGET_THREAD' || reason === 'NO_ZALO_NICK') {
+        await tx.customer.updateMany({
+          where: {
+            id: recipient.customerId,
+            tenant_Id: this.prisma.getTenantId(),
+          },
+          data: {
+            zaloNickType: CustomerZaloNickType.CHUA_CO_NICK_ZALO,
+          },
+        });
+      }
     });
   }
 
@@ -1203,12 +1241,44 @@ export class ZaloCampaignService {
     recipient: RecipientWithPayload,
   ): RecipientCompatibilityDecision {
     const variablePayload = this.toRecord(recipient.variablePayloadJson);
+    const customerPayload = this.toRecord(variablePayload.customer);
+    const customerZaloNickType = this.parseCustomerZaloNickType(
+      customerPayload.zaloNickType,
+      CustomerZaloNickType.CHUA_KIEM_TRA,
+    );
     const externalThreadId = this.cleanString(recipient.externalThreadId);
+
+    if (customerZaloNickType === CustomerZaloNickType.CHUA_CO_NICK_ZALO) {
+      return {
+        allowed: false,
+        reason: 'NO_ZALO_NICK',
+      };
+    }
+
+    if (customerZaloNickType === CustomerZaloNickType.CHAN_NGUOI_LA) {
+      const requiredTargetAccountId = this.cleanString(recipient.targetAccountId);
+      if (!requiredTargetAccountId || !externalThreadId) {
+        return {
+          allowed: false,
+          reason: 'NO_THREAD',
+        };
+      }
+      if (requiredTargetAccountId !== account.zaloAccountId) {
+        return {
+          allowed: false,
+          reason: 'TARGET_ACCOUNT_MISMATCH',
+        };
+      }
+      return {
+        allowed: true,
+      };
+    }
+
     if (!externalThreadId) {
       const normalizedPhone = this.cleanString(
         variablePayload.normalizedPhone
-        ?? this.toRecord(variablePayload.customer).phoneNormalized
-        ?? this.toRecord(variablePayload.customer).phone,
+        ?? customerPayload.phoneNormalized
+        ?? customerPayload.phone,
       );
       if (!normalizedPhone) {
         return {
@@ -1497,7 +1567,6 @@ export class ZaloCampaignService {
 
     const customerWhere: Prisma.CustomerWhereInput = {
       tenant_Id: tenantId,
-      status: 'ACTIVE',
     };
 
     const customerIds = this.parseStringArray(filter.customerIds);
@@ -1524,6 +1593,14 @@ export class ZaloCampaignService {
       customerWhere.source = source;
     }
 
+    const requestedZaloNickTypes = this.parseCustomerZaloNickTypes(filter.zaloNickTypes);
+    const effectiveZaloNickTypes = requestedZaloNickTypes.length > 0
+      ? requestedZaloNickTypes
+      : DEFAULT_RECIPIENT_ZALO_NICK_TYPES;
+    customerWhere.zaloNickType = {
+      in: effectiveZaloNickTypes,
+    };
+
     const customers = await tx.customer.findMany({
       where: customerWhere,
       select: {
@@ -1537,6 +1614,7 @@ export class ZaloCampaignService {
         segment: true,
         source: true,
         tags: true,
+        zaloNickType: true,
         updatedAt: true,
       },
       orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
@@ -1641,9 +1719,10 @@ export class ZaloCampaignService {
         && dedupedPhoneResolvedCandidates.length > 0
       );
 
-      const effectiveThreadCandidates = interactionThreadCandidates.length > 0
+      const customerZaloNickType = customer.zaloNickType ?? CustomerZaloNickType.CHUA_KIEM_TRA;
+      const effectiveThreadCandidates = customerZaloNickType === CustomerZaloNickType.CHAN_NGUOI_LA
         ? interactionThreadCandidates
-        : dedupedPhoneResolvedCandidates;
+        : (interactionThreadCandidates.length > 0 ? interactionThreadCandidates : dedupedPhoneResolvedCandidates);
       const mostRecentThread = effectiveThreadCandidates[0] ?? null;
       const externalThreadId = this.cleanString(mostRecentThread?.externalThreadId) || null;
 
@@ -1663,10 +1742,27 @@ export class ZaloCampaignService {
         ),
       );
 
-      const targetAccountId = campaign.selectionPolicy === ZaloCampaignSelectionPolicy.PRIORITIZE_RECENT_INTERACTION
-        ? (this.cleanString(mostRecentThread?.channelAccountId) || null)
-        : null;
-      const canResolveByPhone = Boolean(phoneKey);
+      const targetAccountId = customerZaloNickType === CustomerZaloNickType.CHAN_NGUOI_LA
+        ? (this.cleanString(interactionThreadCandidates[0]?.channelAccountId) || null)
+        : (campaign.selectionPolicy === ZaloCampaignSelectionPolicy.PRIORITIZE_RECENT_INTERACTION
+          ? (this.cleanString(mostRecentThread?.channelAccountId) || null)
+          : null);
+      const canResolveByPhone = customerZaloNickType === CustomerZaloNickType.CHAN_NGUOI_LA
+        ? false
+        : Boolean(phoneKey);
+      const mustSkipNoZaloNick = customerZaloNickType === CustomerZaloNickType.CHUA_CO_NICK_ZALO;
+      const mustSkipForStrangerNoAccount = (
+        customerZaloNickType === CustomerZaloNickType.CHAN_NGUOI_LA
+        && !targetAccountId
+      );
+      const canRunRecipient = !mustSkipNoZaloNick
+        && !mustSkipForStrangerNoAccount
+        && (Boolean(externalThreadId) || canResolveByPhone);
+      const skippedReason = mustSkipNoZaloNick
+        ? 'NO_ZALO_NICK'
+        : (mustSkipForStrangerNoAccount
+          ? 'STRANGER_BLOCK_NEEDS_RECENT_INTERACTION_ACCOUNT'
+          : ((externalThreadId || canResolveByPhone) ? null : 'NO_TARGET_THREAD'));
 
       const promoCode = defaultPromoCode || this.cleanString(customer.code) || null;
       const variablePayload: JsonRecord = {
@@ -1681,6 +1777,7 @@ export class ZaloCampaignService {
           segment: customer.segment,
           source: customer.source,
           tags: customer.tags,
+          zaloNickType: customerZaloNickType,
           promoCode,
         },
         campaign: {
@@ -1705,6 +1802,7 @@ export class ZaloCampaignService {
           segment: customer.segment,
           source: customer.source,
           tags: customer.tags,
+          zaloNickType: customerZaloNickType,
         },
         threads: interactionThreadCandidates,
         resolvedThreadsByPhone: dedupedPhoneResolvedCandidates,
@@ -1716,10 +1814,10 @@ export class ZaloCampaignService {
         customerId: customer.id,
         externalThreadId,
         targetAccountId,
-        status: (externalThreadId || canResolveByPhone)
+        status: canRunRecipient
           ? ZaloCampaignRecipientStatus.PENDING
           : ZaloCampaignRecipientStatus.SKIPPED,
-        skippedReason: (externalThreadId || canResolveByPhone) ? null : 'NO_TARGET_THREAD',
+        skippedReason,
         variablePayloadJson: variablePayload as Prisma.InputJsonValue,
         customerSnapshotJson: snapshot as Prisma.InputJsonValue,
       };
@@ -2409,6 +2507,37 @@ export class ZaloCampaignService {
     return [];
   }
 
+  private parseCustomerZaloNickType(
+    value: unknown,
+    fallback: CustomerZaloNickType,
+  ): CustomerZaloNickType {
+    const normalized = this.cleanString(value).toUpperCase();
+    if (
+      normalized === CustomerZaloNickType.CHUA_KIEM_TRA
+      || normalized === CustomerZaloNickType.CHUA_CO_NICK_ZALO
+      || normalized === CustomerZaloNickType.CHAN_NGUOI_LA
+      || normalized === CustomerZaloNickType.GUI_DUOC_TIN_NHAN
+    ) {
+      return normalized as CustomerZaloNickType;
+    }
+    return fallback;
+  }
+
+  private parseCustomerZaloNickTypes(value: unknown): CustomerZaloNickType[] {
+    const rawValues = this.parseStringArray(value);
+    const output: CustomerZaloNickType[] = [];
+    for (const rawValue of rawValues) {
+      const parsed = this.parseCustomerZaloNickType(rawValue, CustomerZaloNickType.CHUA_KIEM_TRA);
+      if (rawValue.trim().toUpperCase() !== parsed) {
+        continue;
+      }
+      if (!output.includes(parsed)) {
+        output.push(parsed);
+      }
+    }
+    return output;
+  }
+
   private normalizeCampaignPhone(value: unknown) {
     const normalized = normalizeVietnamPhone(String(value ?? '').trim());
     if (!normalized) {
@@ -2425,5 +2554,39 @@ export class ZaloCampaignService {
       return `0${compact.slice(2)}`;
     }
     return compact;
+  }
+
+  private isLookupUidNotFoundError(message: string): boolean {
+    const normalized = this.cleanString(message).toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    return (
+      normalized.includes('khong tim duoc thread')
+      || normalized.includes('không tìm được thread')
+      || normalized.includes('no_target_thread')
+      || normalized.includes('no_zalo_nick')
+      || normalized.includes('khong ton tai')
+      || normalized.includes('không tồn tại')
+      || (normalized.includes('uid') && (
+        normalized.includes('not found')
+        || normalized.includes('missing')
+      ))
+    );
+  }
+
+  private isStrangerBlockedError(message: string): boolean {
+    const normalized = this.cleanString(message).toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    return (
+      normalized.includes('chan nguoi la')
+      || normalized.includes('chặn người lạ')
+      || normalized.includes('stranger')
+      || normalized.includes('only receive messages from friends')
+      || normalized.includes('khong nhan tin nhan tu nguoi la')
+      || normalized.includes('không nhận tin nhắn từ người lạ')
+    );
   }
 }

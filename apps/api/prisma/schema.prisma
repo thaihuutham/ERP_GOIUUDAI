@@ -61,6 +61,25 @@ enum GenericStatus {
   ARCHIVED
 }
 
+enum CustomerCareStatus {
+  MOI_CHUA_TU_VAN
+  DANG_SUY_NGHI
+  DONG_Y_CHUYEN_THANH_KH
+  KH_TU_CHOI
+  KH_DA_MUA_BEN_KHAC
+  NGUOI_NHA_LAM_THUE_BAO
+  KHONG_NGHE_MAY_LAN_1
+  KHONG_NGHE_MAY_LAN_2
+  SAI_SO_KHONG_TON_TAI_BO_QUA_XOA
+}
+
+enum CustomerZaloNickType {
+  CHUA_KIEM_TRA
+  CHUA_CO_NICK_ZALO
+  CHAN_NGUOI_LA
+  GUI_DUOC_TIN_NHAN
+}
+
 enum EmploymentType {
   FULL_TIME
   PART_TIME
@@ -693,12 +712,14 @@ model Customer {
   consentStatus String?
   segment       String?
   source        String?
+  needsSummary  String?
   customFieldSchemaVersion Int?
   totalOrders   Int      @default(0)
   totalSpent    Decimal? @db.Decimal(18, 2)
   lastOrderAt   DateTime?
   lastContactAt DateTime?
-  status        GenericStatus @default(ACTIVE)
+  status        CustomerCareStatus @default(MOI_CHUA_TU_VAN)
+  zaloNickType  CustomerZaloNickType @default(CHUA_KIEM_TRA)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -723,6 +744,8 @@ model Customer {
   @@index([tenant_Id])
   @@index([tenant_Id, phone])
   @@index([tenant_Id, email])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, zaloNickType])
   @@index([tenant_Id, customFieldSchemaVersion])
 }
 

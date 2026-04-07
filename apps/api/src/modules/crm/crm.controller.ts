@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
-import { CustomFieldEntityType, GenericStatus } from '@prisma/client';
+import { CustomerCareStatus, CustomFieldEntityType } from '@prisma/client';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
@@ -17,7 +17,7 @@ export class CrmController {
   @Get('customers')
   listCustomers(
     @Query() query: PaginationQueryDto,
-    @Query('status') status?: GenericStatus | 'ALL',
+    @Query('status') status?: CustomerCareStatus | 'ALL',
     @Query('stage') stage?: string,
     @Query('tag') tag?: string,
     @Req() req?: { query?: Record<string, unknown> }
@@ -65,6 +65,15 @@ export class CrmController {
     return this.crmContractsService.listCustomerContracts(id, query);
   }
 
+  @Get('customers/:id/customer-360')
+  getCustomer360(@Param('id') id: string) {
+    return this.crmContractsService.getCustomer360(id)
+      .then(async (detail) => ({
+        ...detail,
+        customer: await this.customFields.wrapEntity(CustomFieldEntityType.CUSTOMER, detail.customer)
+      }));
+  }
+
   @Get('customers/:id')
   getCustomerDetail(@Param('id') id: string) {
     return this.crmContractsService.getCustomerDetail(id)
@@ -86,9 +95,15 @@ export class CrmController {
   }
 
   @Delete('customers/:id')
-  @AuditAction({ action: 'ARCHIVE_CUSTOMER', entityType: 'Customer', entityIdParam: 'id' })
-  archiveCustomer(@Param('id') id: string) {
-    return this.crmService.archiveCustomer(id);
+  @AuditAction({ action: 'SOFT_SKIP_CUSTOMER', entityType: 'Customer', entityIdParam: 'id' })
+  softSkipCustomer(@Param('id') id: string) {
+    return this.crmService.softSkipCustomer(id);
+  }
+
+  @Post('customers/import')
+  @AuditAction({ action: 'IMPORT_CUSTOMERS', entityType: 'Customer' })
+  importCustomers(@Body() body: Record<string, unknown>) {
+    return this.crmService.importCustomers(body);
   }
 
   @Get('interactions')
@@ -189,6 +204,30 @@ export class CrmController {
   @AuditAction({ action: 'CREATE_CRM_VEHICLE', entityType: 'Vehicle' })
   createVehicle(@Body() body: Record<string, unknown>) {
     return this.crmContractsService.createVehicle(body)
+      .then((vehicle) => this.customFields.wrapEntity(CustomFieldEntityType.VEHICLE, vehicle));
+  }
+
+  @Post('vehicles/import')
+  @AuditAction({ action: 'IMPORT_CRM_VEHICLES', entityType: 'Vehicle' })
+  importVehicles(@Body() body: Record<string, unknown>) {
+    return this.crmContractsService.importVehicles(body);
+  }
+
+  @Patch('vehicles/:id')
+  @AuditAction({ action: 'UPDATE_CRM_VEHICLE', entityType: 'Vehicle', entityIdParam: 'id' })
+  updateVehicle(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const mutation = this.customFields.parseMutationBody(body);
+    return this.crmContractsService.updateVehicle(id, mutation.base)
+      .then(async (vehicle) => {
+        await this.customFields.applyEntityMutation(CustomFieldEntityType.VEHICLE, id, mutation);
+        return this.customFields.wrapEntity(CustomFieldEntityType.VEHICLE, vehicle);
+      });
+  }
+
+  @Delete('vehicles/:id')
+  @AuditAction({ action: 'ARCHIVE_CRM_VEHICLE', entityType: 'Vehicle', entityIdParam: 'id' })
+  archiveVehicle(@Param('id') id: string) {
+    return this.crmContractsService.archiveVehicle(id)
       .then((vehicle) => this.customFields.wrapEntity(CustomFieldEntityType.VEHICLE, vehicle));
   }
 

@@ -1,4 +1,4 @@
-import { GenericStatus, Prisma } from '@prisma/client';
+import { CustomerCareStatus, GenericStatus, Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { SearchService } from '../src/modules/search/search.service';
 
@@ -43,7 +43,7 @@ describe('SearchService', () => {
     vi.spyOn(service as any, 'getIndex').mockReturnValue(index);
 
     const ids = await service.searchCustomerIds('nguyen', 'GOIUUDAI', 20, {
-      status: GenericStatus.ACTIVE,
+      status: CustomerCareStatus.MOI_CHUA_TU_VAN,
       stage: 'MOI',
       tag: 'vip'
     });
@@ -59,7 +59,7 @@ describe('SearchService', () => {
 
     const queryOptions = index.search.mock.calls[0]?.[1] as { filter: string };
     expect(queryOptions.filter).toContain('tenant_Id = "GOIUUDAI"');
-    expect(queryOptions.filter).toContain('status = "ACTIVE"');
+    expect(queryOptions.filter).toContain('status = "MOI_CHUA_TU_VAN"');
     expect(queryOptions.filter).toContain('customerStage = "MOI"');
     expect(queryOptions.filter).toContain('tags = "vip"');
   });
@@ -89,7 +89,7 @@ describe('SearchService', () => {
       email: 'a@example.com',
       phone: '0909000000',
       tags: ['vip'],
-      status: GenericStatus.ACTIVE,
+      status: CustomerCareStatus.MOI_CHUA_TU_VAN,
       customerStage: 'MOI',
       totalSpent: new Prisma.Decimal('1250000.5'),
       updatedAt: new Date('2026-03-30T09:00:00.000Z')

@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { ConversationChannel, ConversationSenderType, Prisma } from '@prisma/client';
+import { ConversationChannel, ConversationSenderType, CustomerSocialPlatform, Prisma } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
@@ -31,6 +31,21 @@ type IngestExternalMessagePayload = {
   customerDisplayName?: string;
   metadataJson?: Prisma.InputJsonValue;
   attachmentsJson?: Prisma.InputJsonValue;
+};
+
+type ThreadMatchStatus = 'matched' | 'unmatched' | 'suggested';
+
+type ThreadSuggestion = {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  email: string | null;
+  ownerStaffId: string | null;
+};
+
+type ThreadIdentityHint = {
+  platform: CustomerSocialPlatform;
+  externalUserId: string;
 };
 
 @Injectable()
@@ -131,12 +146,13 @@ export class ConversationsService {
 
     const hasMore = rows.length > take;
     const items = hasMore ? rows.slice(0, take) : rows;
+    const [threadSuggestions, threadIdentityMatches] = await Promise.all([
+      this.resolveThreadSuggestions(items),
+      this.resolveThreadIdentityMatches(items)
+    ]);
 
     return {
-      items: items.map((item) => ({
-        ...item,
-        tags: this.readThreadTags(item.metadataJson)
-      })),
+      items: items.map((item) => this.toThreadListItem(item, threadSuggestions, threadIdentityMatches)),
       nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
       limit: take
     };
@@ -197,6 +213,197 @@ export class ConversationsService {
     return {
       ...updated,
       tags: this.readThreadTags(updated.metadataJson)
+    };
+  }
+
+  async linkThreadCustomer(threadId: string, payload: Record<string, unknown>) {
+    const id = this.requiredString(threadId, 'Thiếu threadId.');
+    const customerId = this.optionalString(payload.customerId);
+    const customerPhoneRaw = this.optionalString(payload.customerPhone);
+    const normalizedCustomerPhone = customerPhoneRaw ? normalizeVietnamPhone(customerPhoneRaw) : null;
+    if (customerPhoneRaw && !normalizedCustomerPhone) {
+      throw new BadRequestException('Số điện thoại khách hàng không hợp lệ.');
+    }
+    if (!customerId && !normalizedCustomerPhone) {
+      throw new BadRequestException('Thiếu customerPhone hoặc customerId.');
+    }
+    const thread = await this.prisma.client.conversationThread.findFirst({ where: { id } });
+    if (!thread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    if (this.isZaloChannel(thread.channel) && thread.channelAccountId) {
+      await this.zaloAssignment.assertCanChatAccount(thread.channelAccountId);
+    }
+
+    const customer = await this.prisma.client.customer.findFirst({
+      where: customerId
+        ? { id: customerId }
+        : { phoneNormalized: normalizedCustomerPhone! },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        email: true,
+        ownerStaffId: true
+      }
+    });
+    if (!customer) {
+      throw new NotFoundException('Không tìm thấy khách hàng.');
+    }
+
+    await this.prisma.client.$transaction(async (tx) => {
+      const identityHint = this.resolveThreadIdentityHint(thread);
+      if (identityHint) {
+        await this.ensureThreadIdentityOwnership(tx, identityHint, customer.id, thread);
+      }
+
+      await tx.conversationThread.updateMany({
+        where: { id },
+        data: {
+          customerId: customer.id,
+          customerDisplayName: customer.fullName || thread.customerDisplayName
+        }
+      });
+    });
+
+    const responseThread = await this.loadThreadWithRelations(id);
+    return this.toThreadListItem(responseThread);
+  }
+
+  async quickCreateCustomerFromThread(threadId: string, payload: Record<string, unknown>) {
+    const id = this.requiredString(threadId, 'Thiếu threadId.');
+    const currentThread = await this.prisma.client.conversationThread.findFirst({ where: { id } });
+    if (!currentThread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    if (this.isZaloChannel(currentThread.channel) && currentThread.channelAccountId) {
+      await this.zaloAssignment.assertCanChatAccount(currentThread.channelAccountId);
+    }
+
+    const inputPhone = this.optionalString(payload.phone);
+    const normalizedPhone = normalizeVietnamPhone(inputPhone);
+    if (inputPhone && !normalizedPhone) {
+      throw new BadRequestException('Số điện thoại không hợp lệ.');
+    }
+    const normalizedEmail = this.normalizeEmail(this.optionalString(payload.email));
+
+    const quickCreateResult = await this.prisma.client.$transaction(async (tx) => {
+      const thread = await tx.conversationThread.findFirst({
+        where: { id },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              fullName: true,
+              phone: true,
+              email: true,
+              ownerStaffId: true
+            }
+          }
+        }
+      });
+      if (!thread) {
+        throw new NotFoundException('Không tìm thấy hội thoại.');
+      }
+
+      if (thread.customerId && thread.customer) {
+        return {
+          deduplicated: true,
+          customer: thread.customer
+        };
+      }
+
+      const identityHint = this.resolveThreadIdentityHint(thread);
+      if (identityHint) {
+        const existingIdentity = await tx.customerSocialIdentity.findFirst({
+          where: {
+            platform: identityHint.platform,
+            externalUserId: identityHint.externalUserId
+          },
+          select: {
+            customerId: true
+          }
+        });
+
+        if (existingIdentity?.customerId) {
+          const existingCustomer = await tx.customer.findFirst({
+            where: { id: existingIdentity.customerId },
+            select: {
+              id: true,
+              fullName: true,
+              phone: true,
+              email: true,
+              ownerStaffId: true
+            }
+          });
+          if (existingCustomer) {
+            await tx.conversationThread.updateMany({
+              where: { id: thread.id },
+              data: {
+                customerId: existingCustomer.id,
+                customerDisplayName: existingCustomer.fullName || thread.customerDisplayName
+              }
+            });
+            return {
+              deduplicated: true,
+              customer: existingCustomer
+            };
+          }
+        }
+      }
+
+      const existingCustomer = await this.findCustomerByContactTx(tx, normalizedPhone, normalizedEmail);
+      const customer = existingCustomer ?? await tx.customer.create({
+        data: {
+          tenant_Id: this.prisma.getTenantId(),
+          fullName:
+            this.optionalString(payload.fullName)
+            || this.optionalString(thread.customerDisplayName)
+            || `Khách từ ${this.formatChannelLabel(thread.channel)} ${thread.externalThreadId.slice(-6)}`,
+          phone: normalizedPhone ?? null,
+          phoneNormalized: normalizedPhone ?? null,
+          email: normalizedEmail ?? null,
+          emailNormalized: normalizedEmail ?? null,
+          source: this.optionalString(payload.source) ?? this.resolveCustomerSourceByChannel(thread.channel),
+          customerStage: this.optionalString(payload.customerStage) ?? 'MOI',
+          ownerStaffId: this.optionalString(payload.ownerStaffId) ?? null,
+          segment: this.optionalString(payload.segment) ?? null,
+          needsSummary: this.optionalString(payload.needsSummary) ?? null
+        },
+        select: {
+          id: true,
+          fullName: true,
+          phone: true,
+          email: true,
+          ownerStaffId: true
+        }
+      });
+
+      if (identityHint) {
+        await this.ensureThreadIdentityOwnership(tx, identityHint, customer.id, thread);
+      }
+
+      await tx.conversationThread.updateMany({
+        where: { id: thread.id },
+        data: {
+          customerId: customer.id,
+          customerDisplayName: customer.fullName || thread.customerDisplayName
+        }
+      });
+
+      return {
+        deduplicated: Boolean(existingCustomer),
+        customer
+      };
+    });
+
+    const linkedThread = await this.loadThreadWithRelations(id);
+    return {
+      deduplicated: quickCreateResult.deduplicated,
+      customer: quickCreateResult.customer,
+      thread: this.toThreadListItem(linkedThread)
     };
   }
 
@@ -427,31 +634,10 @@ export class ConversationsService {
     if (!this.crmContractsService) {
       return null;
     }
-    const fallbackPhone = this.extractFallbackPhone(payload);
     return this.crmContractsService.resolveCustomerIdForExternalIdentity(
       payload.channel,
-      payload.senderExternalId,
-      fallbackPhone
+      payload.senderExternalId
     );
-  }
-
-  private extractFallbackPhone(payload: IngestExternalMessagePayload) {
-    const metadata = this.ensureRecord(payload.metadataJson);
-    const candidates = [
-      this.optionalString(metadata.phone),
-      this.optionalString(metadata.phoneNormalized),
-      this.optionalString(metadata.customerPhone),
-      this.optionalString(metadata.senderPhone),
-      this.optionalString(payload.externalThreadId)
-    ];
-
-    for (const candidate of candidates) {
-      const normalized = normalizeVietnamPhone(candidate);
-      if (normalized) {
-        return normalized;
-      }
-    }
-    return undefined;
   }
 
   private async createOrReuseMessage(payload: IngestExternalMessagePayload, thread: { id: string; unreadCount: number; isReplied: boolean; }) {
@@ -557,6 +743,369 @@ export class ConversationsService {
         lastMessageAt: sentAt
       }
     });
+  }
+
+  private async resolveThreadSuggestions(threads: Array<{ id: string; customerId?: string | null; metadataJson?: unknown; externalThreadId?: string | null; }>) {
+    const threadPhoneMap = new Map<string, string>();
+    for (const thread of threads) {
+      if (thread.customerId) {
+        continue;
+      }
+      const fallbackPhone = this.extractThreadFallbackPhoneCandidate(thread);
+      if (fallbackPhone) {
+        threadPhoneMap.set(thread.id, fallbackPhone);
+      }
+    }
+
+    if (threadPhoneMap.size === 0) {
+      return new Map<string, ThreadSuggestion>();
+    }
+
+    const phoneList = Array.from(new Set(threadPhoneMap.values()));
+    const customers = await this.prisma.client.customer.findMany({
+      where: {
+        phoneNormalized: {
+          in: phoneList
+        }
+      },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        email: true,
+        ownerStaffId: true,
+        phoneNormalized: true
+      }
+    });
+
+    const customerByPhone = new Map<string, ThreadSuggestion>();
+    for (const customer of customers) {
+      const phoneNormalized = this.optionalString(customer.phoneNormalized);
+      if (!phoneNormalized) {
+        continue;
+      }
+      customerByPhone.set(phoneNormalized, {
+        id: customer.id,
+        fullName: customer.fullName,
+        phone: customer.phone ?? null,
+        email: customer.email ?? null,
+        ownerStaffId: customer.ownerStaffId ?? null
+      });
+    }
+
+    const suggestionByThreadId = new Map<string, ThreadSuggestion>();
+    for (const [threadId, phone] of threadPhoneMap.entries()) {
+      const customer = customerByPhone.get(phone);
+      if (customer) {
+        suggestionByThreadId.set(threadId, customer);
+      }
+    }
+
+    return suggestionByThreadId;
+  }
+
+  private async resolveThreadIdentityMatches(
+    threads: Array<{ id: string; customerId?: string | null; channel: ConversationChannel; externalThreadId: string; metadataJson?: unknown; customerDisplayName?: string | null; }>
+  ) {
+    const identityByThreadId = new Map<string, ThreadIdentityHint>();
+    for (const thread of threads) {
+      if (thread.customerId) {
+        continue;
+      }
+      const hint = this.resolveThreadIdentityHint(thread);
+      if (hint) {
+        identityByThreadId.set(thread.id, hint);
+      }
+    }
+
+    if (identityByThreadId.size === 0) {
+      return new Map<string, ThreadSuggestion>();
+    }
+
+    const uniqueIdentityMap = new Map<string, ThreadIdentityHint>();
+    for (const hint of identityByThreadId.values()) {
+      uniqueIdentityMap.set(this.identityKey(hint.platform, hint.externalUserId), hint);
+    }
+
+    const identities = await this.prisma.client.customerSocialIdentity.findMany({
+      where: {
+        OR: Array.from(uniqueIdentityMap.values()).map((item) => ({
+          platform: item.platform,
+          externalUserId: item.externalUserId
+        }))
+      },
+      select: {
+        platform: true,
+        externalUserId: true,
+        customer: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true,
+            ownerStaffId: true
+          }
+        }
+      }
+    });
+
+    const customerByIdentity = new Map<string, ThreadSuggestion>();
+    for (const identity of identities) {
+      if (!identity.customer) {
+        continue;
+      }
+      customerByIdentity.set(this.identityKey(identity.platform, identity.externalUserId), {
+        id: identity.customer.id,
+        fullName: identity.customer.fullName,
+        phone: identity.customer.phone ?? null,
+        email: identity.customer.email ?? null,
+        ownerStaffId: identity.customer.ownerStaffId ?? null
+      });
+    }
+
+    const matchedByThreadId = new Map<string, ThreadSuggestion>();
+    for (const [threadId, hint] of identityByThreadId.entries()) {
+      const customer = customerByIdentity.get(this.identityKey(hint.platform, hint.externalUserId));
+      if (customer) {
+        matchedByThreadId.set(threadId, customer);
+      }
+    }
+
+    return matchedByThreadId;
+  }
+
+  private toThreadListItem(
+    item: any,
+    threadSuggestions: Map<string, ThreadSuggestion> = new Map(),
+    threadIdentityMatches: Map<string, ThreadSuggestion> = new Map()
+  ) {
+    const identityMatchedCustomer = threadIdentityMatches.get(item.id);
+    const suggestedCustomer = threadSuggestions.get(item.id) ?? null;
+    const resolvedCustomer = item.customer ?? identityMatchedCustomer ?? null;
+    const customerId = item.customerId ?? resolvedCustomer?.id ?? null;
+    const matchStatus: ThreadMatchStatus = customerId
+      ? 'matched'
+      : suggestedCustomer
+        ? 'suggested'
+        : 'unmatched';
+
+    return {
+      ...item,
+      customerId,
+      customer: resolvedCustomer,
+      tags: this.readThreadTags(item.metadataJson),
+      matchStatus,
+      suggestedCustomer: matchStatus === 'suggested' ? suggestedCustomer : null,
+      identityHint: this.resolveThreadIdentityHint(item)
+    };
+  }
+
+  private async loadThreadWithRelations(threadId: string) {
+    return this.prisma.client.conversationThread.findFirstOrThrow({
+      where: { id: threadId },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true
+          }
+        },
+        channelAccount: {
+          select: {
+            id: true,
+            accountType: true,
+            displayName: true,
+            zaloUid: true,
+            status: true
+          }
+        },
+        evaluations: {
+          orderBy: { evaluatedAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            verdict: true,
+            score: true,
+            summary: true,
+            evaluatedAt: true
+          }
+        }
+      }
+    });
+  }
+
+  private resolveThreadIdentityHint(thread: {
+    channel: ConversationChannel;
+    externalThreadId?: string | null;
+    metadataJson?: unknown;
+  }): ThreadIdentityHint | null {
+    const platform = this.mapConversationChannelToSocialPlatform(thread.channel);
+    if (!platform) {
+      return null;
+    }
+
+    const metadata = this.ensureRecord(thread.metadataJson);
+    const externalUserId = this.optionalString(metadata.externalUserId)
+      ?? this.optionalString(metadata.uidFrom)
+      ?? this.optionalString(metadata.uid_from)
+      ?? this.optionalString(metadata.fromUid)
+      ?? this.optionalString(metadata.from_uid)
+      ?? this.optionalString(metadata.uid)
+      ?? this.optionalString(thread.externalThreadId);
+    if (!externalUserId) {
+      return null;
+    }
+
+    return {
+      platform,
+      externalUserId
+    };
+  }
+
+  private async ensureThreadIdentityOwnership(
+    tx: Prisma.TransactionClient,
+    identityHint: ThreadIdentityHint,
+    customerId: string,
+    thread: { id: string; channel: ConversationChannel; customerDisplayName?: string | null; metadataJson?: unknown; externalThreadId?: string | null; }
+  ) {
+    const existing = await tx.customerSocialIdentity.findFirst({
+      where: {
+        platform: identityHint.platform,
+        externalUserId: identityHint.externalUserId
+      }
+    });
+
+    if (existing && existing.customerId !== customerId) {
+      throw new BadRequestException('Định danh social đã được gán cho khách hàng khác.');
+    }
+
+    const now = new Date();
+    const phoneHint = this.extractThreadFallbackPhoneCandidate(thread);
+    const metadataRecord = {
+      ...this.ensureRecord(thread.metadataJson),
+      linkedFromThreadId: thread.id,
+      linkedFromChannel: thread.channel
+    } as Prisma.InputJsonValue;
+
+    if (existing) {
+      await tx.customerSocialIdentity.updateMany({
+        where: { id: existing.id },
+        data: {
+          displayName: existing.displayName || this.optionalString(thread.customerDisplayName) || null,
+          phoneHint: existing.phoneHint || phoneHint || null,
+          lastSeenAt: now,
+          metadataJson: existing.metadataJson ?? metadataRecord
+        }
+      });
+      return;
+    }
+
+    await tx.customerSocialIdentity.create({
+      data: {
+        tenant_Id: this.prisma.getTenantId(),
+        customerId,
+        platform: identityHint.platform,
+        externalUserId: identityHint.externalUserId,
+        displayName: this.optionalString(thread.customerDisplayName) ?? null,
+        phoneHint: phoneHint ?? null,
+        lastSeenAt: now,
+        metadataJson: metadataRecord
+      }
+    });
+  }
+
+  private extractThreadFallbackPhoneCandidate(thread: {
+    externalThreadId?: string | null;
+    metadataJson?: unknown;
+  }) {
+    const metadata = this.ensureRecord(thread.metadataJson);
+    const candidates = [
+      this.optionalString(metadata.phone),
+      this.optionalString(metadata.phoneNormalized),
+      this.optionalString(metadata.customerPhone),
+      this.optionalString(metadata.senderPhone),
+      this.optionalString(thread.externalThreadId)
+    ];
+
+    for (const candidate of candidates) {
+      const normalized = normalizeVietnamPhone(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    return null;
+  }
+
+  private identityKey(platform: CustomerSocialPlatform, externalUserId: string) {
+    return `${platform}::${externalUserId}`;
+  }
+
+  private mapConversationChannelToSocialPlatform(channel: ConversationChannel): CustomerSocialPlatform | null {
+    if (channel === ConversationChannel.ZALO_PERSONAL || channel === ConversationChannel.ZALO_OA) {
+      return CustomerSocialPlatform.ZALO;
+    }
+    if (channel === ConversationChannel.FACEBOOK) {
+      return CustomerSocialPlatform.FACEBOOK;
+    }
+    return null;
+  }
+
+  private async findCustomerByContactTx(
+    tx: Prisma.TransactionClient,
+    normalizedPhone?: string | null,
+    normalizedEmail?: string | null
+  ) {
+    const conditions: Prisma.CustomerWhereInput[] = [];
+    if (normalizedPhone) {
+      conditions.push({ phoneNormalized: normalizedPhone });
+    }
+    if (normalizedEmail) {
+      conditions.push({ emailNormalized: normalizedEmail });
+    }
+    if (conditions.length === 0) {
+      return null;
+    }
+
+    return tx.customer.findFirst({
+      where: {
+        OR: conditions
+      },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        email: true,
+        ownerStaffId: true
+      }
+    });
+  }
+
+  private normalizeEmail(email?: string) {
+    const normalized = this.optionalString(email)?.toLowerCase() ?? '';
+    if (!normalized) {
+      return null;
+    }
+    return normalized;
+  }
+
+  private resolveCustomerSourceByChannel(_channel: ConversationChannel) {
+    return 'ONLINE';
+  }
+
+  private formatChannelLabel(channel: ConversationChannel) {
+    if (channel === ConversationChannel.ZALO_PERSONAL) {
+      return 'Zalo cá nhân';
+    }
+    if (channel === ConversationChannel.ZALO_OA) {
+      return 'Zalo OA';
+    }
+    if (channel === ConversationChannel.FACEBOOK) {
+      return 'Facebook';
+    }
+    return 'kênh hội thoại';
   }
 
   private parseChannel(input: unknown, fallback: ConversationChannel): ConversationChannel {

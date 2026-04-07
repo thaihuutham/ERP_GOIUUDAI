@@ -2,9 +2,286 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-07 12:31 +07
+- Last updated: 2026-04-07 18:30 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-07 18:27 +07 (Fix lỗi nền unhandled scheduler/pool khi chạy chung CRM + search-hybrid API flow)
+- User request:
+  - sửa luôn lỗi unhandled background khi chạy chung:
+    - `test/crm.api-flow.test.ts`
+    - `test/search-hybrid.api-flow.test.ts`
+- Root cause:
+  - `ZaloCampaignSchedulerService` có thể đọc config trong bootstrap state chưa sẵn sàng.
+  - `ZaloPersonalPoolService` restore session async mà không catch nên phát sinh unhandled rejection nếu Prisma chưa ready.
+- Đã triển khai:
+  - `apps/api/src/modules/zalo/zalo-campaign-scheduler.service.ts`
+    - thêm guard readiness cho `campaignService.runSchedulerTick`.
+    - đọc config an toàn bằng `configGet?.(...)`.
+    - skip start scheduler nếu dependency chưa sẵn sàng.
+  - `apps/api/src/modules/zalo/zalo-personal.pool.service.ts`
+    - thêm `isPrismaReady()`.
+    - skip restore ở `onModuleInit` nếu Prisma chưa sẵn sàng.
+    - `restoreConnectedPersonalSessions()` được `.catch(...)` ở init để chặn unhandled.
+    - guard thêm ở `resolveOrgId` và `restoreConnectedPersonalSessions`.
+- Verification:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- --run test/crm.api-flow.test.ts test/search-hybrid.api-flow.test.ts` ✅
+    - 2 test files pass, 6 tests pass.
+    - không còn log unhandled scheduler/pool trong lần chạy chung.
+
+## Session Update 2026-04-07 18:21 +07 (Chuẩn hóa trạng thái CSKH + loại nick Zalo + import Excel khách hàng)
+- User request:
+  - implement đầy đủ plan:
+    - tách `Customer.status` sang enum CSKH 9 trạng thái;
+    - thêm `Customer.zaloNickType`;
+    - thay filter campaign từ `ACTIVE` sang rule zalo nick type;
+    - `DELETE /crm/customers/:id` thành soft-skip;
+    - thêm import Excel khách hàng (upsert).
+- Đã triển khai backend:
+  - `apps/api/prisma/schema.prisma`
+    - thêm enum `CustomerCareStatus`, `CustomerZaloNickType`;
+    - `Customer.status` đổi type + default `MOI_CHUA_TU_VAN`;
+    - thêm `Customer.zaloNickType` default `CHUA_KIEM_TRA`.
+  - `apps/api/prisma/migrations/20260407202000_customer_care_status_and_zalo_nick_type/migration.sql`
+    - migrate status cũ -> `MOI_CHUA_TU_VAN`;
+    - backfill `zaloNickType`.
+  - `apps/api/src/modules/crm/crm.service.ts`
+    - CRUD customer dùng enum mới;
+    - soft-skip customer khi DELETE;
+    - auto set `customerStage=DA_MUA` khi `status=DONG_Y_CHUYEN_THANH_KH`;
+    - thêm import khách hàng (admin only) theo upsert phone/email.
+  - `apps/api/src/modules/crm/crm.controller.ts`
+    - thêm `POST /crm/customers/import`;
+    - đổi audit action delete sang soft-skip.
+  - `apps/api/src/modules/zalo/zalo-campaign.service.ts`
+    - snapshot filter theo `recipientFilterJson.zaloNickTypes`;
+    - default filter `CHUA_KIEM_TRA + GUI_DUOC_TIN_NHAN`;
+    - dispatch rule theo `zaloNickType`;
+    - auto update `zaloNickType` sau success/error.
+  - compatibility fixes theo enum mới:
+    - `apps/api/src/modules/crm/crm-contracts.service.ts`
+    - `apps/api/src/modules/settings/settings.service.ts`
+    - `apps/api/src/modules/zalo/zalo.service.ts`
+- Đã triển khai frontend:
+  - `apps/web/components/crm-customers-board.tsx`
+    - dropdown/bulk 9 trạng thái CSKH;
+    - thêm cột/edit `Loại nick Zalo`;
+    - delete UI đổi sang `BỎ QUA/Xóa`;
+    - thêm import Excel khách hàng (parse + summary + template).
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - thêm multi-select `zaloNickTypes` trong create campaign.
+- Đã cập nhật test:
+  - `apps/api/test/zalo-campaign.service.test.ts` (default filter, routing `CHAN_NGUOI_LA`, auto update nick type).
+  - `apps/api/test/crm.service.test.ts`
+  - `apps/api/test/crm.api-flow.test.ts`
+  - `apps/api/test/search.service.test.ts`
+  - `apps/api/test/search-hybrid.api-flow.test.ts`
+  - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`
+- Documentation/ADR:
+  - `docs/specs/CUSTOMER360_DATA_DICTIONARY.md`
+  - `docs/specs/ZALO_CAMPAIGNS_V1.md`
+  - `docs/decisions/ADR-053-CUSTOMER-CARE-STATUS-AND-ZALO-NICKTYPE-RULES.md`
+- Verification:
+  - `npm run prisma:generate --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- --run test/zalo-campaign.service.test.ts test/crm.service.test.ts test/search.service.test.ts test/crm-contracts.service.test.ts` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+- Notes:
+  - lần kiểm tra migrate status đầu báo pending migration mới; đã deploy xong và DB schema now up-to-date.
+  - `crm.api-flow` + `search-hybrid.api-flow` khi chạy kèm có lỗi nền scheduler/pool (suite đang skip), không phải regression của patch này.
+
+## Session Update 2026-04-07 17:06 +07 (Chuẩn hóa ExcelImportBlock + checklist import Excel)
+- User request:
+  - thực hiện tiếp option 1 rồi option 2:
+    - (1) chuẩn hóa block import Excel thành component dùng chung;
+    - (2) bổ sung checklist/rule tài liệu để các màn import mới không quên nút file mẫu.
+- Đã triển khai frontend:
+  - tạo component mới:
+    - `apps/web/components/ui/excel-import-block.tsx`
+    - chuẩn hóa giao diện import:
+      - nút `Tải file mẫu` (bắt buộc trong component),
+      - input upload `.xlsx/.xls`,
+      - loading text,
+      - summary `total/imported/skipped/errors`,
+      - hiển thị lỗi theo từng dòng.
+  - refactor các màn import hiện có sang component dùng chung:
+    - `apps/web/components/crm-vehicles-board.tsx`
+    - `apps/web/components/hr-attendance-board.tsx`
+  - giữ nguyên logic parse/import từng màn, chỉ thay UI block để tái sử dụng và tránh quên template button.
+- Đã triển khai docs:
+  - `docs/specs/CONVENTIONS.md`
+    - thêm checklist bắt buộc cho mọi feature import Excel user-facing.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `cd apps/web && npx next typegen` ✅
+  - `cd apps/web && npm run lint` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/hr-attendance-board.spec.ts --config=apps/web/e2e/playwright.config.ts --grep "office xlsx import" --reporter=line` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Ghi chú: `npm run lint --workspace @erp/web` fail nền do `.next/types` stale; đã xử lý theo runbook bằng `next typegen` và lint pass trong `apps/web`.
+
+## Session Update 2026-04-07 16:45 +07 (Vehicles import Excel chỉ cho admin)
+- User request:
+  - tại trang thêm/quản lý xe, bổ sung import bằng Excel và chỉ `ADMIN` được phép thao tác.
+- Đã triển khai backend:
+  - `apps/api/src/modules/crm/crm.controller.ts`
+    - thêm endpoint `POST /crm/vehicles/import`.
+  - `apps/api/src/modules/crm/crm-contracts.service.ts`
+    - thêm `importVehicles(...)`:
+      - chặn role khác `ADMIN` (`403`);
+      - nhận `rows` và import từng dòng qua flow `createVehicle`;
+      - hỗ trợ resolve chủ sở hữu theo `ownerCustomerId` hoặc `ownerCustomerPhone`;
+      - trả summary `totalRows/importedCount/skippedCount/errors`.
+  - `apps/api/test/crm-contracts.service.test.ts`
+    - thêm test non-admin bị chặn import;
+    - thêm test admin import thành công + resolve owner theo phone.
+- Đã triển khai frontend:
+  - `apps/web/components/crm-vehicles-board.tsx`
+    - thêm khu vực upload `.xlsx/.xls` chỉ hiển thị cho admin;
+    - parse file bằng `xlsx` (sheet đầu) với alias cột linh hoạt;
+    - gọi `POST /crm/vehicles/import`;
+    - hiển thị summary và chi tiết lỗi theo dòng import.
+- Verification:
+  - `npm run test --workspace @erp/api -- --run test/crm-contracts.service.test.ts` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `cd apps/web && rm -f tsconfig.tsbuildinfo && npm run lint` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+
+## Session Update 2026-04-07 16:32 +07 (Đổi gán thủ công thread từ customerId sang số điện thoại)
+- User request:
+  - phần `Gán thủ công` trong chat không dùng `customerId`, chuyển sang nhập SĐT để nhân viên thao tác thực tế.
+- Trạng thái thực hiện:
+  - API `POST /conversations/threads/:id/link-customer` đã nhận `customerPhone` và resolve customer theo phone normalized:
+    - `apps/api/src/modules/conversations/conversations.service.ts`
+  - UI inbox Zalo đã chuyển input/link action sang số điện thoại:
+    - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - label hiển thị `Gán thủ công theo số điện thoại`.
+  - test đã có case manual link bằng phone:
+    - `apps/api/test/conversations.realtime.test.ts`.
+- Verification:
+  - `npm run test --workspace @erp/api -- --run test/conversations.realtime.test.ts` ✅
+
+## Session Update 2026-04-07 16:20 +07 (Customer 360 trong chat Zalo phase 1)
+- User request:
+  - triển khai plan Customer 360 trong chat với phase 1 Zalo Personal;
+  - strict ID-first matching;
+  - quick-create customer từ thread;
+  - panel 360 ngay trong màn chat;
+  - route `/modules/crm/conversations` không còn là màn riêng gây trùng.
+- Đã triển khai backend:
+  - `apps/api/prisma/schema.prisma`
+    - thêm `Customer.needsSummary`.
+  - `apps/api/prisma/migrations/20260407173000_add_customer_needs_summary/migration.sql`
+    - migration thêm cột `needsSummary`.
+  - `apps/api/src/modules/crm/crm.service.ts`
+    - create/update customer hỗ trợ `needsSummary`.
+  - `apps/api/src/modules/crm/crm-contracts.service.ts`
+    - `resolveCustomerIdForExternalIdentity(...)` chuyển sang strict social identity exact (bỏ fallback phone).
+    - giữ payload tổng hợp `getCustomer360(...)`.
+  - `apps/api/src/modules/conversations/conversations.controller.ts`
+    - thêm:
+      - `POST /conversations/threads/:id/link-customer`
+      - `POST /conversations/threads/:id/quick-create-customer`
+  - `apps/api/src/modules/conversations/conversations.service.ts`
+    - `listThreads` trả `matchStatus` (`matched|unmatched|suggested`);
+    - trả thêm `suggestedCustomer` (gợi ý phone-only) + `identityHint` cho UI prefill;
+    - thêm flow gán thủ công thread -> customer;
+    - thêm flow quick-create theo transaction (create customer tối thiểu + create social identity + link thread), idempotent nếu identity đã tồn tại.
+- Đã triển khai frontend:
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - thêm panel Customer 360 bên phải;
+    - unmatched/suggested actions:
+      - gán thủ công theo customerId;
+      - gán nhanh customer gợi ý;
+      - modal `Tạo khách nhanh` prefill social ID.
+    - thêm update `needsSummary` và quick log `CustomerInteraction` từ panel chat.
+  - `apps/web/app/styles/modules/crm.css`
+    - mở rộng layout 3 cột + style panel 360.
+  - `apps/web/app/modules/crm/conversations/page.tsx`
+    - đổi sang redirect alias `/modules/zalo-automation/messages`.
+  - `apps/web/components/app-shell.tsx`
+    - title route `/modules/crm/conversations` đồng bộ về `Zalo Automation • Tin nhắn`.
+  - `apps/web/components/crm-customers-board.tsx`
+    - hỗ trợ deep-link `?customerId=` để mở nhanh hồ sơ đầy đủ từ nút panel chat.
+- Decision/Documentation:
+  - thêm ADR mới: `docs/decisions/ADR-052-CUSTOMER360-CHAT-ZALO-STRICT-ID-FIRST.md`.
+- Verification:
+  - Stability gate:
+    - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:deploy --workspace @erp/api` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Backend:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- --run test/conversations.realtime.test.ts test/crm-contracts.service.test.ts` ✅
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - E2E:
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+  - Known baseline:
+    - `test/conversations.api-flow.test.ts` còn lỗi bootstrap scheduler/pool (issue nền đã biết), không phải regression của patch này.
+
+## Session Update 2026-04-07 14:50 +07 (Triển khai mở rộng CRM Vehicles + ownership enforcement)
+- User request:
+  - triển khai phương án mở rộng quản lý xe đã chốt (UI + backend).
+  - policy đã xác nhận: `ADMIN` xem/sửa/xóa toàn bộ xe; non-admin xem toàn bộ nhưng chỉ sửa/xóa xe thuộc khách hàng mình phụ trách; xóa là soft-delete.
+- Đã triển khai backend:
+  - `apps/api/src/modules/crm/crm.controller.ts`
+    - thêm `PATCH /crm/vehicles/:id`;
+    - thêm `DELETE /crm/vehicles/:id`.
+  - `apps/api/src/modules/crm/crm-contracts.service.ts`
+    - thêm `updateVehicle(...)`, `archiveVehicle(...)`;
+    - enforce ownership write theo `AUTH_USER_CONTEXT_KEY` (`403` khi vi phạm);
+    - create vehicle cũng enforce ownership;
+    - list vehicles trả thêm `ownerCustomer.ownerStaffId` cho UI gating.
+  - `apps/api/test/crm-contracts.service.test.ts`
+    - bổ sung test phân quyền create/update/archive xe.
+- Đã triển khai frontend:
+  - `apps/web/components/crm-customers-board.tsx`
+    - thêm nút `Quản lý xe` ở CRM toolbar;
+    - trong panel customer detail:
+      - thêm `Thêm xe`, `Sửa`, `Lưu trữ` theo ownership;
+      - thêm form create/edit xe inline, gọi API `/crm/vehicles`.
+  - thêm trang quản lý xe tập trung:
+    - `apps/web/components/crm-vehicles-board.tsx`;
+    - `apps/web/app/modules/crm/vehicles/page.tsx`.
+  - `apps/web/components/app-shell.tsx`
+    - thêm title route `CRM • Quản lý xe`.
+- Verification:
+  - Stability gate:
+    - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Backend:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- --run test/crm-contracts.service.test.ts` ✅
+  - Frontend:
+    - `npm run build --workspace @erp/web` ✅
+    - `cd apps/web && rm -f tsconfig.tsbuildinfo && npm run lint` ✅
+      - note: lint workspace có thể fail nếu `tsconfig.tsbuildinfo` stale.
+  - E2E:
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
 
 ## Session Update 2026-04-07 12:31 +07 (Fix e2e bulk-actions theo quyền role hiện tại)
 - User request:

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { ConversationChannel, ConversationSenderType } from '@prisma/client';
+import { ConversationChannel, ConversationSenderType, CustomerCareStatus } from '@prisma/client';
 import { createHmac } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
@@ -211,7 +211,7 @@ export class ZaloService {
             phoneNormalized: normalizedPhone,
             source: 'ZALO',
             customerStage: 'MOI',
-            status: 'ACTIVE',
+            status: CustomerCareStatus.MOI_CHUA_TU_VAN,
             tags: ['zalo']
           }
         });

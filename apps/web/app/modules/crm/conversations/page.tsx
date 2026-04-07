@@ -1,5 +1,5 @@
-import { ZaloAutomationMessagesWorkbench } from '../../../../components/zalo-automation-messages-workbench';
+import { redirect } from 'next/navigation';
 
 export default function CrmConversationsPage() {
-  return <ZaloAutomationMessagesWorkbench />;
+  redirect('/modules/zalo-automation/messages');
 }

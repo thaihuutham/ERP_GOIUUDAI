@@ -14,14 +14,22 @@ export class ZaloCampaignSchedulerService implements OnModuleInit, OnModuleDestr
   ) {}
 
   onModuleInit() {
-    const enabled = this.toBool(this.config.get<string>('ZALO_CAMPAIGN_SCHEDULER_ENABLED'), true);
+    if (!this.campaignService || typeof this.campaignService.runSchedulerTick !== 'function') {
+      this.logger.warn('Skip starting scheduler: campaign service is not ready.');
+      return;
+    }
+
+    const configGet = this.config && typeof this.config.get === 'function'
+      ? this.config.get.bind(this.config)
+      : null;
+    const enabled = this.toBool(configGet?.('ZALO_CAMPAIGN_SCHEDULER_ENABLED'), true);
     if (!enabled) {
       this.logger.log('Zalo campaign scheduler disabled.');
       return;
     }
 
     const intervalSeconds = this.toInt(
-      this.config.get<string>('ZALO_CAMPAIGN_SCHEDULER_INTERVAL_SECONDS'),
+      configGet?.('ZALO_CAMPAIGN_SCHEDULER_INTERVAL_SECONDS'),
       5,
       1,
       120,

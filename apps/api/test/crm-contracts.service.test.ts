@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ForbiddenException } from '@nestjs/common';
 import {
+  GenericStatus,
   ServiceContractProductType,
   ServiceContractStatus,
-  ServiceContractSourceType
+  ServiceContractSourceType,
+  VehicleKind
 } from '@prisma/client';
 import { CrmContractsService } from '../src/modules/crm/crm-contracts.service';
+import { AUTH_USER_CONTEXT_KEY } from '../src/common/request/request.constants';
 
 function makePrismaMock(contract: Record<string, unknown>) {
   return {
@@ -42,6 +46,12 @@ function makeConfigMock() {
 function makeNotificationsMock() {
   return {
     create: vi.fn().mockResolvedValue(null)
+  };
+}
+
+function makeClsMock(authUser: Record<string, unknown>) {
+  return {
+    get: vi.fn((key: string) => (key === AUTH_USER_CONTEXT_KEY ? authUser : undefined))
   };
 }
 
@@ -139,5 +149,282 @@ describe('CrmContractsService', () => {
     });
 
     expect(preview.reminderLeadDays).toBe(30);
+  });
+
+  it('blocks non-admin create vehicle when customer is not owned by actor', async () => {
+    const prisma = {
+      getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
+      client: {
+        customer: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: 'cus_2',
+            fullName: 'Khach B',
+            ownerStaffId: 'dev_other'
+          })
+        },
+        vehicle: {
+          create: vi.fn()
+        }
+      }
+    };
+
+    const service = new CrmContractsService(
+      prisma as any,
+      makeRuntimeSettingsMock() as any,
+      makeConfigMock() as any,
+      makeNotificationsMock() as any,
+      makeClsMock({ role: 'MANAGER', userId: 'dev_manager' }) as any
+    );
+
+    await expect(
+      service.createVehicle({
+        ownerCustomerId: 'cus_2',
+        ownerFullName: 'Khach B',
+        plateNumber: '29A-12345',
+        chassisNumber: 'CS-01',
+        engineNumber: 'EN-01',
+        vehicleKind: 'AUTO',
+        vehicleType: 'SUV'
+      })
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.client.vehicle.create).not.toHaveBeenCalled();
+  });
+
+  it('allows admin to update and archive any vehicle (soft delete)', async () => {
+    const updatedVehicle = {
+      id: 'veh_1',
+      ownerCustomerId: 'cus_2',
+      status: GenericStatus.ACTIVE,
+      ownerCustomer: {
+        id: 'cus_2',
+        fullName: 'Khach B',
+        phone: '0900000000',
+        ownerStaffId: 'dev_other'
+      }
+    };
+    const archivedVehicle = {
+      ...updatedVehicle,
+      status: GenericStatus.ARCHIVED
+    };
+
+    const findFirst = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'veh_1',
+        ownerCustomerId: 'cus_2',
+        ownerCustomer: {
+          id: 'cus_2',
+          fullName: 'Khach B',
+          ownerStaffId: 'dev_other'
+        }
+      })
+      .mockResolvedValueOnce(updatedVehicle)
+      .mockResolvedValueOnce({
+        id: 'veh_1',
+        ownerCustomerId: 'cus_2',
+        ownerCustomer: {
+          id: 'cus_2',
+          ownerStaffId: 'dev_other'
+        }
+      })
+      .mockResolvedValueOnce(archivedVehicle);
+
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    const prisma = {
+      getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
+      client: {
+        customer: {
+          findFirst: vi.fn()
+        },
+        vehicle: {
+          findFirst,
+          updateMany
+        }
+      }
+    };
+
+    const service = new CrmContractsService(
+      prisma as any,
+      makeRuntimeSettingsMock() as any,
+      makeConfigMock() as any,
+      makeNotificationsMock() as any,
+      makeClsMock({ role: 'ADMIN', userId: 'dev_admin' }) as any
+    );
+
+    const updated = await service.updateVehicle('veh_1', {
+      vehicleKind: VehicleKind.AUTO,
+      vehicleType: 'Sedan',
+      ownerFullName: 'Khach B'
+    });
+    expect(updated.id).toBe('veh_1');
+
+    const archived = await service.archiveVehicle('veh_1');
+    expect(archived.status).toBe(GenericStatus.ARCHIVED);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'veh_1' },
+      data: expect.objectContaining({ status: GenericStatus.ARCHIVED })
+    }));
+  });
+
+  it('blocks non-admin import vehicles', async () => {
+    const prisma = {
+      getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
+      client: {
+        customer: {
+          findFirst: vi.fn()
+        },
+        vehicle: {
+          create: vi.fn()
+        }
+      }
+    };
+
+    const service = new CrmContractsService(
+      prisma as any,
+      makeRuntimeSettingsMock() as any,
+      makeConfigMock() as any,
+      makeNotificationsMock() as any,
+      makeClsMock({ role: 'MANAGER', userId: 'dev_manager' }) as any
+    );
+
+    await expect(
+      service.importVehicles({
+        rows: [
+          {
+            ownerCustomerId: 'cus_1',
+            ownerFullName: 'Khach A',
+            plateNumber: '30A-12345',
+            chassisNumber: 'CS-01',
+            engineNumber: 'EN-01',
+            vehicleKind: 'AUTO',
+            vehicleType: 'SUV'
+          }
+        ]
+      })
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows admin import vehicles and resolve owner by phone', async () => {
+    const customerFindFirst = vi.fn(async (args: any) => {
+      if (args?.where?.phoneNormalized) {
+        return { id: 'cus_phone_1' };
+      }
+      if (args?.where?.id) {
+        return {
+          id: 'cus_phone_1',
+          fullName: 'Khach Theo So',
+          ownerStaffId: 'dev_other'
+        };
+      }
+      return null;
+    });
+
+    const vehicleCreate = vi.fn().mockResolvedValue({ id: 'veh_1' });
+    const prisma = {
+      getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
+      client: {
+        customer: {
+          findFirst: customerFindFirst
+        },
+        vehicle: {
+          create: vehicleCreate
+        }
+      }
+    };
+
+    const service = new CrmContractsService(
+      prisma as any,
+      makeRuntimeSettingsMock() as any,
+      makeConfigMock() as any,
+      makeNotificationsMock() as any,
+      makeClsMock({ role: 'ADMIN', userId: 'dev_admin' }) as any
+    );
+
+    const result = await service.importVehicles({
+      rows: [
+        {
+          ownerCustomerPhone: '0901234567',
+          ownerFullName: 'Khach Theo So',
+          plateNumber: '30A-12345',
+          chassisNumber: 'CS-01',
+          engineNumber: 'EN-01',
+          vehicleKind: 'AUTO',
+          vehicleType: 'SUV'
+        }
+      ]
+    });
+
+    expect(result.importedCount).toBe(1);
+    expect(result.skippedCount).toBe(0);
+    expect(customerFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { phoneNormalized: '0901234567' },
+      select: { id: true }
+    }));
+    expect(vehicleCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves customer by strict social identity match', async () => {
+    const customerFindFirst = vi.fn();
+    const prisma = {
+      getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
+      client: {
+        customerSocialIdentity: {
+          findFirst: vi.fn().mockResolvedValue({
+            customerId: 'cus_social_1'
+          })
+        },
+        customer: {
+          findFirst: customerFindFirst
+        }
+      }
+    };
+
+    const service = new CrmContractsService(
+      prisma as any,
+      makeRuntimeSettingsMock() as any,
+      makeConfigMock() as any,
+      makeNotificationsMock() as any
+    );
+
+    const resolved = await service.resolveCustomerIdForExternalIdentity(
+      'ZALO_PERSONAL' as any,
+      'uid_123'
+    );
+
+    expect(resolved).toBe('cus_social_1');
+    expect(customerFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('does not fallback to phone when social identity is missing', async () => {
+    const customerFindFirst = vi.fn().mockResolvedValue({ id: 'cus_phone_1' });
+    const prisma = {
+      getTenantId: vi.fn().mockReturnValue('GOIUUDAI'),
+      client: {
+        customerSocialIdentity: {
+          findFirst: vi.fn().mockResolvedValue(null)
+        },
+        customer: {
+          findFirst: customerFindFirst
+        }
+      }
+    };
+
+    const service = new CrmContractsService(
+      prisma as any,
+      makeRuntimeSettingsMock() as any,
+      makeConfigMock() as any,
+      makeNotificationsMock() as any
+    );
+
+    const resolved = await service.resolveCustomerIdForExternalIdentity(
+      'ZALO_PERSONAL' as any,
+      undefined,
+      '0900000000'
+    );
+
+    expect(resolved).toBeNull();
+    expect(customerFindFirst).not.toHaveBeenCalled();
   });
 });
