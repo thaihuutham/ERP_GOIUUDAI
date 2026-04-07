@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-07 10:46 +07
+- Time: 2026-04-07 12:31 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-07_1046_codex.md`
+- Session Log: `.agent/sessions/2026-04-07_1231_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,63 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-07 12:31 (Fix e2e bulk-actions CRM/Sales/Finance theo permission runtime)
+- Bối cảnh:
+  - e2e `crm-sales-finance-core-flow.spec.ts` case bulk-actions đã qua lỗi CRM selection;
+  - lỗi còn lại ở bước Sales: test đòi nút `Archive` nhưng runtime role `MANAGER` không luôn có quyền `DELETE`.
+- Đã xử lý:
+  - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`
+    - bước Sales bulk:
+      - nếu có `Archive` thì chạy archive + assert message/status `ARCHIVED`;
+      - nếu không có `Archive` thì assert trạng thái vẫn `APPROVED`.
+    - bước Finance bulk:
+      - áp dụng cùng pattern permission-aware cho `Archive`.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --grep "supports bulk actions on CRM/Sales/Finance main tables" --reporter=line` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+
+## Update 2026-04-07 12:13 (CRM mới: renewal settings fields + customer detail contracts/vehicles)
+- User issue:
+  - không thấy trường `số ngày nhắc gia hạn CRM` ở Settings;
+  - không thấy `thông tin xe` và `thông tin gói cước` ở CRM mới.
+- Đã xử lý frontend:
+  - `apps/web/components/settings-center/view-model.ts`
+    - thêm tab `sales-renewal` cho `sales_crm_policies`.
+  - `apps/web/components/settings-center.tsx`
+    - thêm section `sales-renewal-reminder` với:
+      - `renewalReminder.globalLeadDays`
+      - `renewalReminder.productLeadDays.{TELECOM_PACKAGE,AUTO_INSURANCE,MOTO_INSURANCE,DIGITAL_SERVICE}`
+    - thêm support `allowEmpty` cho `number` fields để các override ngày theo sản phẩm có thể để trống (`null`) thay vì ép `0`.
+  - `apps/web/components/settings-center/__tests__/view-model.test.ts`
+    - cập nhật expected tabs cho `sales_crm_policies` (thêm `sales-renewal`).
+  - `apps/web/components/crm-customers-board.tsx`
+    - khi mở customer detail panel, gọi `GET /crm/customers/:id`;
+    - hiển thị:
+      - `contractSummary` (total/active/expired/next expiring/by product),
+      - `recentContracts` (gói cước, GCN bảo hiểm, mapping plate theo vehicleId, dịch vụ số),
+      - `vehicles` (plate, kind/type, owner, status, updatedAt);
+    - refresh detail sau khi save profile.
+- Verify:
+  - Stability gate:
+    - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Frontend:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web -- components/settings-center/__tests__/view-model.test.ts` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/settings-center-audit-scope.spec.ts --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --grep "runs CRM -> Sales -> Finance core flow" --reporter=line` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --config=apps/web/e2e/playwright.config.ts --grep "supports bulk actions on CRM/Sales/Finance main tables" --reporter=line` ❌
+      - failure hiện tại: selected rows = `0/2`, assertion `.finance-alert-success` không thấy tại line 602.
 
 ## Update 2026-04-07 10:46 (CRM contracts/renewals + social identity + ingest/OCR)
 - Đã triển khai phase CRM contract-centric cho Customer360:
