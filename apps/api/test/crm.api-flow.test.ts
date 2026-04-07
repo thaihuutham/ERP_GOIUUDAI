@@ -227,13 +227,16 @@ describe('CRM API flow integration', () => {
         limit: 20,
       }),
     );
-    expect(listSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 20 }),
-      expect.objectContaining({
-        customFilter,
-      }),
-      expect.any(Array),
-    );
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    const [forwardedQuery, forwardedFilters, forwardedEntityIds] = listSpy.mock.calls[0] as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+      unknown
+    ];
+    expect(String(forwardedQuery.limit)).toBe('20');
+    expect(forwardedQuery.customFilter).toBe(customFilter);
+    expect(forwardedFilters.customFilter).toBe(customFilter);
+    expect(forwardedEntityIds).toBeUndefined();
   });
 
   it('supports customer saved filters endpoints', async () => {
