@@ -22,6 +22,10 @@ describe('ZaloService OA outbound', () => {
         findFirst: vi.fn(),
         updateMany: vi.fn(),
         create: vi.fn()
+      },
+      conversationThread: {
+        findFirst: vi.fn(),
+        updateMany: vi.fn()
       }
     },
     getTenantId: vi.fn(() => 'tenant_demo_company')
@@ -49,7 +53,8 @@ describe('ZaloService OA outbound', () => {
     sendMessage: vi.fn(),
     getReconnectFailureMetrics: vi.fn(),
     disconnect: vi.fn(),
-    getConnectedApi: vi.fn()
+    getConnectedApi: vi.fn(),
+    cancelAutoReplyForThread: vi.fn()
   } as any;
   const oaOutboundWorker = {
     sendTextMessage: vi.fn()
@@ -74,6 +79,8 @@ describe('ZaloService OA outbound', () => {
     prisma.client.customer.findFirst.mockReset();
     prisma.client.customer.updateMany.mockReset();
     prisma.client.customer.create.mockReset();
+    prisma.client.conversationThread.findFirst.mockReset();
+    prisma.client.conversationThread.updateMany.mockReset();
     conversationsService.ingestExternalMessage.mockReset();
     zaloAssignment.assertCanChatAccount.mockReset();
     zaloAssignment.resolveAccessibleAccountIds.mockReset();
@@ -84,6 +91,7 @@ describe('ZaloService OA outbound', () => {
     personalPool.getReconnectFailureMetrics.mockReset();
     personalPool.disconnect.mockReset();
     personalPool.getConnectedApi.mockReset();
+    personalPool.cancelAutoReplyForThread.mockReset();
     runtimeSettings.getIntegrationRuntime.mockReset();
     cls.get.mockReset();
     cls.get.mockReturnValue({});
@@ -152,6 +160,8 @@ describe('ZaloService OA outbound', () => {
           accountType: 'PERSONAL',
           displayName: 'Zalo CSKH',
           phone: '0909000111',
+          aiAutoReplyEnabled: false,
+          aiAutoReplyTakeoverMinutes: 5,
           ownerUserId: 'staff_erp_1',
           zaloUid: null
         })
@@ -182,6 +192,38 @@ describe('ZaloService OA outbound', () => {
         })
       })
     );
+  });
+
+  it('marks manual takeover window when personal message is sent by user origin', async () => {
+    prisma.client.zaloAccount.findFirst
+      .mockResolvedValueOnce({
+        id: 'acc_personal_1',
+        accountType: 'PERSONAL',
+        aiAutoReplyTakeoverMinutes: 5
+      })
+      .mockResolvedValueOnce({
+        id: 'acc_personal_1',
+        accountType: 'PERSONAL',
+        aiAutoReplyTakeoverMinutes: 5
+      });
+    prisma.client.conversationThread.findFirst.mockResolvedValue({
+      id: 'thread_1',
+      metadataJson: {}
+    });
+    personalPool.sendMessage.mockResolvedValue({ success: true });
+
+    await service.sendPersonalMessage('acc_personal_1', {
+      externalThreadId: 'customer_001',
+      content: 'Xin chao',
+      origin: 'USER'
+    });
+
+    expect(prisma.client.conversationThread.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'thread_1' }
+      })
+    );
+    expect(personalPool.cancelAutoReplyForThread).toHaveBeenCalledWith('thread_1');
   });
 
   it('sends OA message and ingests outbound message into thread', async () => {

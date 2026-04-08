@@ -913,6 +913,7 @@ export class ZaloCampaignService {
         customerPhone: recipientPhone || undefined,
         customerDisplayName: recipientDisplayName || undefined,
         content: rendered.content,
+        origin: 'CAMPAIGN',
       });
       const resolvedExternalThreadId = this.cleanString(
         this.toRecord(deliveryResult).externalThreadId,

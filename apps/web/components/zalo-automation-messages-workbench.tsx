@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, UIEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { getZaloAutomationSocket, resolveZaloAutomationOrgId } from '../lib/zalo-automation-socket';
@@ -58,6 +58,8 @@ type ZaloAccount = {
   zaloUid?: string | null;
   accountType?: string | null;
   status?: string | null;
+  aiAutoReplyEnabled?: boolean | null;
+  aiAutoReplyTakeoverMinutes?: number | null;
   currentPermissionLevel?: ZaloPermissionLevel | null;
 };
 
@@ -130,6 +132,9 @@ type SocketChatDeletedPayload = {
   accountId?: string;
   msgId?: string;
 };
+
+const THREAD_PAGE_LIMIT = 80;
+const THREAD_SCROLL_TRIGGER_PX = 96;
 
 const CHANNEL_LABELS: Record<ConversationChannel, string> = {
   ZALO_PERSONAL: 'Zalo cá nhân',
@@ -298,10 +303,131 @@ function resolveStickerRenderData(message: MessageRow) {
   };
 }
 
+type ImageRenderData = {
+  previewUrl: string;
+  alt: string;
+  caption: string | null;
+};
+
+const IMAGE_URL_HINT_KEYS = new Set([
+  'thumb',
+  'thumbnail',
+  'preview',
+  'previewurl',
+  'image',
+  'imageurl',
+  'image_url',
+  'picture',
+  'photo',
+  'href',
+  'url',
+  'src',
+  'link'
+]);
+
+function parseRichMessageObject(rawContent: string | null | undefined) {
+  const raw = String(rawContent ?? '').trim();
+  if (!raw || raw.length > 20_000 || !raw.startsWith('{') || !raw.endsWith('}')) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return toSafeRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyImageUrl(value: string) {
+  const normalized = value.trim();
+  if (!/^https?:\/\//i.test(normalized)) {
+    return false;
+  }
+  if (/\.(png|jpe?g|webp|gif|bmp|avif|heic)(\?|#|$)/i.test(normalized)) {
+    return true;
+  }
+  return normalized.includes('photo-') || normalized.includes('/img/') || normalized.includes('/image');
+}
+
+function resolveImageRenderData(message: MessageRow): ImageRenderData | null {
+  const imageScores = new Map<string, number>();
+  const contentRecord = parseRichMessageObject(message.content);
+  const attachmentsRecord = toSafeRecord(message.attachmentsJson);
+
+  const collectImageCandidates = (value: unknown, keyHint: string, depth: number) => {
+    if (depth > 6 || imageScores.size > 30) {
+      return;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!isLikelyImageUrl(trimmed)) {
+        return;
+      }
+      const keyPriority = IMAGE_URL_HINT_KEYS.has(keyHint.toLowerCase()) ? 18 : 0;
+      const extensionPriority = /\.(png|jpe?g|webp|gif|bmp|avif|heic)(\?|#|$)/i.test(trimmed) ? 10 : 4;
+      const score = keyPriority + extensionPriority;
+      const previous = imageScores.get(trimmed) ?? 0;
+      if (score > previous) {
+        imageScores.set(trimmed, score);
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 20)) {
+        collectImageCandidates(item, keyHint, depth + 1);
+      }
+      return;
+    }
+
+    const record = toSafeRecord(value);
+    if (!record) {
+      return;
+    }
+
+    for (const [key, nestedValue] of Object.entries(record).slice(0, 30)) {
+      collectImageCandidates(nestedValue, key, depth + 1);
+    }
+  };
+
+  collectImageCandidates(attachmentsRecord, '', 0);
+  collectImageCandidates(contentRecord, '', 0);
+  collectImageCandidates(message.content, '', 0);
+
+  const sortedCandidates = [...imageScores.entries()].sort((left, right) => right[1] - left[1]);
+  const previewUrl = sortedCandidates[0]?.[0] ?? null;
+  if (!previewUrl) {
+    return null;
+  }
+
+  const readCaption = (record: Record<string, unknown> | null) => {
+    if (!record) {
+      return null;
+    }
+    const keys = ['description', 'caption', 'title', 'text'];
+    for (const key of keys) {
+      const value = String(record[key] ?? '').trim();
+      if (!value || value.length > 280 || isLikelyImageUrl(value)) {
+        continue;
+      }
+      return value;
+    }
+    return null;
+  };
+
+  const caption = readCaption(contentRecord) ?? readCaption(attachmentsRecord);
+  return {
+    previewUrl,
+    caption,
+    alt: caption || 'Ảnh tin nhắn Zalo'
+  };
+}
+
 export function ZaloAutomationMessagesWorkbench() {
   const { canModule, canAction } = useAccessPolicy();
   const canView = canModule('crm');
   const canCreate = canAction('crm', 'CREATE');
+  const canUpdate = canAction('crm', 'UPDATE');
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
@@ -310,6 +436,9 @@ export function ZaloAutomationMessagesWorkbench() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [zaloAccounts, setZaloAccounts] = useState<ZaloAccount[]>([]);
   const [threads, setThreads] = useState<ThreadRow[]>([]);
+  const [threadNextCursor, setThreadNextCursor] = useState<string | null>(null);
+  const [hasMoreThreads, setHasMoreThreads] = useState(false);
+  const [isLoadingMoreThreads, setIsLoadingMoreThreads] = useState(false);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [customer360, setCustomer360] = useState<Customer360Payload | null>(null);
   const [isLoadingCustomer360, setIsLoadingCustomer360] = useState(false);
@@ -342,6 +471,9 @@ export function ZaloAutomationMessagesWorkbench() {
   const [selectedThreadTagsInput, setSelectedThreadTagsInput] = useState('');
   const [sendMessageContent, setSendMessageContent] = useState('');
   const [isSavingThreadTags, setIsSavingThreadTags] = useState(false);
+  const [togglingAutoReplyAccountId, setTogglingAutoReplyAccountId] = useState('');
+  const isLoadingMoreThreadsRef = useRef(false);
+  const markingReadThreadIdsRef = useRef(new Set<string>());
 
   const selectedThread = useMemo(
     () => threads.find((thread) => thread.id === selectedThreadId) ?? null,
@@ -440,6 +572,12 @@ export function ZaloAutomationMessagesWorkbench() {
     }
     return permissionByAccount.get(selectedThread.channelAccountId) ?? null;
   }, [permissionByAccount, selectedThread]);
+  const selectedThreadAccount = useMemo(() => {
+    if (!selectedThread?.channelAccountId) {
+      return null;
+    }
+    return zaloAccounts.find((account) => account.id === selectedThread.channelAccountId) ?? null;
+  }, [selectedThread?.channelAccountId, zaloAccounts]);
 
   const canSendSelectedThread = useMemo(() => {
     if (!selectedThread || !canCreate) {
@@ -450,6 +588,19 @@ export function ZaloAutomationMessagesWorkbench() {
     }
     return selectedThreadPermission !== 'READ';
   }, [canCreate, selectedThread, selectedThreadPermission]);
+
+  const canToggleSelectedThreadAutoReply = useMemo(() => {
+    if (!selectedThread || !canUpdate) {
+      return false;
+    }
+    if (selectedThread.channel !== 'ZALO_PERSONAL') {
+      return false;
+    }
+    if (!selectedThread.channelAccountId) {
+      return false;
+    }
+    return selectedThreadPermission !== 'READ';
+  }, [canUpdate, selectedThread, selectedThreadPermission]);
 
   const clearNotice = () => {
     setErrorMessage(null);
@@ -473,16 +624,29 @@ export function ZaloAutomationMessagesWorkbench() {
     }
   };
 
-  const loadThreads = async () => {
-    setIsLoadingThreads(true);
+  const loadThreads = async (options?: { append?: boolean; cursor?: string | null }) => {
+    const append = options?.append === true;
+    const cursor = append ? String(options?.cursor ?? threadNextCursor ?? '').trim() : '';
+
+    if (append) {
+      if (!cursor || !hasMoreThreads || isLoadingThreads || isLoadingMoreThreadsRef.current) {
+        return;
+      }
+      isLoadingMoreThreadsRef.current = true;
+      setIsLoadingMoreThreads(true);
+    } else {
+      setIsLoadingThreads(true);
+    }
+
     try {
-      const payload = await apiRequest<{ items?: ThreadRow[] }>('/conversations/threads', {
+      const payload = await apiRequest<Record<string, unknown>>('/conversations/threads', {
         query: {
           q: threadQuery || undefined,
           tags: threadTagQuery || undefined,
           channel: 'ALL',
           channelAccountId: threadAccountId || undefined,
-          limit: 80
+          cursor: cursor || undefined,
+          limit: THREAD_PAGE_LIMIT
         }
       });
       const rows = (normalizeListPayload(payload) as ThreadRow[])
@@ -493,18 +657,78 @@ export function ZaloAutomationMessagesWorkbench() {
         suggestedCustomer: row.suggestedCustomer ?? null,
         identityHint: row.identityHint ?? null
       }));
-      setThreads(normalizedRows);
-      setSelectedThreadId((prev) => {
-        if (prev && normalizedRows.some((thread) => thread.id === prev)) {
-          return prev;
-        }
-        return normalizedRows[0]?.id ?? '';
-      });
+
+      const nextCursorValue =
+        typeof payload.nextCursor === 'string'
+          ? payload.nextCursor
+          : payload.nextCursor === null
+            ? null
+            : null;
+
+      setThreadNextCursor(nextCursorValue);
+      setHasMoreThreads(Boolean(nextCursorValue));
+
+      if (append) {
+        setThreads((prev) => {
+          if (prev.length === 0) {
+            return normalizedRows;
+          }
+          const indexById = new Map(prev.map((thread, index) => [thread.id, index]));
+          const nextRows = [...prev];
+          for (const row of normalizedRows) {
+            const foundIndex = indexById.get(row.id);
+            if (foundIndex === undefined) {
+              indexById.set(row.id, nextRows.length);
+              nextRows.push(row);
+              continue;
+            }
+            nextRows[foundIndex] = { ...nextRows[foundIndex], ...row };
+          }
+          return nextRows;
+        });
+
+        setSelectedThreadId((prev) => {
+          if (prev) {
+            return prev;
+          }
+          return normalizedRows[0]?.id ?? '';
+        });
+      } else {
+        setThreads(normalizedRows);
+        setSelectedThreadId((prev) => {
+          if (prev && normalizedRows.some((thread) => thread.id === prev)) {
+            return prev;
+          }
+          return normalizedRows[0]?.id ?? '';
+        });
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không tải được danh sách hội thoại.');
     } finally {
-      setIsLoadingThreads(false);
+      if (append) {
+        isLoadingMoreThreadsRef.current = false;
+        setIsLoadingMoreThreads(false);
+      } else {
+        setIsLoadingThreads(false);
+      }
     }
+  };
+
+  const onThreadListScroll = (event: UIEvent<HTMLDivElement>) => {
+    if (!hasMoreThreads || isLoadingThreads || isLoadingMoreThreads || !threadNextCursor) {
+      return;
+    }
+
+    const container = event.currentTarget;
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceToBottom > THREAD_SCROLL_TRIGGER_PX) {
+      return;
+    }
+
+    void loadThreads({
+      append: true,
+      cursor: threadNextCursor
+    });
   };
 
   const loadMessages = async (threadId: string) => {
@@ -512,7 +736,7 @@ export function ZaloAutomationMessagesWorkbench() {
     try {
       const payload = await apiRequest<{ items?: MessageRow[] }>(`/conversations/threads/${threadId}/messages`, {
         query: {
-          limit: 200
+          limit: 100
         }
       });
       setMessages(normalizeListPayload(payload) as MessageRow[]);
@@ -582,6 +806,49 @@ export function ZaloAutomationMessagesWorkbench() {
     }
     void loadMessages(selectedThreadId);
   }, [canView, selectedThreadId]);
+
+  useEffect(() => {
+    if (!canView || !selectedThread?.id) {
+      return;
+    }
+    const unreadCount = Math.max(0, Number(selectedThread.unreadCount ?? 0) || 0);
+    if (unreadCount <= 0) {
+      return;
+    }
+
+    const threadId = selectedThread.id;
+    if (markingReadThreadIdsRef.current.has(threadId)) {
+      return;
+    }
+
+    markingReadThreadIdsRef.current.add(threadId);
+    let disposed = false;
+    void (async () => {
+      try {
+        await apiRequest(`/conversations/threads/${threadId}/mark-read`, {
+          method: 'POST'
+        });
+        if (disposed) {
+          return;
+        }
+        setThreads((prev) =>
+          prev.map((thread) =>
+            thread.id === threadId
+              ? { ...thread, unreadCount: 0 }
+              : thread
+          )
+        );
+      } catch {
+        // noop: avoid disrupting chat flow if mark-read fails transiently.
+      } finally {
+        markingReadThreadIdsRef.current.delete(threadId);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [canView, selectedThread?.id, selectedThread?.unreadCount]);
 
   useEffect(() => {
     if (!canView || !selectedThread) {
@@ -895,6 +1162,39 @@ export function ZaloAutomationMessagesWorkbench() {
     }
   };
 
+  const onToggleSelectedThreadAutoReply = async () => {
+    clearNotice();
+    const targetAccountId = String(selectedThread?.channelAccountId ?? '').trim();
+    if (!targetAccountId || selectedThread?.channel !== 'ZALO_PERSONAL') {
+      setErrorMessage('Chỉ hội thoại Zalo cá nhân mới hỗ trợ bật/tắt AI auto-reply.');
+      return;
+    }
+    if (!canToggleSelectedThreadAutoReply) {
+      setErrorMessage('Bạn không có quyền cập nhật trạng thái AI auto-reply cho hội thoại này.');
+      return;
+    }
+
+    const currentAccount = zaloAccounts.find((account) => account.id === targetAccountId) ?? null;
+    const nextEnabled = !Boolean(currentAccount?.aiAutoReplyEnabled);
+    setTogglingAutoReplyAccountId(targetAccountId);
+    try {
+      await apiRequest(`/zalo/accounts/${targetAccountId}`, {
+        method: 'PATCH',
+        body: {
+          aiAutoReplyEnabled: nextEnabled
+        }
+      });
+
+      await Promise.all([loadAccounts(), loadThreads()]);
+
+      setResultMessage(nextEnabled ? 'Đã bật AI auto-reply cho hội thoại này.' : 'Đã tắt AI auto-reply cho hội thoại này.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật trạng thái AI auto-reply.');
+    } finally {
+      setTogglingAutoReplyAccountId('');
+    }
+  };
+
   if (!canView) {
     return null;
   }
@@ -977,7 +1277,10 @@ export function ZaloAutomationMessagesWorkbench() {
           {!isLoadingThreads && threads.length === 0 ? <p className="muted">Chưa có hội thoại phù hợp.</p> : null}
 
           {threads.length > 0 ? (
-            <div className="zalo-chat-thread-list">
+            <div
+              className="zalo-chat-thread-list"
+              onScroll={onThreadListScroll}
+            >
               {threads.map((thread) => {
                 const active = thread.id === selectedThreadId;
                 const unreadCount = Math.max(0, Number(thread.unreadCount ?? 0) || 0);
@@ -1020,6 +1323,16 @@ export function ZaloAutomationMessagesWorkbench() {
               })}
             </div>
           ) : null}
+
+          {threads.length > 0 ? (
+            <p className="muted" style={{ marginTop: '0.35rem' }}>
+              {isLoadingMoreThreads
+                ? 'Đang tải thêm hội thoại...'
+                : hasMoreThreads
+                  ? 'Cuộn xuống cuối danh sách để tải thêm hội thoại.'
+                  : 'Đã hiển thị hết hội thoại phù hợp bộ lọc.'}
+            </p>
+          ) : null}
         </section>
 
         <section className="panel-surface crm-panel zalo-chat-message-panel">
@@ -1036,6 +1349,26 @@ export function ZaloAutomationMessagesWorkbench() {
           <p className="muted">
             Tài khoản: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
           </p>
+          {selectedThread?.channel === 'ZALO_PERSONAL' ? (
+            <div
+              className="action-buttons"
+              style={{ marginTop: '0.3rem', marginBottom: '0.3rem', alignItems: 'center' }}
+            >
+              <Badge variant={selectedThreadAccount?.aiAutoReplyEnabled ? 'success' : 'neutral'}>
+                AI auto-reply: {selectedThreadAccount?.aiAutoReplyEnabled ? 'ON' : 'OFF'}
+              </Badge>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => void onToggleSelectedThreadAutoReply()}
+                disabled={!canToggleSelectedThreadAutoReply || togglingAutoReplyAccountId === selectedThread.channelAccountId}
+              >
+                {togglingAutoReplyAccountId === selectedThread.channelAccountId
+                  ? 'Đang cập nhật...'
+                  : (selectedThreadAccount?.aiAutoReplyEnabled ? 'Tắt AI auto-reply' : 'Bật AI auto-reply')}
+              </button>
+            </div>
+          ) : null}
           <p className="muted">
             Tag hiện tại: {selectedThreadTags.length > 0 ? selectedThreadTags.map((tag) => `#${tag}`).join(', ') : '--'}
           </p>
@@ -1047,7 +1380,7 @@ export function ZaloAutomationMessagesWorkbench() {
                 id="zalo-thread-tags"
                 value={selectedThreadTagsInput}
                 onChange={(event) => setSelectedThreadTagsInput(event.target.value)}
-                placeholder="vip, mới, ưu tiên"
+                placeholder="tag_1,tag_2"
                 disabled={!selectedThread || isSavingThreadTags}
               />
             </div>
@@ -1071,6 +1404,7 @@ export function ZaloAutomationMessagesWorkbench() {
                 const outgoing = isOutgoingMessage(message);
                 const senderLabel = String(message.senderName ?? '').trim() || message.senderType || '--';
                 const stickerRender = resolveStickerRenderData(message);
+                const imageRender = resolveImageRenderData(message);
 
                 return (
                   <article
@@ -1094,7 +1428,22 @@ export function ZaloAutomationMessagesWorkbench() {
                         />
                       ) : null}
                       {!message.isDeleted && !stickerRender?.previewUrl ? (
-                        stickerRender?.fallbackText || message.content || '--'
+                        !imageRender?.previewUrl ? (
+                          stickerRender?.fallbackText || message.content || '--'
+                        ) : (
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={imageRender.previewUrl}
+                              alt={imageRender.alt}
+                              className="zalo-chat-message-image"
+                              loading="lazy"
+                            />
+                            {imageRender.caption ? (
+                              <span className="zalo-chat-message-image-caption">{imageRender.caption}</span>
+                            ) : null}
+                          </>
+                        )
                       ) : null}
                     </p>
                   </article>

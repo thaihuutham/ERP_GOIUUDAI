@@ -152,6 +152,9 @@ export class RuntimeSettingsService {
     }
 
     const mappedModule = this.mapApiModuleKey(moduleKey);
+    if (!RUNTIME_TOGGLABLE_MODULES.has(mappedModule)) {
+      return true;
+    }
     const org = await this.getDomain('org_profile');
     const enabledModules = this.normalizeEnabledModules(org.enabledModules, { includeAuditFallback: true });
     if (enabledModules.length === 0) {
@@ -619,6 +622,9 @@ export class RuntimeSettingsService {
     const normalized = moduleKey.toLowerCase();
     if (normalized === 'conversations' || normalized === 'zalo' || normalized === 'conversation-quality') {
       return 'crm';
+    }
+    if (normalized === 'ai-routing' || normalized === 'ai-industries' || normalized === 'ai-jobs') {
+      return 'settings';
     }
     if (normalized === 'custom-fields') {
       return 'settings';

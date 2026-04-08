@@ -1,10 +1,14 @@
-import { ServiceUnavailableException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConversationChannel, ConversationSenderType } from '@prisma/client';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { ConversationChannel, ConversationMessageOrigin, ConversationSenderType } from '@prisma/client';
 import { createRequire } from 'node:module';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ZaloAutomationRealtimeService } from './zalo-automation-realtime.service';
+import { ZaloAiJobsService } from './zalo-ai-jobs.service';
+import { ZaloAiRoutingService } from './zalo-ai-routing.service';
 import { buildFriendAlias, normalizeAliasPhone } from './zalo-friend-alias.util';
+import { ZaloAutoReplyService } from './zalo-auto-reply.service';
+import { patchZaloAutoReplyThreadState, readZaloAutoReplyThreadState } from './zalo-auto-reply-state.util';
 
 type PersonalPoolStatus = 'DISCONNECTED' | 'QR_PENDING' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
@@ -74,12 +78,13 @@ type NormalizedInboundContent = {
 type InboundSource = 'message' | 'old_messages';
 
 @Injectable()
-export class ZaloPersonalPoolService implements OnModuleInit {
+export class ZaloPersonalPoolService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ZaloPersonalPoolService.name);
   private readonly instances = new Map<string, PersonalInstance>();
   private readonly reconnectFailuresByAccount = new Map<string, ReconnectFailureMetric>();
   private readonly listenerDebugByAccount = new Map<string, ListenerDebugSnapshot>();
   private readonly stickerDetailCache = new Map<number, StickerDetailSnapshot>();
+  private readonly autoReplyTimerByThread = new Map<string, NodeJS.Timeout>();
   private reconnectFailureTotal = 0;
   private readonly orgIdByAccount = new Map<string, string>();
   private readonly require = createRequire(import.meta.url);
@@ -87,7 +92,10 @@ export class ZaloPersonalPoolService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly conversationsService: ConversationsService,
-    private readonly zaloRealtime: ZaloAutomationRealtimeService
+    private readonly zaloRealtime: ZaloAutomationRealtimeService,
+    private readonly autoReplyService: ZaloAutoReplyService,
+    private readonly aiRoutingService: ZaloAiRoutingService,
+    private readonly aiJobsService: ZaloAiJobsService
   ) {}
 
   onModuleInit() {
@@ -100,6 +108,13 @@ export class ZaloPersonalPoolService implements OnModuleInit {
       .catch((error) => {
         this.logger.warn(`Failed restoring personal sessions on init: ${this.normalizeErrorMessage(error)}`);
       });
+  }
+
+  onModuleDestroy() {
+    for (const timer of this.autoReplyTimerByThread.values()) {
+      clearTimeout(timer);
+    }
+    this.autoReplyTimerByThread.clear();
   }
 
   async startQrLogin(accountId: string): Promise<void> {
@@ -317,7 +332,8 @@ export class ZaloPersonalPoolService implements OnModuleInit {
     externalThreadId: string,
     content: string,
     threadType: 'user' | 'group' = 'user',
-    senderName?: string
+    senderName?: string,
+    origin: ConversationMessageOrigin = ConversationMessageOrigin.USER
   ) {
     const inst = this.instances.get(accountId);
     if (!inst?.api) {
@@ -346,6 +362,7 @@ export class ZaloPersonalPoolService implements OnModuleInit {
       externalThreadId: threadId,
       externalMessageId: externalMessageId || undefined,
       senderType: ConversationSenderType.AGENT,
+      origin,
       senderName: normalizedSenderName || 'Staff',
       content,
       contentType: 'TEXT',
@@ -353,6 +370,19 @@ export class ZaloPersonalPoolService implements OnModuleInit {
     });
 
     return { success: true };
+  }
+
+  cancelAutoReplyForThread(threadId: string) {
+    const normalizedThreadId = String(threadId ?? '').trim();
+    if (!normalizedThreadId) {
+      return;
+    }
+    const timer = this.autoReplyTimerByThread.get(normalizedThreadId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.autoReplyTimerByThread.delete(normalizedThreadId);
   }
 
   async disconnect(accountId: string): Promise<void> {
@@ -366,6 +396,16 @@ export class ZaloPersonalPoolService implements OnModuleInit {
     }
 
     this.instances.delete(accountId);
+    const accountThreads = await this.prisma.client.conversationThread.findMany({
+      where: {
+        channel: ConversationChannel.ZALO_PERSONAL,
+        channelAccountId: accountId
+      },
+      select: { id: true }
+    });
+    for (const thread of accountThreads) {
+      this.cancelAutoReplyForThread(thread.id);
+    }
     await this.updateAccountStatus(accountId, 'DISCONNECTED');
     const orgId = await this.resolveOrgId(accountId);
     this.zaloRealtime.emitScoped({
@@ -765,6 +805,14 @@ export class ZaloPersonalPoolService implements OnModuleInit {
           senderName: senderName || customerDisplayName || undefined,
           phone: phoneFromPayload || undefined
         });
+
+        await this.handleAutoReplyAfterInboundCustomerMessage({
+          accountId,
+          externalThreadId,
+          threadId: this.pickFirstNonEmptyString((ingestedMessage as { threadId?: unknown })?.threadId) || undefined,
+          messageId: this.pickFirstNonEmptyString((ingestedMessage as { id?: unknown })?.id) || undefined,
+          sentAt
+        });
       }
 
       this.updateListenerDebug(accountId, {
@@ -780,6 +828,347 @@ export class ZaloPersonalPoolService implements OnModuleInit {
       });
       this.logger.error(`Listener ${source} error for ${accountId}: ${errorMessage}`);
     }
+  }
+
+  private async handleAutoReplyAfterInboundCustomerMessage(input: {
+    accountId: string;
+    externalThreadId: string;
+    threadId?: string;
+    messageId?: string;
+    sentAt: Date;
+  }) {
+    const threadId = this.pickFirstNonEmptyString(input.threadId);
+    const customerMessageId = this.pickFirstNonEmptyString(input.messageId);
+    if (!threadId || !customerMessageId) {
+      return;
+    }
+
+    const account = await this.prisma.client.zaloAccount.findFirst({
+      where: {
+        id: input.accountId,
+        accountType: 'PERSONAL'
+      },
+      select: {
+        id: true,
+        aiAutoReplyEnabled: true,
+        aiAutoReplyTakeoverMinutes: true
+      }
+    });
+    if (!account?.aiAutoReplyEnabled) {
+      return;
+    }
+
+    const thread = await this.prisma.client.conversationThread.findFirst({
+      where: {
+        id: threadId,
+        channel: ConversationChannel.ZALO_PERSONAL,
+        channelAccountId: account.id
+      },
+      select: {
+        id: true,
+        externalThreadId: true,
+        metadataJson: true
+      }
+    });
+    if (!thread) {
+      return;
+    }
+
+    const state = readZaloAutoReplyThreadState(thread.metadataJson);
+    if (state.lastHandledCustomerMessageId === customerMessageId) {
+      return;
+    }
+
+    const routingRuntime = await this.aiRoutingService.getRuntimeConfig();
+    const debounceMs = Math.max(1_000, routingRuntime.debounceSeconds * 1_000);
+    const takeoverMinutes = this.normalizeTakeoverMinutes(account.aiAutoReplyTakeoverMinutes);
+    const pauseUntil = this.readDateSafely(state.pauseUntil);
+    const dueAt = new Date(
+      Math.max(
+        input.sentAt.getTime() + debounceMs,
+        pauseUntil ? pauseUntil.getTime() : 0,
+        pauseUntil ? input.sentAt.getTime() + takeoverMinutes * 60_000 : 0
+      )
+    );
+
+    await this.prisma.client.conversationThread.updateMany({
+      where: { id: thread.id },
+      data: {
+        metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+          pendingCustomerMessageId: customerMessageId,
+          pendingCustomerSentAt: input.sentAt.toISOString(),
+          pendingDueAt: dueAt.toISOString(),
+          lastHandledCustomerMessageId: customerMessageId
+        })
+      }
+    });
+
+    this.scheduleDeferredAutoReply(thread.id, dueAt);
+  }
+
+  private async runDeferredAutoReplyByThread(threadId: string) {
+    this.autoReplyTimerByThread.delete(threadId);
+
+    const thread = await this.prisma.client.conversationThread.findFirst({
+      where: {
+        id: threadId,
+        channel: ConversationChannel.ZALO_PERSONAL
+      },
+      select: {
+        id: true,
+        channelAccountId: true,
+        externalThreadId: true,
+        metadataJson: true
+      }
+    });
+    if (!thread?.channelAccountId) {
+      return;
+    }
+
+    const account = await this.prisma.client.zaloAccount.findFirst({
+      where: {
+        id: thread.channelAccountId,
+        accountType: 'PERSONAL'
+      },
+      select: {
+        id: true,
+        aiAutoReplyEnabled: true,
+        aiAutoReplyTakeoverMinutes: true
+      }
+    });
+    if (!account?.aiAutoReplyEnabled) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id: thread.id },
+        data: {
+          metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+            clearPending: true
+          })
+        }
+      });
+      return;
+    }
+
+    const state = readZaloAutoReplyThreadState(thread.metadataJson);
+    const pendingCustomerMessageId = this.pickFirstNonEmptyString(state.pendingCustomerMessageId);
+    if (!pendingCustomerMessageId) {
+      return;
+    }
+
+    const takeoverMinutes = this.normalizeTakeoverMinutes(account.aiAutoReplyTakeoverMinutes);
+    const pendingSentAt = this.readDateSafely(state.pendingCustomerSentAt);
+    const dueAt = this.resolvePendingDueAt(state.pendingDueAt, pendingSentAt, takeoverMinutes);
+    if (!dueAt) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id: thread.id },
+        data: {
+          metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+            clearPending: true
+          })
+        }
+      });
+      return;
+    }
+
+    const now = Date.now();
+    if (dueAt.getTime() > now) {
+      this.scheduleDeferredAutoReply(thread.id, dueAt);
+      return;
+    }
+
+    const pendingCustomerMessage = await this.prisma.client.conversationMessage.findFirst({
+      where: {
+        id: pendingCustomerMessageId,
+        threadId: thread.id,
+        senderType: ConversationSenderType.CUSTOMER
+      },
+      select: {
+        id: true,
+        sentAt: true
+      }
+    });
+    if (!pendingCustomerMessage) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id: thread.id },
+        data: {
+          metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+            clearPending: true
+          })
+        }
+      });
+      return;
+    }
+
+    const hasAgentReply = await this.autoReplyService.hasAgentReplyAfter(thread.id, pendingCustomerMessage.sentAt);
+    if (hasAgentReply) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id: thread.id },
+        data: {
+          metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+            clearPending: true
+          })
+        }
+      });
+      return;
+    }
+
+    try {
+      await this.sendAutoReplyNow({
+        accountId: account.id,
+        threadId: thread.id,
+        externalThreadId: thread.externalThreadId,
+        customerMessageId: pendingCustomerMessage.id,
+        customerSentAt: pendingCustomerMessage.sentAt
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Deferred auto-reply failed for thread ${thread.id}: ${this.normalizeErrorMessage(error)}`
+      );
+      const retryAt = new Date(Date.now() + 60_000);
+      this.scheduleDeferredAutoReply(thread.id, retryAt);
+    }
+  }
+
+  private scheduleDeferredAutoReply(threadId: string, dueAt: Date) {
+    this.cancelAutoReplyForThread(threadId);
+
+    const delayMs = Math.max(dueAt.getTime() - Date.now(), 0);
+    const timer = setTimeout(() => {
+      void this.runDeferredAutoReplyByThread(threadId).catch((error) => {
+        this.logger.warn(
+          `runDeferredAutoReplyByThread failed for ${threadId}: ${this.normalizeErrorMessage(error)}`
+        );
+      });
+    }, delayMs);
+
+    this.autoReplyTimerByThread.set(threadId, timer);
+  }
+
+  private resolvePendingDueAt(
+    pendingDueAtRaw: string | null,
+    pendingSentAt: Date | null,
+    takeoverMinutes: number
+  ) {
+    const parsedDueAt = this.readDateSafely(pendingDueAtRaw);
+    if (parsedDueAt) {
+      return parsedDueAt;
+    }
+    if (!pendingSentAt) {
+      return null;
+    }
+    return new Date(pendingSentAt.getTime() + takeoverMinutes * 60_000);
+  }
+
+  private async sendAutoReplyNow(input: {
+    accountId: string;
+    threadId: string;
+    externalThreadId: string;
+    customerMessageId: string;
+    customerSentAt: Date;
+  }) {
+    const routingRuntime = await this.aiRoutingService.getRuntimeConfig();
+
+    if (routingRuntime.mode === 'n8n' || routingRuntime.mode === 'shadow') {
+      await this.aiJobsService.enqueueN8nJob({
+        threadId: input.threadId,
+        customerMessageId: input.customerMessageId,
+        customerSentAt: input.customerSentAt
+      });
+
+      if (routingRuntime.mode === 'n8n') {
+        const thread = await this.prisma.client.conversationThread.findFirst({
+          where: { id: input.threadId },
+          select: { metadataJson: true }
+        });
+        if (thread) {
+          await this.prisma.client.conversationThread.updateMany({
+            where: { id: input.threadId },
+            data: {
+              metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+                clearPending: true
+              })
+            }
+          });
+        }
+        return;
+      }
+    }
+
+    const reply = await this.autoReplyService.generateReplyForThread(input.threadId);
+    if (!reply) {
+      const thread = await this.prisma.client.conversationThread.findFirst({
+        where: { id: input.threadId },
+        select: {
+          metadataJson: true
+        }
+      });
+      if (thread) {
+        await this.prisma.client.conversationThread.updateMany({
+          where: { id: input.threadId },
+          data: {
+            metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+              clearPending: true
+            })
+          }
+        });
+      }
+      return;
+    }
+
+    await this.sendMessage(
+      input.accountId,
+      input.externalThreadId,
+      reply,
+      'user',
+      'AI Assistant',
+      ConversationMessageOrigin.AI
+    );
+
+    const thread = await this.prisma.client.conversationThread.findFirst({
+      where: { id: input.threadId },
+      select: {
+        metadataJson: true
+      }
+    });
+    if (!thread) {
+      return;
+    }
+
+    await this.prisma.client.conversationThread.updateMany({
+      where: { id: input.threadId },
+      data: {
+        metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+          clearPending: true,
+          pauseUntil: null,
+          lastAiReplyAt: new Date().toISOString()
+        })
+      }
+    });
+  }
+
+  private readDateSafely(value: string | null | undefined) {
+    const normalized = this.pickFirstNonEmptyString(value);
+    if (!normalized) {
+      return null;
+    }
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    return parsed;
+  }
+
+  private normalizeTakeoverMinutes(value: unknown) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 5;
+    }
+    if (parsed < 1) {
+      return 1;
+    }
+    if (parsed > 120) {
+      return 120;
+    }
+    return Math.round(parsed);
   }
 
   private async tryUpdateInboundFriendAlias(args: {

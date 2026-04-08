@@ -12,6 +12,7 @@ import { ERP_MODULES } from '@erp/shared';
 import { GroupedSidebar } from './settings-center/grouped-sidebar';
 import { DomainTabs } from './settings-center/domain-tabs';
 import { AdvancedToggle } from './settings-center/advanced-toggle';
+import { ZaloAutomationAiRoutingWorkbench } from './zalo-automation-ai-routing-workbench';
 import { TaxonomyManagerField, type SalesTaxonomyItem } from './settings-center/taxonomy-manager-field';
 import {
   SettingsListManagerField,
@@ -4171,6 +4172,16 @@ export function SettingsCenter() {
                     : 'Đã cập nhật trạng thái kết nối từng connector.'}
                 </p>
               )}
+            </section>
+          )}
+
+          {selectedDomain === 'integrations' && (
+            <section style={{ border: '1px dashed var(--line)', borderRadius: '10px', padding: '0.65rem', marginTop: '0.9rem' }}>
+              <strong style={{ fontSize: '0.86rem' }}>AI Routing (Admin)</strong>
+              <p style={{ margin: '0.45rem 0 0 0', color: 'var(--muted)', fontSize: '0.82rem' }}>
+                Quản trị webhook n8n và bảng chia nick/kênh theo ngành ngay trong Settings Center Enterprise.
+              </p>
+              <ZaloAutomationAiRoutingWorkbench embedded />
             </section>
           )}
 

@@ -2,7 +2,7 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-08 11:15 +07
+- Last updated: 2026-04-08 19:12 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
 
@@ -11,6 +11,346 @@
   - đã ngừng track `apps/web/tsconfig.tsbuildinfo`.
   - đã cập nhật `.gitignore` với `*.tsbuildinfo`.
   - đã verify lint/build sạch sau housekeeping.
+
+## Session Update 2026-04-08 19:12 +07 (CRM taxonomy runtime alignment theo Settings Center Enterprise)
+- User request:
+  - dữ liệu giai đoạn CRM phải lấy từ Settings Center Enterprise.
+  - audit toàn dự án các dữ liệu có cấu hình trong Settings Center nhưng hệ thống còn hardcode và sửa đồng bộ.
+  - không tự migrate dữ liệu cũ từ taxonomy không còn tồn tại sang taxonomy mới.
+- Đã triển khai:
+  - backend:
+    - `apps/api/src/modules/crm/crm.service.ts`
+      - bỏ hardcode gắn tag `da_mua` trong luồng `markPaymentRequestPaid`; chỉ add khi tag có trong `salesPolicy.tagRegistry.customerTags`.
+      - giữ nguyên nguyên tắc không tự đổi stage cũ của bản ghi hiện hữu; bản ghi mới có status chuyển đổi (`DONG_Y_CHUYEN_THANH_KH`) lấy stage cuối từ taxonomy runtime.
+    - `apps/api/src/modules/conversations/conversations.service.ts`
+      - fix typing `resolveCustomerSourceByChannel` (`string | null`) để TypeScript sạch.
+  - frontend:
+    - `apps/web/components/crm-customers-board.tsx`: bỏ placeholder source/tag hardcode.
+    - `apps/web/lib/crm-customer-import.ts`: sample tags template import lấy từ taxonomy `customerTags`.
+    - `apps/web/components/crm-customers-import-board.tsx`: lấy thêm `tagRegistry.customerTags` từ `/crm/taxonomy`.
+    - `apps/web/lib/action-presets.ts`: bỏ `resultTag` preset hardcode.
+    - `apps/web/lib/module-definitions.ts`: bỏ placeholder/options hardcode cho tag/resultTag.
+    - `apps/web/components/zalo-automation-campaigns-workbench.tsx`: đổi example/placeholder tags hardcode sang trung tính.
+    - `apps/web/components/zalo-automation-messages-workbench.tsx`: đổi placeholder tags hardcode sang trung tính.
+  - audit quét runtime:
+    - quét token stages/sources/tag registry trong `apps/api/src`, `apps/web/components`, `apps/web/lib` và xác nhận đã loại bỏ hardcode CRM taxonomy trong luồng runtime chính.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/crm.service.test.ts test/conversations.api-flow.test.ts` ✅ (`11 passed`)
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
+- Notes:
+  - không phát sinh migration/schema mới.
+  - không phát sinh ADR mới trong batch này.
+
+## Session Update 2026-04-08 18:05 +07 (fix lỗi màn Zalo messages: ảnh, unread, badge, toggle auto-reply scope)
+- User request:
+  - tại `/modules/zalo-automation/messages` có 4 lỗi:
+    - hội thoại không load được ảnh.
+    - đã mở hội thoại nhưng vẫn còn báo tin nhắn mới.
+    - badge "tin nhắn mới" khó nhìn, cần style: chữ đỏ đậm, nền trắng, vòng tròn đen.
+    - nút bật/tắt AI auto-reply trong luồng tin nhắn phải chỉ áp dụng cho tài khoản đang chat, không ảnh hưởng tài khoản khác.
+- Đã triển khai:
+  - backend conversations:
+    - thêm endpoint `POST /api/v1/conversations/threads/:id/mark-read`:
+      - `apps/api/src/modules/conversations/conversations.controller.ts`
+      - `apps/api/src/modules/conversations/conversations.service.ts`
+    - logic: xác thực quyền đọc theo account Zalo (nếu có), reset `unreadCount` về `0` cho thread hiện tại.
+  - frontend Zalo messages workbench:
+    - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - thêm parser `RICH` message để extract URL ảnh từ payload JSON/attachments và render ảnh trực tiếp trong bubble.
+    - khi mở thread có `unreadCount > 0`, tự gọi `mark-read` và cập nhật local state về `0`.
+    - siết toggle AI auto-reply theo `targetAccountId` của thread đang chọn, sau khi đổi trạng thái sẽ reload accounts + threads để tránh lệch trạng thái giữa các tài khoản.
+  - UI style:
+    - `apps/web/app/styles/modules/crm.css`
+    - badge unread đổi sang:
+      - nền trắng,
+      - chữ đỏ đậm,
+      - viền tròn đen.
+    - thêm style hiển thị ảnh/caption cho message ảnh.
+  - test API:
+    - cập nhật `apps/api/test/conversations.api-flow.test.ts` để cover endpoint `POST /conversations/threads/:id/mark-read`.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/conversations.api-flow.test.ts test/conversations.realtime.test.ts test/zalo.service.test.ts` ✅ (`17 passed`)
+  - `npm run test --workspace @erp/api -- test/conversations.api-flow.test.ts` ✅ (`2 passed`, gồm case `mark-read`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+- Notes:
+  - không phát sinh migration/schema mới trong batch này.
+  - không phát sinh ADR mới (batch là bugfix UI/API cục bộ theo behavior hiện hữu).
+
+## Session Update 2026-04-08 17:43 +07 (đưa AI Routing vào Settings Center Enterprise, chỉ ADMIN cấu hình)
+- User request:
+  - nhận lỗi: `Phân hệ 'ai-routing' đang bị tắt trong Settings Center Enterprise.`
+  - không thấy phân hệ AI Routing trong Settings Center Enterprise.
+  - yêu cầu đưa AI Routing vào Settings Center và chỉ admin mới thiết lập được.
+- Đã triển khai:
+  - backend module-availability fix:
+    - `apps/api/src/common/settings/runtime-settings.service.ts`
+    - chỉ kiểm tra bật/tắt cho module thuộc `RUNTIME_TOGGLABLE_MODULES` để tránh false-negative với key ngoài danh sách.
+    - map API key `ai-routing`, `ai-industries`, `ai-jobs` về `settings`.
+  - backend permission:
+    - `apps/api/src/modules/zalo/zalo-ai-routing.controller.ts`
+    - đổi quyền controller từ `MANAGER|ADMIN` sang `ADMIN` cho toàn bộ endpoint cấu hình AI routing/industries/jobs.
+  - UI Settings Center:
+    - `apps/web/components/settings-center.tsx`
+    - nhúng `ZaloAutomationAiRoutingWorkbench` vào domain `integrations` với section `AI Routing (Admin)`.
+  - cập nhật workbench:
+    - `apps/web/components/zalo-automation-ai-routing-workbench.tsx`
+    - đổi permission check từ module `crm` sang `settings`.
+    - thêm chế độ `embedded` để render bên trong Settings Center.
+    - cập nhật reason lưu runtime thành `Update AI routing runtime from Settings Center Enterprise`.
+  - điều hướng:
+    - `apps/web/app/modules/zalo-automation/ai-routing/page.tsx` chuyển sang redirect `/modules/settings`.
+    - bỏ nhãn/title AI Routing riêng trong:
+      - `apps/web/lib/sidebar-config.ts`
+      - `apps/web/components/app-shell.tsx`
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/zalo-ai-routing.service.test.ts test/zalo-ai-jobs.service.test.ts` ✅ (`7 passed`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+    - ghi nhận: lần lint đầu fail do `.next/types` stale; sau build lại thì lint pass.
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/settings-center-audit-scope.spec.ts apps/web/e2e/tests/sidebar-grouped-navigation.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`2 passed`)
+- Notes:
+  - không phát sinh migration/schema mới trong batch này.
+  - không phát sinh ADR mới (batch là điều chỉnh quyền + vị trí UI quản trị).
+
+## Session Update 2026-04-08 17:14 +07 (thêm UI AI Routing: webhook n8n + bảng chia nick theo ngành)
+- User request:
+  - không thấy nơi đặt webhook gửi dữ liệu n8n.
+  - không thấy bảng chia nick Zalo theo ngành.
+- Đã triển khai:
+  - thêm trang mới `Zalo Automation > AI Routing`:
+    - route: `apps/web/app/modules/zalo-automation/ai-routing/page.tsx`
+    - workbench: `apps/web/components/zalo-automation-ai-routing-workbench.tsx`
+  - thêm menu sidebar:
+    - `apps/web/lib/sidebar-config.ts` (item `AI Routing`).
+  - thêm title breadcrumb/runtime:
+    - `apps/web/components/app-shell.tsx` (`Zalo Automation • AI Routing`).
+  - trong trang mới đã có 4 cụm thao tác:
+    - Runtime webhook n8n (mode/url/hmac/debounce/timeout/retry/backoff) lưu qua `PUT /api/v1/settings/domains/integrations` tại nhánh `integrations.aiRouting`.
+    - Ngành AI: list/search/create/update/toggle qua `ai-industries`.
+    - Map nick kênh -> ngành: list/search/create/update/toggle qua `ai-routing/channel-accounts`.
+    - Map ngành -> workflow/agent: list/search/create/update/toggle qua `ai-routing/industry-bindings`.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+- Notes:
+  - không thay đổi schema/migration hoặc business logic backend trong batch này.
+  - không phát sinh ADR mới (batch chỉ expose UI quản trị cho API đã có).
+
+## Session Update 2026-04-08 16:59 +07 (infinite scroll load thêm hội thoại Zalo)
+- User request:
+  - cho phép user lăn chuột xuống để load thêm hội thoại ở màn Zalo messages.
+- Đã triển khai:
+  - cập nhật `apps/web/components/zalo-automation-messages-workbench.tsx`:
+    - thêm state cursor runtime:
+      - `threadNextCursor`
+      - `hasMoreThreads`
+      - `isLoadingMoreThreads`
+    - mở rộng `loadThreads(...)` hỗ trợ:
+      - load trang đầu (reset)
+      - append theo `cursor` (load thêm)
+    - merge dữ liệu append theo `thread.id` để tránh duplicate khi phân trang.
+    - thêm scroll handler cho panel `zalo-chat-thread-list`:
+      - chạm gần đáy sẽ tự gọi load thêm bằng `nextCursor`.
+    - bổ sung trạng thái UX:
+      - `Đang tải thêm hội thoại...`
+      - `Cuộn xuống cuối danh sách để tải thêm hội thoại.`
+      - `Đã hiển thị hết hội thoại phù hợp bộ lọc.`
+  - giữ nguyên backend contract và giới hạn validation `limit<=100`; không thay đổi migration/schema.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+    - ghi nhận lint lần đầu fail do `.next/types` stale; build lại rồi lint pass.
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+- Notes:
+  - phạm vi tập trung màn `Zalo Automation > Tin nhắn` đúng theo yêu cầu user.
+  - không phát sinh ADR mới (chỉ cải tiến UI pagination behavior).
+
+## Session Update 2026-04-08 16:50 +07 (fix không load được hội thoại Zalo do limit vượt ngưỡng)
+- User request:
+  - "kiểm tra lại tại sao tôi không load được hội thoại zalo nữa" kèm screenshot lỗi `limit must not be greater than 100`.
+- Root cause:
+  - frontend gửi query `limit` vượt DTO validation backend (`PaginationQueryDto @Max(100)`) khi gọi:
+    - `GET /api/v1/conversations/threads/:id/messages`.
+  - cụ thể:
+    - `apps/web/components/zalo-automation-messages-workbench.tsx`: `limit: 200`.
+    - `apps/web/components/crm-conversations-workbench.tsx`: `limit: 120`.
+- Đã triển khai fix:
+  - đổi về `limit: 100` tại cả 2 màn:
+    - `zalo-automation-messages-workbench.tsx`
+    - `crm-conversations-workbench.tsx`
+  - không thay đổi business logic backend, không thay đổi schema/migration.
+- Verification:
+  - Web quality gate:
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/web` ✅
+      - ghi nhận lần chạy lint đầu fail do `.next/types` stale thiếu file; sau khi build lại thì lint pass.
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+  - Infra gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+- Notes:
+  - không phát sinh ADR mới (fix bug cục bộ UI query param).
+
+## Session Update 2026-04-08 16:33 +07 (n8n artifacts + contract examples)
+- User request:
+  - "ok, bạn làm đi" (tiếp tục triển khai phần còn thiếu của kế hoạch AI n8n theo ngành).
+- Đã triển khai:
+  - hoàn thiện package tài liệu n8n:
+    - thêm `docs/integrations/n8n/README.md` (flow, env vars, HMAC/idempotency, import guide).
+    - thêm `docs/integrations/n8n/examples/erp-chat-event.json`.
+    - thêm `docs/integrations/n8n/examples/n8n-ai-reply-callback.json`.
+  - giữ workflow mẫu đã tạo:
+    - `docs/integrations/n8n/workflows/ERP_AI_ROUTER_V1.json`.
+  - batch này chỉ bổ sung artifact/docs, không đổi business logic ERP hoặc DB schema.
+- Verification:
+  - `jq . docs/integrations/n8n/workflows/ERP_AI_ROUTER_V1.json` ✅
+  - `jq . docs/integrations/n8n/examples/erp-chat-event.json` ✅
+  - `jq . docs/integrations/n8n/examples/n8n-ai-reply-callback.json` ✅
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/zalo-ai-routing.service.test.ts test/zalo-ai-jobs.service.test.ts` ✅ (`7 passed`)
+- Notes:
+  - không phát sinh ADR mới (không có quyết định kiến trúc mới, chỉ hoàn thiện artifacts triển khai n8n).
+  - không chạy frontend lint/build/e2e trong batch này vì không có thay đổi UI/web.
+
+## Session Update 2026-04-08 16:18 +07 (AI n8n routing theo ngành + callback ERP guardrails)
+- User request:
+  - implement plan AI auto-reply qua n8n theo ngành, map theo từng nick kênh.
+  - admin đổi ngành realtime.
+  - AI reply phải ghi vào hội thoại ERP liền mạch.
+- Đã triển khai:
+  - Data model + migration:
+    - thêm enum/message origin: `ConversationMessageOrigin` (`EXTERNAL|USER|CAMPAIGN|AI|SYSTEM`).
+    - thêm các bảng AI routing/job/outbox:
+      - `ai_industries`
+      - `ai_routing_channel_accounts`
+      - `ai_industry_bindings`
+      - `ai_conversation_jobs`
+      - `ai_conversation_outbox`
+    - migration: `20260408164000_add_ai_routing_n8n_v1`.
+  - API + services:
+    - thêm API admin:
+      - `GET/POST/PATCH /api/v1/ai-industries`
+      - `GET/POST/PATCH /api/v1/ai-routing/channel-accounts`
+      - `GET/POST/PATCH /api/v1/ai-routing/industry-bindings`
+      - `GET /api/v1/ai-jobs`
+      - `GET /api/v1/ai-jobs/:id`
+    - thêm callback public:
+      - `POST /api/v1/integrations/n8n/ai-replies` (HMAC verify, idempotency, re-check guardrail trước send).
+    - thêm runtime rollout mode: `AI_ROUTING_MODE=legacy|n8n|shadow`.
+    - thêm outbox dispatch + retry/backoff + handoff status.
+  - Luồng xử lý:
+    - inbound customer -> debounce theo runtime (mặc định 8s) -> enqueue AI job/outbox.
+    - n8n callback -> ERP re-check takeover/toggle/account state -> send qua connector Zalo.
+    - tin AI gửi thành công được lưu trong thread với `origin=AI`.
+  - Context + privacy:
+    - gửi tối đa 20 tin gần nhất + `historySummary` khi thread dài.
+    - mask PII mặc định (phone/email) và hỗ trợ whitelist field theo ngành qua `piiMaskConfigJson`.
+  - Tests:
+    - thêm `apps/api/test/zalo-ai-routing.service.test.ts`.
+    - thêm `apps/api/test/zalo-ai-jobs.service.test.ts`.
+    - giữ pass cho test hiện hữu:
+      - `apps/api/test/zalo.service.test.ts`
+      - `apps/api/test/zalo-personal.pool.service.test.ts`
+  - ADR:
+    - thêm `docs/decisions/ADR-055-AI-N8N-ROUTING-PER-CHANNEL-ACCOUNT.md`.
+- Verification:
+  - Infra/DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - Prisma:
+    - `set -a; source .env; set +a; npm run prisma:migrate:deploy --workspace @erp/api` ✅ (apply `20260408164000_add_ai_routing_n8n_v1`)
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+    - `npm run prisma:generate --workspace @erp/api` ✅
+  - Backend quality:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/zalo.service.test.ts test/zalo-personal.pool.service.test.ts test/zalo-ai-routing.service.test.ts test/zalo-ai-jobs.service.test.ts` ✅ (`23 passed`)
+    - `npm run build --workspace @erp/api` ✅
+  - Frontend quality:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`)
+- Notes:
+  - v1 production path vẫn ưu tiên Zalo Personal; cấu trúc route/binding đã sẵn cho FB/TikTok.
+  - mapping ngành không active sẽ không auto-reply AI, job ghi rõ reason để ops xử lý.
+
+## Session Update 2026-04-08 12:26 +07 (Zalo Personal AI auto-reply + takeover + quick toggle)
+- User request:
+  - kết nối trợ lý AI hiện có vào luồng Zalo Personal (zca-js) để auto-reply.
+  - chỉ áp dụng cho tài khoản Zalo bật chức năng AI auto-reply.
+  - takeover người thật: nhân viên nhắn tay thì AI pause 5 phút; nếu khách nhắn mà sau 5 phút nhân viên chưa phản hồi thì AI trả lời lại.
+  - cần nút bật/tắt nhanh auto-reply ngay trong màn chat.
+- Đã triển khai:
+  - Data model + migration:
+    - thêm `ZaloAccount.aiAutoReplyEnabled` (default `false`).
+    - thêm `ZaloAccount.aiAutoReplyTakeoverMinutes` (default `5`).
+    - migration `apps/api/prisma/migrations/20260408130000_add_zalo_auto_reply_account_flags/migration.sql`.
+  - Backend auto-reply flow cho Zalo Personal:
+    - thêm `apps/api/src/modules/zalo/zalo-auto-reply-state.util.ts` quản lý thread metadata (`pauseUntil`, `pending*`, `lastHandled*`).
+    - thêm `apps/api/src/modules/zalo/zalo-auto-reply.service.ts` để generate reply từ runtime AI settings hiện hữu.
+    - mở rộng `zalo-personal.pool.service.ts`:
+      - ingest tin khách -> auto reply ngay hoặc defer theo takeover state.
+      - scheduler deferred reply + retry + clear timer.
+    - mở rộng `zalo.service.ts`:
+      - create/update account nhận 2 cờ auto-reply.
+      - thêm `origin` cho personal send (`USER|CAMPAIGN|AI|SYSTEM`).
+      - manual send `origin=USER` set `pauseUntil` và cancel deferred timer.
+    - `zalo-campaign.service.ts` gửi `origin=CAMPAIGN` để không kích hoạt takeover nhầm.
+  - Frontend quick controls:
+    - `apps/web/components/zalo-automation-accounts-workbench.tsx`: hiển thị `AI ON/OFF` và toggle theo account.
+    - `apps/web/components/zalo-automation-messages-workbench.tsx`: thêm nút bật/tắt nhanh auto-reply trong chat panel.
+    - `apps/web/components/crm-conversations-workbench.tsx`: thêm nút bật/tắt nhanh auto-reply trong inbox CRM.
+  - Test + docs:
+    - update `apps/api/test/zalo.service.test.ts`.
+    - update `apps/api/test/zalo-personal.pool.service.test.ts`.
+    - thêm ADR `docs/decisions/ADR-054-ZALO-PERSONAL-AI-AUTO-REPLY-PER-ACCOUNT-TAKEOVER.md`.
+- Verification:
+  - Gate hạ tầng:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - Prisma:
+    - `npm run prisma:generate --workspace @erp/api` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:deploy --workspace @erp/api` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - Backend quality:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api -- test/zalo.service.test.ts test/zalo-personal.pool.service.test.ts` ✅
+    - `npm run build --workspace @erp/api` ✅
+  - Frontend quality:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/zalo-automation-accounts-actions.spec.ts apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`8 passed`).
+- Notes:
+  - phạm vi giữ đúng yêu cầu: chỉ Zalo Personal, chưa mở rộng OA auto-reply.
+  - không thay đổi business flow ERP ngoài phạm vi Zalo auto-reply/takeover.
 
 ## Session Update 2026-04-08 11:15 +07 (Housekeeping tsbuildinfo + UAT production-like + deploy readiness)
 - User request:

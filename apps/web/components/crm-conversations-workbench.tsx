@@ -87,6 +87,8 @@ type ZaloAccount = {
   displayName?: string | null;
   zaloUid?: string | null;
   status?: string | null;
+  aiAutoReplyEnabled?: boolean | null;
+  aiAutoReplyTakeoverMinutes?: number | null;
   currentPermissionLevel?: ZaloPermissionLevel | null;
 };
 
@@ -251,6 +253,7 @@ export function CrmConversationsWorkbench() {
   const { canModule, canAction } = useAccessPolicy();
   const canView = canModule('crm');
   const canCreate = canAction('crm', 'CREATE');
+  const canUpdate = canAction('crm', 'UPDATE');
   const canApprove = canAction('crm', 'APPROVE');
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -284,6 +287,7 @@ export function CrmConversationsWorkbench() {
   const [selectedJobIds, setSelectedJobIds] = useState<BulkRowId[]>([]);
   const [selectedRunIds, setSelectedRunIds] = useState<BulkRowId[]>([]);
   const [sendMessageContent, setSendMessageContent] = useState('');
+  const [togglingAutoReplyAccountId, setTogglingAutoReplyAccountId] = useState('');
 
   const [createJobForm, setCreateJobForm] = useState<CreateJobForm>({
     name: 'Đánh giá Zalo định kỳ',
@@ -320,6 +324,12 @@ export function CrmConversationsWorkbench() {
     }
     return permissionByAccountId.get(selectedThread.channelAccountId) ?? null;
   }, [permissionByAccountId, selectedThread]);
+  const selectedThreadAccount = useMemo(() => {
+    if (!selectedThread?.channelAccountId) {
+      return null;
+    }
+    return zaloAccounts.find((account) => account.id === selectedThread.channelAccountId) ?? null;
+  }, [selectedThread?.channelAccountId, zaloAccounts]);
 
   const canSendSelectedThread = useMemo(() => {
     if (!selectedThread || !selectedThreadId || !canCreate) {
@@ -333,6 +343,21 @@ export function CrmConversationsWorkbench() {
     }
     return selectedThreadPermission !== 'READ';
   }, [canCreate, selectedThread, selectedThreadId, selectedThreadPermission]);
+  const canToggleSelectedThreadAutoReply = useMemo(() => {
+    if (!selectedThread || !selectedThreadId || !canUpdate) {
+      return false;
+    }
+    if (selectedThread.channel !== 'ZALO_PERSONAL') {
+      return false;
+    }
+    if (!selectedThread.channelAccountId) {
+      return false;
+    }
+    if (!selectedThreadPermission) {
+      return true;
+    }
+    return selectedThreadPermission !== 'READ';
+  }, [canUpdate, selectedThread, selectedThreadId, selectedThreadPermission]);
 
   const selectedJob = useMemo(
     () => jobs.find((item) => item.id === selectedJobId) ?? null,
@@ -393,7 +418,7 @@ export function CrmConversationsWorkbench() {
       const payload = await apiRequest<{ items?: MessageRow[] }>(`/conversations/threads/${threadId}/messages`, {
         query: {
           q: messageQuery || undefined,
-          limit: 120
+          limit: 100
         }
       });
       setMessages(normalizeListPayload(payload) as MessageRow[]);
@@ -596,6 +621,41 @@ export function CrmConversationsWorkbench() {
       await Promise.all([loadMessages(selectedThread.id), loadThreads()]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không thể gửi tin nhắn.');
+    }
+  };
+
+  const onToggleSelectedThreadAutoReply = async () => {
+    clearNotice();
+    if (!selectedThread?.channelAccountId || selectedThread.channel !== 'ZALO_PERSONAL') {
+      setErrorMessage('Chỉ hội thoại Zalo cá nhân mới hỗ trợ bật/tắt AI auto-reply.');
+      return;
+    }
+    if (!canToggleSelectedThreadAutoReply) {
+      setErrorMessage('Bạn không có quyền cập nhật trạng thái AI auto-reply cho hội thoại này.');
+      return;
+    }
+
+    const nextEnabled = !Boolean(selectedThreadAccount?.aiAutoReplyEnabled);
+    setTogglingAutoReplyAccountId(selectedThread.channelAccountId);
+    try {
+      await apiRequest(`/zalo/accounts/${selectedThread.channelAccountId}`, {
+        method: 'PATCH',
+        body: {
+          aiAutoReplyEnabled: nextEnabled
+        }
+      });
+      setZaloAccounts((prev) =>
+        prev.map((account) =>
+          account.id === selectedThread.channelAccountId
+            ? { ...account, aiAutoReplyEnabled: nextEnabled }
+            : account
+        )
+      );
+      setResultMessage(nextEnabled ? 'Đã bật AI auto-reply cho hội thoại này.' : 'Đã tắt AI auto-reply cho hội thoại này.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật trạng thái AI auto-reply.');
+    } finally {
+      setTogglingAutoReplyAccountId('');
     }
   };
 
@@ -946,6 +1006,26 @@ export function CrmConversationsWorkbench() {
           <p className="muted">
             Tài khoản: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
           </p>
+          {selectedThread?.channel === 'ZALO_PERSONAL' ? (
+            <div
+              className="action-buttons"
+              style={{ marginTop: '0.15rem', marginBottom: '0.15rem', alignItems: 'center' }}
+            >
+              <Badge variant={selectedThreadAccount?.aiAutoReplyEnabled ? 'success' : 'neutral'}>
+                AI auto-reply: {selectedThreadAccount?.aiAutoReplyEnabled ? 'ON' : 'OFF'}
+              </Badge>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => void onToggleSelectedThreadAutoReply()}
+                disabled={!canToggleSelectedThreadAutoReply || togglingAutoReplyAccountId === selectedThread.channelAccountId}
+              >
+                {togglingAutoReplyAccountId === selectedThread.channelAccountId
+                  ? 'Đang cập nhật...'
+                  : (selectedThreadAccount?.aiAutoReplyEnabled ? 'Tắt AI auto-reply' : 'Bật AI auto-reply')}
+              </button>
+            </div>
+          ) : null}
           <p className="muted" style={{ marginTop: '0.2rem' }}>
             Quyền account:{' '}
             <Badge variant={permissionToBadge(selectedThreadPermission)}>

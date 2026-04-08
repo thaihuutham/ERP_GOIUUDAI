@@ -707,6 +707,8 @@ export class CrmService {
     assertValidVietnamPhone(phone);
     this.assertValidEmail(email);
     const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    const defaultCustomerStage = this.resolveDefaultCustomerStage(salesPolicy.customerTaxonomy.stages);
+    const defaultCustomerSource = this.resolveDefaultCustomerSource(salesPolicy.customerTaxonomy.sources);
     const tags = this.parseTags(payload.tags, salesPolicy.tagRegistry.customerTags, 'customer.tags');
     const normalizedTaxonomy = this.resolveCustomerTaxonomy(
       this.optionalString(payload.customerStage),
@@ -728,7 +730,8 @@ export class CrmService {
       const nextStatus = this.parseCustomerCareStatus(payload.status, duplicate.status);
       const nextStage = this.resolveCustomerStageForStatus(
         normalizedTaxonomy.stage ?? duplicate.customerStage,
-        nextStatus
+        nextStatus,
+        salesPolicy.customerTaxonomy.stages
       );
       const nextZaloNickType = this.parseCustomerZaloNickType(
         payload.zaloNickType,
@@ -743,7 +746,7 @@ export class CrmService {
           email: email ?? duplicate.email,
           emailNormalized: email ?? duplicate.emailNormalized,
           segment: this.optionalString(payload.segment) ?? duplicate.segment,
-          source: normalizedTaxonomy.source ?? duplicate.source,
+          source: normalizedTaxonomy.source ?? duplicate.source ?? defaultCustomerSource ?? null,
           needsSummary: this.optionalString(payload.needsSummary) ?? duplicate.needsSummary,
           ownerStaffId: this.optionalString(payload.ownerStaffId) ?? duplicate.ownerStaffId,
           consentStatus: this.optionalString(payload.consentStatus) ?? duplicate.consentStatus,
@@ -775,11 +778,15 @@ export class CrmService {
         phoneNormalized: phone ?? null,
         code: this.optionalString(payload.code) ?? null,
         segment: this.optionalString(payload.segment) ?? null,
-        source: normalizedTaxonomy.source ?? null,
+        source: normalizedTaxonomy.source ?? defaultCustomerSource ?? null,
         needsSummary: this.optionalString(payload.needsSummary) ?? null,
         ownerStaffId: this.optionalString(payload.ownerStaffId) ?? null,
         consentStatus: this.optionalString(payload.consentStatus) ?? null,
-        customerStage: this.resolveCustomerStageForStatus(normalizedTaxonomy.stage ?? 'MOI', parsedStatus) ?? 'MOI',
+        customerStage: this.resolveCustomerStageForStatus(
+          normalizedTaxonomy.stage,
+          parsedStatus,
+          salesPolicy.customerTaxonomy.stages
+        ) ?? defaultCustomerStage ?? null,
         status: parsedStatus,
         zaloNickType: parsedZaloNickType,
         tags,
@@ -832,7 +839,8 @@ export class CrmService {
       : current.zaloNickType;
     const nextCustomerStage = this.resolveCustomerStageForStatus(
       hasCustomerStageField ? normalizedTaxonomy.stage : current.customerStage,
-      nextStatus
+      nextStatus,
+      salesPolicy.customerTaxonomy.stages
     );
     const shouldUpdateCustomerStage = hasCustomerStageField || hasStatusField;
 
@@ -1090,6 +1098,9 @@ export class CrmService {
     if (!row) {
       throw new NotFoundException('Không tìm thấy yêu cầu thanh toán.');
     }
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    const finalizedCustomerStage = this.resolveFinalizedCustomerStage(salesPolicy.customerTaxonomy.stages);
+    const purchasedCustomerTag = this.resolvePurchasedCustomerTag(salesPolicy.tagRegistry.customerTags);
 
     await this.prisma.client.$transaction(async (tx) => {
       await tx.paymentRequest.updateMany({
@@ -1102,15 +1113,18 @@ export class CrmService {
 
       if (row.customerId) {
         const customer = await tx.customer.findFirst({ where: { id: row.customerId } });
-        const mergedTags = this.mergeTags(customer?.tags, ['da_mua']);
+        const mergedTags = this.mergeTags(customer?.tags, purchasedCustomerTag ? [purchasedCustomerTag] : []);
+        const customerUpdateData: Prisma.CustomerUpdateManyMutationInput = {
+          lastOrderAt: new Date(),
+          tags: mergedTags
+        };
+        if (finalizedCustomerStage) {
+          customerUpdateData.customerStage = finalizedCustomerStage;
+        }
 
         await tx.customer.updateMany({
           where: { id: row.customerId },
-          data: {
-            customerStage: 'DA_MUA',
-            lastOrderAt: new Date(),
-            tags: mergedTags
-          }
+          data: customerUpdateData
         });
       }
 
@@ -1357,6 +1371,8 @@ export class CrmService {
       this.optionalString(row.source),
       salesPolicy.customerTaxonomy
     );
+    const defaultCustomerStage = this.resolveDefaultCustomerStage(salesPolicy.customerTaxonomy.stages);
+    const defaultCustomerSource = this.resolveDefaultCustomerSource(salesPolicy.customerTaxonomy.sources);
 
     const tags = this.hasOwn(row, 'tags')
       ? this.parseTags(row.tags, salesPolicy.tagRegistry.customerTags, 'customer.tags')
@@ -1371,9 +1387,10 @@ export class CrmService {
       existing?.zaloNickType ?? CustomerZaloNickType.CHUA_KIEM_TRA
     );
     const nextCustomerStage = this.resolveCustomerStageForStatus(
-      normalizedTaxonomy.stage ?? existing?.customerStage ?? 'MOI',
-      nextStatus
-    ) ?? 'MOI';
+      normalizedTaxonomy.stage ?? existing?.customerStage,
+      nextStatus,
+      salesPolicy.customerTaxonomy.stages
+    ) ?? existing?.customerStage ?? defaultCustomerStage ?? null;
 
     const totalSpent = this.hasOwn(row, 'totalSpent')
       ? this.parseOptionalDecimal(row.totalSpent, 'totalSpent')
@@ -1420,7 +1437,7 @@ export class CrmService {
           consentStatus: this.hasOwn(row, 'consentStatus') ? (this.optionalString(row.consentStatus) ?? null) : undefined,
           segment: this.hasOwn(row, 'segment') ? (this.optionalString(row.segment) ?? null) : undefined,
           source: this.hasOwn(row, 'source')
-            ? (normalizedTaxonomy.source ?? null)
+            ? (normalizedTaxonomy.source ?? defaultCustomerSource ?? null)
             : undefined,
           needsSummary: this.hasOwn(row, 'needsSummary') ? (this.optionalString(row.needsSummary) ?? null) : undefined,
           totalSpent: this.hasOwn(row, 'totalSpent') ? totalSpent : undefined,
@@ -1465,7 +1482,7 @@ export class CrmService {
         ownerStaffId: this.optionalString(row.ownerStaffId) ?? null,
         consentStatus: this.optionalString(row.consentStatus) ?? null,
         segment: this.optionalString(row.segment) ?? null,
-        source: normalizedTaxonomy.source ?? null,
+        source: normalizedTaxonomy.source ?? defaultCustomerSource ?? null,
         needsSummary: this.optionalString(row.needsSummary) ?? null,
         totalSpent: totalSpent ?? null,
         totalOrders: totalOrders ?? 0,
@@ -2490,12 +2507,53 @@ export class CrmService {
 
   private resolveCustomerStageForStatus(
     inputStage: string | null | undefined,
-    status: CustomerCareStatus
+    status: CustomerCareStatus,
+    allowedStages: string[]
   ) {
     if (status === CustomerCareStatus.DONG_Y_CHUYEN_THANH_KH) {
-      return 'DA_MUA';
+      return inputStage ?? this.resolveFinalizedCustomerStage(allowedStages);
     }
     return inputStage ?? undefined;
+  }
+
+  private resolveDefaultCustomerStage(stages: string[]) {
+    for (const candidate of stages) {
+      const normalized = this.cleanString(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveFinalizedCustomerStage(stages: string[]) {
+    for (let index = stages.length - 1; index >= 0; index -= 1) {
+      const normalized = this.cleanString(stages[index]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveDefaultCustomerSource(sources: string[]) {
+    for (const candidate of sources) {
+      const normalized = this.cleanString(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return undefined;
+  }
+
+  private resolvePurchasedCustomerTag(customerTags: string[]) {
+    for (const candidate of customerTags) {
+      const normalized = this.cleanString(candidate).toLowerCase().replace(/[\s-]+/g, '_');
+      if (normalized === 'da_mua') {
+        return this.cleanString(candidate).toLowerCase();
+      }
+    }
+    return undefined;
   }
 
   private normalizeServiceContractProductTypeFilterValue(input: string | undefined) {

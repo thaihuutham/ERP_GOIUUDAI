@@ -178,11 +178,6 @@ const STATUS_OPTIONS: GenericStatus[] = ['ALL', 'ACTIVE', 'INACTIVE', 'DRAFT', '
 const PAYMENT_STATUS_OPTIONS = ['ALL', 'DA_GUI', 'DA_THANH_TOAN', 'HUY'] as const;
 const CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.customer-column-settings.v1';
 const CUSTOMER_IMPORT_MAX_ROWS = 400;
-const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
-const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
-const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
-const DEFAULT_INTERACTION_TAG_OPTIONS = ['quan_tam', 'can_cham_soc', 'da_dat_lich'];
-const DEFAULT_INTERACTION_RESULT_TAG_OPTIONS = ['quan_tam', 'da_mua', 'khong_phan_hoi'];
 
 const CUSTOMER_COLUMN_DEFINITIONS: CustomerColumnDefinition[] = [
   { key: 'code', label: 'Mã KH' },
@@ -483,11 +478,11 @@ export function CrmOperationsBoard() {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [dedupCandidates, setDedupCandidates] = useState<DedupCandidate[]>([]);
-  const [stageOptions, setStageOptions] = useState<string[]>(DEFAULT_STAGE_OPTIONS);
-  const [sourceOptions, setSourceOptions] = useState<string[]>(DEFAULT_SOURCE_OPTIONS);
-  const [customerTagOptions, setCustomerTagOptions] = useState<string[]>(DEFAULT_CUSTOMER_TAG_OPTIONS);
-  const [interactionTagOptions, setInteractionTagOptions] = useState<string[]>(DEFAULT_INTERACTION_TAG_OPTIONS);
-  const [interactionResultTagOptions, setInteractionResultTagOptions] = useState<string[]>(DEFAULT_INTERACTION_RESULT_TAG_OPTIONS);
+  const [stageOptions, setStageOptions] = useState<string[]>([]);
+  const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  const [customerTagOptions, setCustomerTagOptions] = useState<string[]>([]);
+  const [interactionTagOptions, setInteractionTagOptions] = useState<string[]>([]);
+  const [interactionResultTagOptions, setInteractionResultTagOptions] = useState<string[]>([]);
 
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState('');
@@ -502,11 +497,11 @@ export function CrmOperationsBoard() {
     fullName: '',
     phone: '',
     email: '',
-    customerStage: DEFAULT_STAGE_OPTIONS[0] ?? 'MOI',
+    customerStage: '',
     ownerStaffId: '',
     consentStatus: '',
     segment: '',
-    source: DEFAULT_SOURCE_OPTIONS[0] ?? '',
+    source: '',
     status: 'ACTIVE',
     tags: []
   });
@@ -797,13 +792,11 @@ export function CrmOperationsBoard() {
       const customerTags = payload.tagRegistry?.customerTags?.filter(Boolean) ?? [];
       const interactionTags = payload.tagRegistry?.interactionTags?.filter(Boolean) ?? [];
       const interactionResultTags = payload.tagRegistry?.interactionResultTags?.filter(Boolean) ?? [];
-      const nextStages = stages.length > 0 ? stages : DEFAULT_STAGE_OPTIONS;
-      const nextSources = sources.length > 0 ? sources : DEFAULT_SOURCE_OPTIONS;
-      const nextCustomerTags = customerTags.length > 0 ? customerTags : DEFAULT_CUSTOMER_TAG_OPTIONS;
-      const nextInteractionTags = interactionTags.length > 0 ? interactionTags : DEFAULT_INTERACTION_TAG_OPTIONS;
-      const nextInteractionResultTags = interactionResultTags.length > 0
-        ? interactionResultTags
-        : DEFAULT_INTERACTION_RESULT_TAG_OPTIONS;
+      const nextStages = stages;
+      const nextSources = sources;
+      const nextCustomerTags = customerTags;
+      const nextInteractionTags = interactionTags;
+      const nextInteractionResultTags = interactionResultTags;
 
       setStageOptions(nextStages);
       setSourceOptions(nextSources);
@@ -828,11 +821,11 @@ export function CrmOperationsBoard() {
       }));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không tải được taxonomy CRM.');
-      setStageOptions(DEFAULT_STAGE_OPTIONS);
-      setSourceOptions(DEFAULT_SOURCE_OPTIONS);
-      setCustomerTagOptions(DEFAULT_CUSTOMER_TAG_OPTIONS);
-      setInteractionTagOptions(DEFAULT_INTERACTION_TAG_OPTIONS);
-      setInteractionResultTagOptions(DEFAULT_INTERACTION_RESULT_TAG_OPTIONS);
+      setStageOptions([]);
+      setSourceOptions([]);
+      setCustomerTagOptions([]);
+      setInteractionTagOptions([]);
+      setInteractionResultTagOptions([]);
     }
   };
 
@@ -1707,6 +1700,9 @@ export function CrmOperationsBoard() {
             <div className="field">
               <label htmlFor="crm-create-stage">Stage</label>
               <select id="crm-create-stage" value={createCustomerForm.customerStage} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, customerStage: event.target.value }))}>
+                {stageOptions.length === 0 ? (
+                  <option value="">Chưa cấu hình giai đoạn trong Settings Center</option>
+                ) : null}
                 {stageOptions.map((stage) => (
                   <option key={`create-stage-${stage}`} value={stage}>
                     {formatTaxonomyLabel(stage)}
@@ -1729,6 +1725,9 @@ export function CrmOperationsBoard() {
             <div className="field">
               <label htmlFor="crm-create-source">Source</label>
               <select id="crm-create-source" value={createCustomerForm.source} onChange={(event) => setCreateCustomerForm((prev) => ({ ...prev, source: event.target.value }))}>
+                {sourceOptions.length === 0 ? (
+                  <option value="">Chưa cấu hình nguồn trong Settings Center</option>
+                ) : null}
                 {sourceOptions.map((source) => (
                   <option key={`create-source-${source}`} value={source}>
                     {formatTaxonomyLabel(source)}

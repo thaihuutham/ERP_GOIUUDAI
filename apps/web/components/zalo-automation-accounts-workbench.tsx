@@ -18,6 +18,8 @@ type ZaloAccount = {
   displayName?: string | null;
   zaloUid?: string | null;
   phone?: string | null;
+  aiAutoReplyEnabled?: boolean | null;
+  aiAutoReplyTakeoverMinutes?: number | null;
   ownerUserId?: string | null;
   status?: string | null;
   createdAt?: string | null;
@@ -151,6 +153,7 @@ export function ZaloAutomationAccountsWorkbench() {
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
   const [syncingAccountId, setSyncingAccountId] = useState('');
+  const [togglingAutoReplyAccountId, setTogglingAutoReplyAccountId] = useState('');
 
   const [accountFilterQ, setAccountFilterQ] = useState('');
   const [accountFilterType, setAccountFilterType] = useState<ZaloAccountType | 'ALL'>('ALL');
@@ -655,6 +658,44 @@ export function ZaloAutomationAccountsWorkbench() {
     }
   };
 
+  const onToggleAutoReply = async (account: ZaloAccount, enabled: boolean) => {
+    clearNotice();
+    if (!canUpdate) {
+      setErrorMessage('Vai trò hiện tại không có quyền cập nhật tài khoản.');
+      return;
+    }
+    if (account.accountType !== 'PERSONAL') {
+      setErrorMessage('Chỉ tài khoản Zalo cá nhân mới hỗ trợ auto-reply AI.');
+      return;
+    }
+
+    setTogglingAutoReplyAccountId(account.id);
+    try {
+      await apiRequest(`/zalo/accounts/${account.id}`, {
+        method: 'PATCH',
+        body: {
+          aiAutoReplyEnabled: enabled
+        }
+      });
+      setAccounts((prev) =>
+        prev.map((item) =>
+          item.id === account.id
+            ? { ...item, aiAutoReplyEnabled: enabled }
+            : item
+        )
+      );
+      setResultMessage(
+        enabled
+          ? `Đã bật AI auto-reply cho ${account.displayName || account.id}.`
+          : `Đã tắt AI auto-reply cho ${account.displayName || account.id}.`
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể cập nhật trạng thái AI auto-reply.');
+    } finally {
+      setTogglingAutoReplyAccountId('');
+    }
+  };
+
   const onSoftDelete = async (account: ZaloAccount) => {
     clearNotice();
     if (!canDelete) {
@@ -859,6 +900,13 @@ export function ZaloAutomationAccountsWorkbench() {
                         <td>{account.phone || '--'}</td>
                         <td>
                           <Badge variant={statusToBadge(account.status)}>{account.status || '--'}</Badge>
+                          {account.accountType === 'PERSONAL' ? (
+                            <div style={{ marginTop: '0.35rem' }}>
+                              <Badge variant={account.aiAutoReplyEnabled ? 'success' : 'neutral'}>
+                                AI: {account.aiAutoReplyEnabled ? 'ON' : 'OFF'}
+                              </Badge>
+                            </div>
+                          ) : null}
                         </td>
                         <td>
                           <div className="action-buttons">
@@ -881,6 +929,16 @@ export function ZaloAutomationAccountsWorkbench() {
                                 Sửa tên hiển thị
                               </button>
                             ) : null}
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => void onToggleAutoReply(account, !Boolean(account.aiAutoReplyEnabled))}
+                              disabled={account.accountType !== 'PERSONAL' || togglingAutoReplyAccountId === account.id}
+                            >
+                              {togglingAutoReplyAccountId === account.id
+                                ? 'Đang cập nhật...'
+                                : (account.aiAutoReplyEnabled ? 'Tắt AI auto-reply' : 'Bật AI auto-reply')}
+                            </button>
                             <button
                               type="button"
                               className="btn btn-ghost btn-sm"

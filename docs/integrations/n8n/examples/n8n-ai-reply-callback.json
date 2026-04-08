@@ -1,0 +1,19 @@
+{
+  "eventId": "6b3d2f56-3e96-4f1f-8d70-0562f93f1c4f",
+  "replyText": "Goi bao hiem nay co ho tro nam vien noi tru theo han muc quy dinh. Em gui anh/chi bang quyen loi chi tiet ngay ben duoi de de so sanh.",
+  "confidence": 0.86,
+  "workflowKey": "wf_insurance_v1",
+  "agentKey": "agent_insurance_v1",
+  "tokenUsage": {
+    "prompt_tokens": 514,
+    "completion_tokens": 122,
+    "total_tokens": 636
+  },
+  "latencyMs": 1790,
+  "safetyFlags": {
+    "knowledgeUsed": true,
+    "errorReason": null
+  },
+  "shouldHandoff": false
+}
+

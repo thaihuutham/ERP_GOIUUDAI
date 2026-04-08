@@ -9,8 +9,6 @@ const ACTION_PRESETS: Record<string, ActionPreset[]> = {
         fullName: 'Khách lẻ Retail',
         phone: '0909000111',
         segment: 'Khách lẻ',
-        source: 'Cửa hàng',
-        customerStage: 'MOI',
         tags: 'moi, khach_le',
         status: 'ACTIVE'
       }
@@ -23,8 +21,6 @@ const ACTION_PRESETS: Record<string, ActionPreset[]> = {
         phone: '0909555777',
         email: 'procurement@minhlong.vn',
         segment: 'Doanh nghiệp',
-        source: 'Giới thiệu',
-        customerStage: 'QUAN_TAM',
         tags: 'b2b, uu_tien',
         status: 'ACTIVE'
       }
@@ -293,16 +289,14 @@ const ACTION_PRESETS: Record<string, ActionPreset[]> = {
       label: 'Tư vấn qua Zalo',
       values: {
         interactionType: 'TU_VAN',
-        channel: 'ZALO',
-        resultTag: 'quan_tam'
+        channel: 'ZALO'
       }
     },
     {
       label: 'Nhắc thanh toán',
       values: {
         interactionType: 'NHAC_THANH_TOAN',
-        channel: 'CALL',
-        resultTag: 'can_goi_lai'
+        channel: 'CALL'
       }
     }
   ],

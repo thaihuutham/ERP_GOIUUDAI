@@ -202,6 +202,14 @@ enum ConversationSenderType {
   SYSTEM
 }
 
+enum ConversationMessageOrigin {
+  EXTERNAL
+  USER
+  CAMPAIGN
+  AI
+  SYSTEM
+}
+
 enum ConversationEvaluationVerdict {
   PASS
   FAIL
@@ -366,6 +374,26 @@ enum CustomFieldWidgetChartType {
   BAR
   LINE
   PIE
+}
+
+enum AiConversationJobStatus {
+  QUEUED
+  DISPATCHING
+  DISPATCHED
+  CALLBACK_RECEIVED
+  REPLIED
+  RETRIED
+  FAILED
+  HANDOFF
+  SKIPPED_TAKEOVER
+  SKIPPED_DISABLED
+}
+
+enum AiConversationOutboxStatus {
+  PENDING
+  SENT
+  FAILED
+  DEAD
 }
 
 model Tenant {
@@ -2778,6 +2806,8 @@ model ZaloAccount {
   displayName    String?
   zaloUid        String?
   phone          String?
+  aiAutoReplyEnabled Boolean @default(false)
+  aiAutoReplyTakeoverMinutes Int @default(5)
   status         String   @default("DISCONNECTED")
   ownerUserId    String?
   sessionData    Json?
@@ -2972,6 +3002,133 @@ model ZaloCampaignMessageAttempt {
   @@map("zalo_campaign_message_attempts")
 }
 
+model AiIndustry {
+  id               String   @id @default(cuid())
+  tenant_Id        String
+  industryKey      String
+  name             String
+  description      String?
+  knowledgeSpaceRef String?
+  piiMaskEnabled   Boolean  @default(true)
+  piiMaskConfigJson Json?
+  isActive         Boolean  @default(true)
+  metadataJson     Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  channelMappings AiRoutingChannelAccount[]
+  industryBinding AiIndustryBinding[]
+  jobs            AiConversationJob[]
+
+  @@unique([tenant_Id, industryKey])
+  @@index([tenant_Id])
+  @@index([tenant_Id, isActive])
+  @@map("ai_industries")
+}
+
+model AiRoutingChannelAccount {
+  id               String              @id @default(cuid())
+  tenant_Id        String
+  channel          ConversationChannel
+  channelAccountId String
+  industryId       String
+  isActive         Boolean             @default(true)
+  metadataJson     Json?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  industry AiIndustry @relation(fields: [industryId], references: [id], onDelete: Restrict)
+
+  @@unique([tenant_Id, channel, channelAccountId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, industryId, isActive])
+  @@index([tenant_Id, channel, isActive])
+  @@map("ai_routing_channel_accounts")
+}
+
+model AiIndustryBinding {
+  id            String   @id @default(cuid())
+  tenant_Id     String
+  industryId    String
+  workflowKey   String
+  agentKey      String?
+  webhookPath   String?
+  isActive      Boolean  @default(true)
+  metadataJson  Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  industry AiIndustry @relation(fields: [industryId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, industryId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, isActive])
+  @@map("ai_industry_bindings")
+}
+
+model AiConversationJob {
+  id                    String                 @id @default(cuid())
+  tenant_Id             String
+  eventId               String
+  threadId              String
+  channel               ConversationChannel
+  channelAccountId      String?
+  customerMessageId     String?
+  industryId            String?
+  industryKeySnapshot   String?
+  workflowKeySnapshot   String?
+  agentKeySnapshot      String?
+  routingMode           String                 @default("legacy")
+  status                AiConversationJobStatus @default(QUEUED)
+  attemptCount          Int                    @default(0)
+  nextRetryAt           DateTime?
+  requestPayloadJson    Json?
+  callbackPayloadJson   Json?
+  resultMetadataJson    Json?
+  replyMessageId        String?
+  lastErrorMessage      String?
+  queuedAt              DateTime               @default(now())
+  dispatchedAt          DateTime?
+  callbackReceivedAt    DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  thread   ConversationThread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  industry AiIndustry?           @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  outbox   AiConversationOutbox[]
+
+  @@unique([tenant_Id, eventId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, threadId, createdAt])
+  @@index([tenant_Id, status, nextRetryAt])
+  @@index([tenant_Id, channel, channelAccountId, createdAt])
+  @@map("ai_conversation_jobs")
+}
+
+model AiConversationOutbox {
+  id               String                   @id @default(cuid())
+  tenant_Id        String
+  jobId            String
+  eventId          String
+  payloadJson      Json
+  status           AiConversationOutboxStatus @default(PENDING)
+  attemptNo        Int                      @default(0)
+  nextRetryAt      DateTime?
+  lastErrorMessage String?
+  dispatchedAt     DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  job AiConversationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, eventId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, status, nextRetryAt, createdAt])
+  @@index([tenant_Id, jobId, createdAt])
+  @@map("ai_conversation_outbox")
+}
+
 model ConversationThread {
   id                String   @id @default(cuid())
   tenant_Id         String
@@ -2991,6 +3148,7 @@ model ConversationThread {
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   messages       ConversationMessage[]
   evaluations    ConversationEvaluation[]
+  aiJobs         AiConversationJob[]
 
   @@unique([tenant_Id, channel, channelAccountId, externalThreadId])
   @@index([tenant_Id])
@@ -3004,10 +3162,12 @@ model ConversationMessage {
   threadId          String
   externalMessageId String?
   senderType        ConversationSenderType
+  origin            ConversationMessageOrigin @default(EXTERNAL)
   senderExternalId  String?
   senderName        String?
   content           String?
   contentType       String   @default("TEXT")
+  metadataJson      Json?
   attachmentsJson   Json?
   sentAt            DateTime
   isDeleted         Boolean  @default(false)
@@ -3021,6 +3181,7 @@ model ConversationMessage {
   @@unique([tenant_Id, threadId, externalMessageId])
   @@index([tenant_Id])
   @@index([tenant_Id, threadId, sentAt])
+  @@index([tenant_Id, threadId, origin, sentAt])
 }
 
 model ConversationEvaluationJob {

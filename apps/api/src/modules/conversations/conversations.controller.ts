@@ -38,6 +38,11 @@ export class ConversationsController {
     return this.conversationsService.listMessages(threadId, query);
   }
 
+  @Post('threads/:id/mark-read')
+  markThreadAsRead(@Param('id') threadId: string) {
+    return this.conversationsService.markThreadAsRead(threadId);
+  }
+
   @Post('threads/:id/messages')
   appendMessage(@Param('id') threadId: string, @Body() body: Record<string, unknown>) {
     return this.conversationsService.appendMessage(threadId, body);

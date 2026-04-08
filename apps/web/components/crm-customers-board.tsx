@@ -357,9 +357,6 @@ const CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS = [
   'updatedAt',
 ];
 const CUSTOMER_TABLE_PAGE_SIZE = 25;
-const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
-const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
-const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
 const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
 const CUSTOMER_FILTER_OPERATOR_LABELS: Record<CustomerFilterOperator, string> = {
   contains: 'Chứa',
@@ -834,9 +831,9 @@ export function CrmCustomersBoard() {
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [stageOptions, setStageOptions] = useState<string[]>(DEFAULT_STAGE_OPTIONS);
-  const [sourceOptions, setSourceOptions] = useState<string[]>(DEFAULT_SOURCE_OPTIONS);
-  const [customerTagOptions, setCustomerTagOptions] = useState<string[]>(DEFAULT_CUSTOMER_TAG_OPTIONS);
+  const [stageOptions, setStageOptions] = useState<string[]>([]);
+  const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  const [customerTagOptions, setCustomerTagOptions] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<CustomerStatusFilter>('ALL');
   const [tableSortBy, setTableSortBy] = useState('updatedAt');
@@ -874,8 +871,8 @@ export function CrmCustomersBoard() {
     fullName: '',
     phone: '',
     email: '',
-    customerStage: DEFAULT_STAGE_OPTIONS[0],
-    source: DEFAULT_SOURCE_OPTIONS[0],
+    customerStage: '',
+    source: '',
     segment: '',
     tags: []
   });
@@ -1029,9 +1026,9 @@ export function CrmCustomersBoard() {
       const stages = payload.customerTaxonomy?.stages?.filter(Boolean) ?? [];
       const sources = payload.customerTaxonomy?.sources?.filter(Boolean) ?? [];
       const customerTags = payload.tagRegistry?.customerTags?.filter(Boolean) ?? [];
-      const nextStages = stages.length > 0 ? stages : DEFAULT_STAGE_OPTIONS;
-      const nextSources = sources.length > 0 ? sources : DEFAULT_SOURCE_OPTIONS;
-      const nextCustomerTags = customerTags.length > 0 ? customerTags : DEFAULT_CUSTOMER_TAG_OPTIONS;
+      const nextStages = stages;
+      const nextSources = sources;
+      const nextCustomerTags = customerTags;
       setStageOptions(nextStages);
       setSourceOptions(nextSources);
       setCustomerTagOptions(nextCustomerTags);
@@ -1047,7 +1044,9 @@ export function CrmCustomersBoard() {
       }));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải taxonomy CRM');
-      setCustomerTagOptions(DEFAULT_CUSTOMER_TAG_OPTIONS);
+      setStageOptions([]);
+      setSourceOptions([]);
+      setCustomerTagOptions([]);
     }
   };
 
@@ -1320,8 +1319,8 @@ export function CrmCustomersBoard() {
       fullName: '',
       phone: '',
       email: '',
-      customerStage: stageOptions[0] ?? DEFAULT_STAGE_OPTIONS[0] ?? '',
-      source: sourceOptions[0] ?? DEFAULT_SOURCE_OPTIONS[0] ?? '',
+      customerStage: stageOptions[0] ?? '',
+      source: sourceOptions[0] ?? '',
       segment: '',
       tags: []
     });
@@ -1609,6 +1608,20 @@ export function CrmCustomersBoard() {
   );
 
   const detailCustomer = customerDetail?.customer ?? selectedCustomer;
+  const detailStageOptions = useMemo(() => {
+    const current = String(detailForm.customerStage ?? '').trim();
+    if (current && !stageOptions.includes(current)) {
+      return [current, ...stageOptions];
+    }
+    return stageOptions;
+  }, [detailForm.customerStage, stageOptions]);
+  const detailSourceOptions = useMemo(() => {
+    const current = String(detailForm.source ?? '').trim();
+    if (current && !sourceOptions.includes(current)) {
+      return [current, ...sourceOptions];
+    }
+    return sourceOptions;
+  }, [detailForm.source, sourceOptions]);
   const contractSummary = customerDetail?.contractSummary ?? null;
   const recentContracts = customerDetail?.recentContracts ?? [];
   const customerVehicles = customerDetail?.vehicles ?? [];
@@ -2006,7 +2019,7 @@ export function CrmCustomersBoard() {
             onChange={(event) =>
               setCustomerBulkForm((prev) => ({ ...prev, source: event.target.value }))
             }
-            placeholder="ONLINE / REFERRAL / ..."
+            placeholder="Nhập theo source taxonomy trong Settings Center"
           />
           <datalist id="crm-customer-source-options">
             {sourceOptions.map((value) => (
@@ -2035,7 +2048,7 @@ export function CrmCustomersBoard() {
             onChange={(event) =>
               setCustomerBulkForm((prev) => ({ ...prev, tagsInput: event.target.value }))
             }
-            placeholder="vip, da_mua"
+            placeholder="Nhập theo customer tags trong Settings Center"
           />
         </div>
       ) : null}
@@ -2595,7 +2608,7 @@ export function CrmCustomersBoard() {
                     value={detailForm.customerStage}
                     onChange={(event) => setDetailForm((prev) => ({ ...prev, customerStage: event.target.value }))}
                   >
-                    {stageOptions.map((stage) => (
+                    {detailStageOptions.map((stage) => (
                       <option key={stage} value={stage}>
                         {formatTaxonomyLabel(stage)}
                       </option>
@@ -2616,7 +2629,7 @@ export function CrmCustomersBoard() {
                     value={detailForm.source}
                     onChange={(event) => setDetailForm((prev) => ({ ...prev, source: event.target.value }))}
                   >
-                    {sourceOptions.map((source) => (
+                    {detailSourceOptions.map((source) => (
                       <option key={source} value={source}>
                         {formatTaxonomyLabel(source)}
                       </option>
@@ -3044,6 +3057,9 @@ export function CrmCustomersBoard() {
               value={createForm.customerStage}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, customerStage: event.target.value }))}
             >
+              {stageOptions.length === 0 ? (
+                <option value="">Chưa cấu hình giai đoạn trong Settings Center</option>
+              ) : null}
               {stageOptions.map((stage) => (
                 <option key={stage} value={stage}>
                   {formatTaxonomyLabel(stage)}
@@ -3057,6 +3073,9 @@ export function CrmCustomersBoard() {
               value={createForm.source}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, source: event.target.value }))}
             >
+              {sourceOptions.length === 0 ? (
+                <option value="">Chưa cấu hình nguồn trong Settings Center</option>
+              ) : null}
               {sourceOptions.map((source) => (
                 <option key={source} value={source}>
                   {formatTaxonomyLabel(source)}

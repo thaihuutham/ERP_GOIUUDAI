@@ -1,0 +1,237 @@
+{
+  "name": "ERP AI Router V1 (Industry Switch + ERP Callback)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "erp-chat-events",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-erp-chat-events",
+      "name": "Webhook ERP Chat Events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "erp-ai-router-v1-chat-events"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\nconst body = item.body || {};\nconst secret = String($env.N8N_ERP_OUTBOUND_HMAC_SECRET || '').trim();\nif (!secret) throw new Error('Missing N8N_ERP_OUTBOUND_HMAC_SECRET');\nconst incomingRaw = String(headers['x-erp-signature'] || headers['X-ERP-Signature'] || '').trim();\nconst incoming = incomingRaw.replace(/^sha256=/i, '');\nif (!incoming) throw new Error('Missing x-erp-signature');\nconst normalizedBody = JSON.stringify(body);\nconst expected = crypto.createHmac('sha256', secret).update(normalizedBody).digest('hex');\nconst expectedBuf = Buffer.from(expected, 'hex');\nconst incomingBuf = Buffer.from(incoming, 'hex');\nif (!expectedBuf.length || expectedBuf.length !== incomingBuf.length || !crypto.timingSafeEqual(expectedBuf, incomingBuf)) {\n  throw new Error('Invalid x-erp-signature');\n}\nconst eventId = String(body.eventId || '').trim();\nif (!eventId) throw new Error('Missing eventId');\nconst staticData = getWorkflowStaticData('global');\nif (!staticData.aiRouterSeen) staticData.aiRouterSeen = {};\nconst now = Date.now();\nfor (const [key, value] of Object.entries(staticData.aiRouterSeen)) {\n  if (typeof value === 'number' && now - value > 3 * 24 * 60 * 60 * 1000) {\n    delete staticData.aiRouterSeen[key];\n  }\n}\nif (staticData.aiRouterSeen[eventId]) return [];\nstaticData.aiRouterSeen[eventId] = now;\nconst industryKey = String(body.industryKey || 'default').trim().toLowerCase();\nreturn [{ json: { eventId, industryKey, payload: body } }];"
+      },
+      "id": "code-verify-idempotency",
+      "name": "Verify Signature + Idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{$json.industryKey}}",
+        "rules": {
+          "rules": [
+            {
+              "operation": "equal",
+              "value2": "bao-hiem"
+            },
+            {
+              "operation": "equal",
+              "value2": "vien-thong"
+            },
+            {
+              "operation": "equal",
+              "value2": "digital-service"
+            }
+          ]
+        },
+        "fallbackOutput": 3
+      },
+      "id": "switch-industry-key",
+      "name": "Switch Industry Key",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const out = items[0];\nout.json.industryConfig = {\n  industryKey: 'bao-hiem',\n  agentKey: 'agent_insurance_v1',\n  workflowKey: 'wf_insurance_v1',\n  model: String($env.AI_MODEL_BAO_HIEM || $env.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini'),\n  systemPrompt: 'Bạn là trợ lý tư vấn ngành bảo hiểm. Trả lời ngắn gọn, đúng nghiệp vụ, nêu rõ quyền lợi và bước tiếp theo.',\n};\nreturn [out];"
+      },
+      "id": "cfg-bao-hiem",
+      "name": "Cfg Bao Hiem",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const out = items[0];\nout.json.industryConfig = {\n  industryKey: 'vien-thong',\n  agentKey: 'agent_telecom_v1',\n  workflowKey: 'wf_telecom_v1',\n  model: String($env.AI_MODEL_VIEN_THONG || $env.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini'),\n  systemPrompt: 'Bạn là trợ lý tư vấn ngành viễn thông. Trả lời rõ gói cước, điều kiện áp dụng và hành động tiếp theo.',\n};\nreturn [out];"
+      },
+      "id": "cfg-vien-thong",
+      "name": "Cfg Vien Thong",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const out = items[0];\nout.json.industryConfig = {\n  industryKey: 'digital-service',\n  agentKey: 'agent_digital_v1',\n  workflowKey: 'wf_digital_v1',\n  model: String($env.AI_MODEL_DIGITAL || $env.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini'),\n  systemPrompt: 'Bạn là trợ lý tư vấn dịch vụ số. Ưu tiên giải pháp nhanh, rõ chi phí và bước triển khai.',\n};\nreturn [out];"
+      },
+      "id": "cfg-digital-service",
+      "name": "Cfg Digital Service",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const out = items[0];\nout.json.industryConfig = {\n  industryKey: 'default',\n  agentKey: 'agent_default_v1',\n  workflowKey: 'wf_default_v1',\n  model: String($env.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini'),\n  systemPrompt: 'Bạn là trợ lý CSKH ERP. Trả lời an toàn, lịch sự, bám sát dữ liệu hội thoại.',\n};\nreturn [out];"
+      },
+      "id": "cfg-default",
+      "name": "Cfg Default",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst rec = $input.first().json || {};\nconst payload = rec.payload || {};\nconst cfg = rec.industryConfig || {};\nconst startedAt = Date.now();\n\nconst trimRightSlash = (value) => (value.endsWith('/') ? value.slice(0, -1) : value);\nconst context = payload.context || {};\nconst transcript = Array.isArray(context.transcript) ? context.transcript.join('\\n') : '';\nconst latestMessages = Array.isArray(context.latestMessages) ? context.latestMessages : [];\nconst customer = context.customer || {};\n\nlet knowledgeSnippet = '';\nconst knowledgeBase = trimRightSlash(String($env.KNOWLEDGE_SERVICE_URL || ''));\nconst knowledgeSpaceRef = String(payload.knowledgeSpaceRef || '').trim();\nif (knowledgeBase && knowledgeSpaceRef) {\n  try {\n    const question = latestMessages.length > 0\n      ? String(latestMessages[latestMessages.length - 1].content || '').slice(0, 500)\n      : '';\n    const kRes = await fetch(knowledgeBase + '/retrieve', {\n      method: 'POST',\n      headers: { 'content-type': 'application/json' },\n      body: JSON.stringify({ spaceRef: knowledgeSpaceRef, query: question, topK: 3 }),\n    });\n    if (kRes.ok) {\n      const kJson = await kRes.json();\n      if (Array.isArray(kJson.items)) {\n        knowledgeSnippet = kJson.items\n          .map((x) => String(x.content || '').trim())\n          .filter(Boolean)\n          .join('\\n\\n')\n          .slice(0, 4000);\n      } else if (typeof kJson.summary === 'string') {\n        knowledgeSnippet = kJson.summary.slice(0, 4000);\n      }\n    }\n  } catch (err) {\n    // Do not hard-fail knowledge lookup.\n  }\n}\n\nlet replyText = '';\nlet tokenUsage = null;\nlet shouldHandoff = false;\nlet errorReason = '';\n\ntry {\n  const aiBase = trimRightSlash(String($env.AI_OPENAI_COMPAT_BASE_URL || ''));\n  const aiKey = String($env.AI_OPENAI_COMPAT_API_KEY || '').trim();\n  const model = String(cfg.model || $env.AI_OPENAI_COMPAT_MODEL || 'gpt-4o-mini');\n  if (!aiBase || !aiKey) throw new Error('Missing AI_OPENAI_COMPAT config');\n\n  const userPrompt = [\n    'Industry: ' + String(cfg.industryKey || payload.industryKey || 'default'),\n    'ThreadId: ' + String(payload.threadId || ''),\n    'Customer: ' + String(customer.fullName || ''),\n    'Recent transcript:',\n    transcript,\n    '',\n    'Knowledge:',\n    knowledgeSnippet || '(none)',\n  ].join('\\n');\n\n  const aiRes = await fetch(aiBase + '/chat/completions', {\n    method: 'POST',\n    headers: {\n      'content-type': 'application/json',\n      authorization: 'Bearer ' + aiKey,\n    },\n    body: JSON.stringify({\n      model,\n      messages: [\n        { role: 'system', content: String(cfg.systemPrompt || 'Bạn là trợ lý CSKH chuyên nghiệp.') },\n        { role: 'user', content: userPrompt },\n      ],\n      temperature: 0.2,\n      max_tokens: 400,\n    }),\n  });\n\n  if (!aiRes.ok) throw new Error('AI_HTTP_' + aiRes.status);\n  const aiJson = await aiRes.json();\n  replyText = String(aiJson.choices?.[0]?.message?.content || '').trim();\n  tokenUsage = aiJson.usage || null;\n  if (!replyText) throw new Error('EMPTY_AI_REPLY');\n} catch (err) {\n  shouldHandoff = true;\n  errorReason = String(err?.message || err || 'AI_CALL_FAILED');\n}\n\nconst callbackPayload = {\n  eventId: String(payload.eventId || rec.eventId || ''),\n  replyText: shouldHandoff ? null : replyText,\n  confidence: shouldHandoff ? null : 0.72,\n  workflowKey: String(payload.workflowKey || cfg.workflowKey || '') || null,\n  agentKey: String(cfg.agentKey || payload.agentKey || '') || null,\n  tokenUsage,\n  latencyMs: Date.now() - startedAt,\n  safetyFlags: {\n    knowledgeUsed: Boolean(knowledgeSnippet),\n    errorReason: errorReason || null,\n  },\n  shouldHandoff,\n};\n\nconst erpBase = trimRightSlash(String($env.ERP_API_BASE_URL || ''));\nconst callbackSecret = String($env.N8N_ERP_CALLBACK_HMAC_SECRET || '').trim();\nif (!erpBase) throw new Error('Missing ERP_API_BASE_URL');\nif (!callbackSecret) throw new Error('Missing N8N_ERP_CALLBACK_HMAC_SECRET');\n\nconst callbackBody = JSON.stringify(callbackPayload);\nconst callbackSig = crypto.createHmac('sha256', callbackSecret).update(callbackBody).digest('hex');\nconst cbRes = await fetch(erpBase + '/api/v1/integrations/n8n/ai-replies', {\n  method: 'POST',\n  headers: {\n    'content-type': 'application/json',\n    'x-n8n-signature': 'sha256=' + callbackSig,\n  },\n  body: callbackBody,\n});\nconst cbText = await cbRes.text();\n\nreturn [{\n  json: {\n    eventId: callbackPayload.eventId,\n    industryKey: rec.industryKey,\n    callbackStatus: cbRes.status,\n    callbackBody: cbText.slice(0, 1000),\n    shouldHandoff,\n    errorReason: errorReason || null,\n  },\n}];"
+      },
+      "id": "code-execute-agent-callback",
+      "name": "Execute Agent + Callback ERP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1310,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook ERP Chat Events": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature + Idempotency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature + Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Switch Industry Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Industry Key": {
+      "main": [
+        [
+          {
+            "node": "Cfg Bao Hiem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cfg Vien Thong",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cfg Digital Service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cfg Default",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cfg Bao Hiem": {
+      "main": [
+        [
+          {
+            "node": "Execute Agent + Callback ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cfg Vien Thong": {
+      "main": [
+        [
+          {
+            "node": "Execute Agent + Callback ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cfg Digital Service": {
+      "main": [
+        [
+          {
+            "node": "Execute Agent + Callback ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cfg Default": {
+      "main": [
+        [
+          {
+            "node": "Execute Agent + Callback ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "e88f8c7a-3df6-4d0b-a4bb-erp-ai-router-v1",
+  "active": false
+}

@@ -1,0 +1,57 @@
+{
+  "eventId": "6b3d2f56-3e96-4f1f-8d70-0562f93f1c4f",
+  "threadId": "cm8xyzthread001",
+  "customerMessageId": "cm8xyzmsg001",
+  "channel": "ZALO_PERSONAL",
+  "channelAccountId": "zalo_personal_account_001",
+  "externalThreadId": "1234567890123456789",
+  "industryKey": "bao-hiem",
+  "workflowKey": "wf_insurance_v1",
+  "agentKey": "agent_insurance_v1",
+  "knowledgeSpaceRef": "kb://insurance/default",
+  "routingMode": "n8n",
+  "takeoverPolicy": {
+    "mode": "manual_takeover_pause",
+    "pauseSource": "thread.metadata.zaloAutoReply.pauseUntil",
+    "recheckBeforeSend": true
+  },
+  "context": {
+    "totalMessageCount": 37,
+    "historySummary": "Conversation truncated: included 20 latest messages out of 37 total messages.",
+    "transcript": [
+      "[08:10] Khach hang: Chao shop, goi bao hiem nay co bao gom nam vien khong?",
+      "[08:11] Staff: Da tiep nhan, em se kiem tra giup anh/chi."
+    ],
+    "latestMessages": [
+      {
+        "id": "cm8xyzmsg001",
+        "senderType": "CUSTOMER",
+        "origin": "EXTERNAL",
+        "senderName": "Khach hang",
+        "content": "Bao hiem co ho tro benh vien tu khong?",
+        "contentType": "TEXT",
+        "sentAt": "2026-04-08T08:10:18.000Z"
+      }
+    ],
+    "customer": {
+      "id": "cm8xyzcustomer001",
+      "fullName": "Nguyen Van A",
+      "phone": "*******1234",
+      "phoneNormalized": "*******1234",
+      "email": "n********@gmail.com",
+      "emailNormalized": "n********@gmail.com",
+      "segment": "retail",
+      "source": "ZALO",
+      "totalOrders": 2,
+      "totalSpent": 3500000,
+      "lastOrderAt": "2026-02-20T02:30:00.000Z",
+      "lastContactAt": "2026-04-08T08:10:18.000Z",
+      "status": "MOI_CHUA_TU_VAN",
+      "tags": [
+        "zalo"
+      ]
+    }
+  },
+  "generatedAt": "2026-04-08T08:10:20.000Z"
+}
+

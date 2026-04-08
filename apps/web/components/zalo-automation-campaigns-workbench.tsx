@@ -296,7 +296,7 @@ const CAMPAIGN_FIELD_HELP: Record<CampaignFieldHelpKey, CampaignFieldHelpContent
       'Dùng khi muốn nhắm theo phân khúc nghiệp vụ.',
       'Nhiều tag sẽ được xử lý theo logic hasSome.',
     ],
-    example: 'vip,lead-moi',
+    example: 'tag_1,tag_2',
   },
   stage: {
     title: 'Stage snapshot',
@@ -305,7 +305,7 @@ const CAMPAIGN_FIELD_HELP: Record<CampaignFieldHelpKey, CampaignFieldHelpContent
       'Giúp chiến dịch bám đúng vòng đời khách hàng.',
       'Giá trị nên theo taxonomy đang dùng trong CRM.',
     ],
-    example: 'MOI',
+    example: 'Theo taxonomy trong Settings Center',
   },
   source: {
     title: 'Source snapshot',
@@ -314,7 +314,7 @@ const CAMPAIGN_FIELD_HELP: Record<CampaignFieldHelpKey, CampaignFieldHelpContent
       'Dùng để tách chiến dịch theo kênh lead.',
       'Nên thống nhất cách đặt source trong CRM để tránh lệch dữ liệu.',
     ],
-    example: 'ZALO',
+    example: 'Theo taxonomy trong Settings Center',
   },
   zaloNickTypes: {
     title: 'Lọc theo loại nick Zalo',
@@ -1061,7 +1061,7 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
                   <input
                     value={createForm.tags}
                     onChange={(event) => setCreateForm((prev) => ({ ...prev, tags: event.target.value }))}
-                    placeholder="vip,lead-mới"
+                    placeholder="tag_1,tag_2"
                   />
                 </label>
                 <label>
@@ -1069,7 +1069,7 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
                   <input
                     value={createForm.stage}
                     onChange={(event) => setCreateForm((prev) => ({ ...prev, stage: event.target.value }))}
-                    placeholder="MOI"
+                    placeholder="Nhập theo taxonomy đã cấu hình"
                   />
                 </label>
                 <label>
@@ -1077,7 +1077,7 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
                   <input
                     value={createForm.source}
                     onChange={(event) => setCreateForm((prev) => ({ ...prev, source: event.target.value }))}
-                    placeholder="ZALO"
+                    placeholder="Nhập theo taxonomy đã cấu hình"
                   />
                 </label>
                 <label>

@@ -2,7 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { ZaloPersonalPoolService } from '../src/modules/zalo/zalo-personal.pool.service';
 
 function createService(overrides?: { conversationsService?: any }) {
-  return new ZaloPersonalPoolService({} as any, overrides?.conversationsService ?? ({} as any), {} as any) as any;
+  return new ZaloPersonalPoolService(
+    {} as any,
+    overrides?.conversationsService ?? ({} as any),
+    {} as any,
+    {
+      hasAgentReplyAfter: vi.fn(async () => false),
+      generateReplyForThread: vi.fn(async () => null)
+    } as any
+  ) as any;
 }
 
 describe('ZaloPersonalPoolService timestamp normalization', () => {

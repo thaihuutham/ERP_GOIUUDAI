@@ -61,46 +61,67 @@ export type CustomerImportRow = {
   zaloNickType?: CustomerZaloNickType;
 };
 
-export const CUSTOMER_IMPORT_TEMPLATE_ROWS: Array<Record<string, string | number>> = [
-  {
-    code: 'CUS-2026-001',
-    fullName: 'Nguyen Van A',
-    phone: '0901234567',
-    email: 'a@example.com',
-    customerStage: 'MOI',
-    source: 'ONLINE',
-    segment: 'Retail',
-    tags: 'vip;khach_moi',
-    ownerStaffId: '',
-    consentStatus: '',
-    needsSummary: 'Quan tâm gia hạn gói data',
-    totalSpent: 2500000,
-    totalOrders: 3,
-    lastOrderAt: '2026-03-01T09:00:00.000Z',
-    lastContactAt: '2026-04-01T08:30:00.000Z',
-    status: 'MOI_CHUA_TU_VAN',
-    zaloNickType: 'CHUA_KIEM_TRA',
-  },
-  {
-    code: 'CUS-2026-002',
-    fullName: 'Tran Thi B',
-    phone: '0911222333',
-    email: 'b@example.com',
-    customerStage: 'DANG_CHAM_SOC',
-    source: 'REFERRAL',
-    segment: 'SMB',
-    tags: 'da_mua',
-    ownerStaffId: '',
-    consentStatus: '',
-    needsSummary: 'Đã nhắn qua Zalo',
-    totalSpent: 4800000,
-    totalOrders: 6,
-    lastOrderAt: '2026-02-10T14:00:00.000Z',
-    lastContactAt: '2026-04-03T15:45:00.000Z',
-    status: 'DONG_Y_CHUYEN_THANH_KH',
-    zaloNickType: 'GUI_DUOC_TIN_NHAN',
-  },
-];
+export function buildCustomerImportTemplateRows(
+  stages: string[] = [],
+  sources: string[] = [],
+  customerTags: string[] = []
+): Array<Record<string, string | number>> {
+  const defaultStage = String(stages[0] ?? '').trim();
+  const followupStage = String(stages[1] ?? defaultStage).trim();
+  const defaultSource = String(sources[0] ?? '').trim();
+  const referralSource = String(sources[1] ?? defaultSource).trim();
+  const sampleTags = Array.from(
+    new Set(
+      customerTags
+        .map((item) => String(item ?? '').trim())
+        .filter(Boolean)
+    )
+  );
+  const firstTag = sampleTags[0] ?? '';
+  const secondTag = sampleTags[1] ?? '';
+  const thirdTag = sampleTags[2] ?? firstTag;
+
+  return [
+    {
+      code: 'CUS-2026-001',
+      fullName: 'Nguyen Van A',
+      phone: '0901234567',
+      email: 'a@example.com',
+      customerStage: defaultStage,
+      source: defaultSource,
+      segment: 'Retail',
+      tags: [firstTag, secondTag].filter(Boolean).join(';'),
+      ownerStaffId: '',
+      consentStatus: '',
+      needsSummary: 'Quan tâm gia hạn gói data',
+      totalSpent: 2500000,
+      totalOrders: 3,
+      lastOrderAt: '2026-03-01T09:00:00.000Z',
+      lastContactAt: '2026-04-01T08:30:00.000Z',
+      status: 'MOI_CHUA_TU_VAN',
+      zaloNickType: 'CHUA_KIEM_TRA',
+    },
+    {
+      code: 'CUS-2026-002',
+      fullName: 'Tran Thi B',
+      phone: '0911222333',
+      email: 'b@example.com',
+      customerStage: followupStage,
+      source: referralSource,
+      segment: 'SMB',
+      tags: thirdTag,
+      ownerStaffId: '',
+      consentStatus: '',
+      needsSummary: 'Đã nhắn qua Zalo',
+      totalSpent: 4800000,
+      totalOrders: 6,
+      lastOrderAt: '2026-02-10T14:00:00.000Z',
+      lastContactAt: '2026-04-03T15:45:00.000Z',
+      status: 'DONG_Y_CHUYEN_THANH_KH',
+      zaloNickType: 'GUI_DUOC_TIN_NHAN',
+    },
+  ];
+}
 
 function normalizeHeaderKey(value: string) {
   return value

@@ -4,7 +4,7 @@ import { ArrowLeft, Download, Play, Upload } from 'lucide-react';
 import { ChangeEvent, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../lib/api-client';
 import {
-  CUSTOMER_IMPORT_TEMPLATE_ROWS,
+  buildCustomerImportTemplateRows,
   parseCustomerImportXlsx,
   type CustomerImportError,
   type CustomerImportPreviewSummary,
@@ -16,6 +16,15 @@ import { useAccessPolicy } from './access-policy-context';
 
 type ImportApiSummary = CustomerImportSummary;
 type PreviewApiSummary = CustomerImportPreviewSummary;
+type CustomerTaxonomyPayload = {
+  customerTaxonomy?: {
+    stages?: string[];
+    sources?: string[];
+  };
+  tagRegistry?: {
+    customerTags?: string[];
+  };
+};
 
 function formatImportError(error: CustomerImportError) {
   return `Dòng ${error.rowIndex}${error.identifier ? ` (${error.identifier})` : ''}: ${error.message}`;
@@ -48,8 +57,28 @@ export function CrmCustomersImportBoard() {
     return `Đã nạp file ${selectedFile.name} (${selectedRowCount} dòng).`;
   }, [hasRows, selectedFile, selectedRowCount]);
 
-  const handleDownloadTemplate = () => {
-    downloadExcelTemplate('customer-import-template.xlsx', 'Customers', CUSTOMER_IMPORT_TEMPLATE_ROWS);
+  const handleDownloadTemplate = async () => {
+    let stages: string[] = [];
+    let sources: string[] = [];
+    let customerTags: string[] = [];
+    try {
+      const payload = await apiRequest<CustomerTaxonomyPayload>('/crm/taxonomy');
+      const stageList = payload.customerTaxonomy?.stages;
+      const sourceList = payload.customerTaxonomy?.sources;
+      const customerTagList = payload.tagRegistry?.customerTags;
+      stages = Array.isArray(stageList)
+        ? stageList.map((item) => String(item ?? '').trim()).filter(Boolean)
+        : [];
+      sources = Array.isArray(sourceList)
+        ? sourceList.map((item) => String(item ?? '').trim()).filter(Boolean)
+        : [];
+      customerTags = Array.isArray(customerTagList)
+        ? customerTagList.map((item) => String(item ?? '').trim()).filter(Boolean)
+        : [];
+    } catch {
+      // tải mẫu vẫn cho phép fallback rỗng nếu taxonomy API đang gián đoạn
+    }
+    downloadExcelTemplate('customer-import-template.xlsx', 'Customers', buildCustomerImportTemplateRows(stages, sources, customerTags));
   };
 
   const parseAndCacheFile = async (file: File) => {
@@ -242,7 +271,7 @@ export function CrmCustomersImportBoard() {
         </div>
 
         <div className="action-buttons">
-          <button type="button" className="btn btn-ghost" onClick={handleDownloadTemplate} disabled={isBusy}>
+          <button type="button" className="btn btn-ghost" onClick={() => void handleDownloadTemplate()} disabled={isBusy}>
             <Download size={16} /> Tải file mẫu
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => void runPreview()} disabled={isBusy}>

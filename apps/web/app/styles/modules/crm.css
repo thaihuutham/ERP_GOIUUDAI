@@ -435,6 +435,26 @@
   background: #fff;
 }
 
+.zalo-chat-message-image {
+  display: block;
+  width: min(260px, 74vw);
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid #d9e8de;
+  background: #fff;
+}
+
+.zalo-chat-message-image-caption {
+  display: block;
+  margin-top: 0.28rem;
+  color: #3b3f45;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .zalo-chat-unread-badge {
   display: inline-flex;
   align-items: center;
@@ -443,10 +463,11 @@
   height: 1.15rem;
   padding: 0 0.24rem;
   border-radius: 999px;
-  background: #d22f2f;
-  color: #fff;
+  border: 1px solid #101010;
+  background: #fff;
+  color: #c82020;
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1;
 }
 

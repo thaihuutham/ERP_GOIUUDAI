@@ -55,22 +55,20 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'fullName', label: 'Họ tên', required: true, placeholder: 'Nguyễn Văn A' },
               { name: 'phone', label: 'Số điện thoại', placeholder: '0909123456' },
               { name: 'email', label: 'Email', placeholder: 'a@company.com' },
-              { name: 'source', label: 'Nguồn khách hàng', placeholder: 'Zalo / Facebook / Cửa hàng' },
+              {
+                name: 'source',
+                label: 'Nguồn khách hàng',
+                type: 'select',
+                options: []
+              },
               { name: 'segment', label: 'Nhóm khách hàng', placeholder: 'VIP / Mới / Khách quay lại' },
               {
                 name: 'customerStage',
                 label: 'Giai đoạn khách hàng',
                 type: 'select',
-                options: [
-                  { label: 'Mới', value: 'MOI' },
-                  { label: 'Đã tư vấn', value: 'DA_TU_VAN' },
-                  { label: 'Đang quan tâm', value: 'QUAN_TAM' },
-                  { label: 'Đã mua', value: 'DA_MUA' },
-                  { label: 'Không tiếp tục', value: 'KHONG_TIEP_TUC' }
-                ],
-                defaultValue: 'MOI'
+                options: []
               },
-              { name: 'tags', label: 'Thẻ khách hàng', placeholder: 'vip, da_tu_van, uu_tien' },
+              { name: 'tags', label: 'Thẻ khách hàng', placeholder: 'Nhập theo customer tags trong Settings Center' },
               { name: 'ownerStaffId', label: 'Mã nhân viên phụ trách', placeholder: 'NV001' },
               {
                 name: 'consentStatus',
@@ -96,21 +94,20 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'fullName', label: 'Họ tên mới' },
               { name: 'phone', label: 'SĐT mới' },
               { name: 'email', label: 'Email mới' },
-              { name: 'source', label: 'Nguồn khách hàng' },
+              {
+                name: 'source',
+                label: 'Nguồn khách hàng',
+                type: 'select',
+                options: []
+              },
               { name: 'segment', label: 'Nhóm khách hàng' },
               {
                 name: 'customerStage',
                 label: 'Giai đoạn khách hàng',
                 type: 'select',
-                options: [
-                  { label: 'Mới', value: 'MOI' },
-                  { label: 'Đã tư vấn', value: 'DA_TU_VAN' },
-                  { label: 'Đang quan tâm', value: 'QUAN_TAM' },
-                  { label: 'Đã mua', value: 'DA_MUA' },
-                  { label: 'Không tiếp tục', value: 'KHONG_TIEP_TUC' }
-                ]
+                options: []
               },
-              { name: 'tags', label: 'Thẻ khách hàng', placeholder: 'vip, da_mua, can_cham_soc' },
+              { name: 'tags', label: 'Thẻ khách hàng', placeholder: 'Nhập theo customer tags trong Settings Center' },
               { name: 'ownerStaffId', label: 'Mã nhân viên phụ trách' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
             ]
@@ -177,13 +174,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               {
                 name: 'resultTag',
                 label: 'Kết quả',
-                type: 'select',
-                options: [
-                  { label: 'Đang quan tâm', value: 'quan_tam' },
-                  { label: 'Cần gọi lại', value: 'can_goi_lai' },
-                  { label: 'Đã chốt đơn', value: 'da_chot' },
-                  { label: 'Tạm dừng', value: 'tam_dung' }
-                ]
+                placeholder: 'Nhập theo interactionResultTags trong Settings Center'
               },
               { name: 'staffName', label: 'Nhân viên phụ trách' },
               { name: 'nextActionAt', label: 'Lịch chăm sóc tiếp theo', type: 'datetime-local' }

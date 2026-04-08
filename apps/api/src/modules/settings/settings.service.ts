@@ -1135,6 +1135,12 @@ export class SettingsService {
 
   private async syncUsersFromBhtot(users: Record<string, unknown>[]) {
     const tenantId = this.prisma.getTenantId();
+    const salesTaxonomy = await this.getSalesTaxonomyState();
+    const defaultSalesSource = this.resolveDefaultSalesSourceValue(salesTaxonomy.sources);
+    const bhtotSalesSource = this.resolvePreferredSalesSourceValue(
+      salesTaxonomy.sources,
+      ['BHTOT_CTV', 'CTV', 'ONLINE']
+    ) ?? defaultSalesSource;
     let customers = 0;
     let employees = 0;
 
@@ -1164,7 +1170,7 @@ export class SettingsService {
           phone,
           email,
           segment: level || 'CTV',
-          source: 'BHTOT_CTV',
+          source: bhtotSalesSource ?? null,
           status: this.mapUserToCustomerCareStatus(user.status)
         },
         update: {
@@ -1172,7 +1178,7 @@ export class SettingsService {
           phone,
           email,
           segment: level || 'CTV',
-          source: 'BHTOT_CTV'
+          source: bhtotSalesSource ?? null
         }
       });
       customers += 1;
@@ -1493,6 +1499,32 @@ export class SettingsService {
       stages: this.toStringArray(customerTaxonomy.stages),
       sources: this.toStringArray(customerTaxonomy.sources)
     };
+  }
+
+  private resolveDefaultSalesSourceValue(values: string[]) {
+    for (const value of values) {
+      const normalized = this.normalizeSalesTaxonomyValue(value);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  private resolvePreferredSalesSourceValue(values: string[], preferredValues: string[]) {
+    const normalizedValues = values
+      .map((value) => this.normalizeSalesTaxonomyValue(value))
+      .filter(Boolean);
+    if (normalizedValues.length === 0) {
+      return null;
+    }
+    for (const preferred of preferredValues) {
+      const match = normalizedValues.find((value) => value.toLowerCase() === preferred.toLowerCase());
+      if (match) {
+        return match;
+      }
+    }
+    return null;
   }
 
   private async getSalesTaxonomyUsageMap(type: SalesTaxonomyType) {

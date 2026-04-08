@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { ConversationChannel, ConversationSenderType, CustomerCareStatus } from '@prisma/client';
+import {
+  ConversationChannel,
+  ConversationMessageOrigin,
+  ConversationSenderType,
+  CustomerCareStatus
+} from '@prisma/client';
 import { createHmac } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
@@ -12,9 +17,11 @@ import { buildFriendAlias } from './zalo-friend-alias.util';
 import { ZaloOaOutboundWorkerService } from './zalo-oa-outbound.worker';
 import { ZaloAccountAssignmentService } from './zalo-account-assignment.service';
 import { ZaloAutomationRealtimeService } from './zalo-automation-realtime.service';
+import { patchZaloAutoReplyThreadState } from './zalo-auto-reply-state.util';
 import { ZaloPersonalPoolService } from './zalo-personal.pool.service';
 
 type AccountType = 'PERSONAL' | 'OA';
+type PersonalSendOrigin = 'USER' | 'CAMPAIGN' | 'AI' | 'SYSTEM';
 
 @Injectable()
 export class ZaloService {
@@ -80,6 +87,8 @@ export class ZaloService {
         displayName,
         zaloUid: null,
         phone,
+        aiAutoReplyEnabled: this.parseBoolean(payload.aiAutoReplyEnabled, false),
+        aiAutoReplyTakeoverMinutes: this.parseInt(payload.aiAutoReplyTakeoverMinutes, 5, 1, 120),
         ownerUserId,
         status: 'DISCONNECTED',
         metadataJson: (payload.metadataJson as any) ?? undefined
@@ -102,6 +111,12 @@ export class ZaloService {
         displayName: payload.displayName !== undefined ? this.optionalString(payload.displayName) ?? null : undefined,
         zaloUid: payload.zaloUid !== undefined ? this.optionalString(payload.zaloUid) ?? null : undefined,
         phone: payload.phone !== undefined ? this.optionalString(payload.phone) ?? null : undefined,
+        aiAutoReplyEnabled: payload.aiAutoReplyEnabled !== undefined
+          ? this.parseBoolean(payload.aiAutoReplyEnabled, account.aiAutoReplyEnabled ?? false)
+          : undefined,
+        aiAutoReplyTakeoverMinutes: payload.aiAutoReplyTakeoverMinutes !== undefined
+          ? this.parseInt(payload.aiAutoReplyTakeoverMinutes, account.aiAutoReplyTakeoverMinutes ?? 5, 1, 120)
+          : undefined,
         ownerUserId: payload.ownerUserId !== undefined ? this.optionalString(payload.ownerUserId) ?? null : undefined,
         status: payload.status !== undefined ? this.optionalString(payload.status)?.toUpperCase() : undefined,
         metadataJson: payload.metadataJson !== undefined ? (payload.metadataJson as any) : undefined
@@ -164,6 +179,13 @@ export class ZaloService {
 
     const raw = await api.getAllFriends();
     const contacts = this.extractContactsFromZaloPayload(raw);
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    const defaultCustomerStage = this.resolveDefaultTaxonomyValue(salesPolicy.customerTaxonomy.stages);
+    const defaultCustomerSource = this.resolveDefaultTaxonomyValue(salesPolicy.customerTaxonomy.sources);
+    const preferredZaloSource = this.resolvePreferredSourceValue(
+      salesPolicy.customerTaxonomy.sources,
+      ['ZALO', 'ONLINE']
+    ) ?? defaultCustomerSource;
 
     let created = 0;
     let updated = 0;
@@ -197,7 +219,7 @@ export class ZaloService {
             fullName: displayName || existing.fullName,
             phone: rawPhone ?? existing.phone,
             phoneNormalized: normalizedPhone,
-            source: existing.source || 'ZALO',
+            source: existing.source || preferredZaloSource || undefined,
             lastContactAt: new Date()
           }
         });
@@ -209,8 +231,8 @@ export class ZaloService {
             fullName: displayName,
             phone: rawPhone ?? normalizedPhone,
             phoneNormalized: normalizedPhone,
-            source: 'ZALO',
-            customerStage: 'MOI',
+            source: preferredZaloSource ?? null,
+            customerStage: defaultCustomerStage ?? null,
             status: CustomerCareStatus.MOI_CHUA_TU_VAN,
             tags: ['zalo']
           }
@@ -424,7 +446,7 @@ export class ZaloService {
   }
 
   async sendPersonalMessage(id: string, payload: Record<string, unknown>) {
-    await this.requirePersonalAccount(id);
+    const account = await this.requirePersonalAccount(id);
     await this.zaloAssignment.assertCanChatAccount(id);
 
     const requestedExternalThreadId = this.optionalString(payload.externalThreadId) ?? null;
@@ -434,7 +456,11 @@ export class ZaloService {
       ?? null;
     const content = this.requiredString(payload.content, 'Thiếu nội dung tin nhắn.');
     const threadType = this.optionalString(payload.threadType)?.toLowerCase() === 'group' ? 'group' : 'user';
-    const senderName = await this.resolveCurrentSenderDisplayName();
+    const origin = this.parsePersonalSendOrigin(payload.origin, 'USER');
+    const requestedSenderName = this.optionalString(payload.senderName);
+    const senderName =
+      requestedSenderName
+      ?? (origin === 'AI' ? 'AI Assistant' : (await this.resolveCurrentSenderDisplayName()) ?? undefined);
     let externalThreadId = requestedExternalThreadId;
     let resolvedDisplayName: string | null = null;
 
@@ -458,7 +484,8 @@ export class ZaloService {
       externalThreadId,
       content,
       threadType,
-      senderName ?? undefined
+      senderName,
+      this.toConversationMessageOrigin(origin)
     );
 
     if (threadType === 'user') {
@@ -472,6 +499,14 @@ export class ZaloService {
           ?? resolvedDisplayName
           ?? undefined
       });
+
+      if (origin === 'USER') {
+        await this.markPersonalThreadManualTakeover(
+          account.id,
+          externalThreadId,
+          this.parseInt(account.aiAutoReplyTakeoverMinutes, 5, 1, 120)
+        );
+      }
     }
 
     return {
@@ -479,6 +514,36 @@ export class ZaloService {
       externalThreadId,
       resolvedByPhone: !requestedExternalThreadId && Boolean(requestedPhone)
     };
+  }
+
+  private async markPersonalThreadManualTakeover(accountId: string, externalThreadId: string, takeoverMinutes: number) {
+    const thread = await this.prisma.client.conversationThread.findFirst({
+      where: {
+        channel: ConversationChannel.ZALO_PERSONAL,
+        channelAccountId: accountId,
+        externalThreadId
+      },
+      select: {
+        id: true,
+        metadataJson: true
+      }
+    });
+    if (!thread) {
+      return;
+    }
+
+    const pauseUntil = new Date(Date.now() + takeoverMinutes * 60_000).toISOString();
+    await this.prisma.client.conversationThread.updateMany({
+      where: { id: thread.id },
+      data: {
+        metadataJson: patchZaloAutoReplyThreadState(thread.metadataJson, {
+          pauseUntil,
+          clearPending: true
+        })
+      }
+    });
+
+    this.personalPool.cancelAutoReplyForThread(thread.id);
   }
 
   async upsertPersonalFriendAlias(
@@ -872,6 +937,62 @@ export class ZaloService {
     return /^[0-9]{8,15}$/.test(phone);
   }
 
+  private parsePersonalSendOrigin(input: unknown, fallback: PersonalSendOrigin): PersonalSendOrigin {
+    const candidate = String(input ?? '').trim().toUpperCase();
+    if (candidate === 'USER' || candidate === 'CAMPAIGN' || candidate === 'AI' || candidate === 'SYSTEM') {
+      return candidate;
+    }
+    return fallback;
+  }
+
+  private toConversationMessageOrigin(origin: PersonalSendOrigin): ConversationMessageOrigin {
+    if (origin === 'AI') {
+      return ConversationMessageOrigin.AI;
+    }
+    if (origin === 'CAMPAIGN') {
+      return ConversationMessageOrigin.CAMPAIGN;
+    }
+    if (origin === 'SYSTEM') {
+      return ConversationMessageOrigin.SYSTEM;
+    }
+    return ConversationMessageOrigin.USER;
+  }
+
+  private parseBoolean(input: unknown, fallback: boolean) {
+    if (input === null || input === undefined) {
+      return fallback;
+    }
+    if (typeof input === 'boolean') {
+      return input;
+    }
+
+    const normalized = String(input).trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+      return false;
+    }
+    return fallback;
+  }
+
+  private parseInt(input: unknown, fallback: number, min: number, max: number) {
+    if (input === null || input === undefined || input === '') {
+      return fallback;
+    }
+    const value = Number(input);
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+    if (value < min) {
+      return min;
+    }
+    if (value > max) {
+      return max;
+    }
+    return Math.round(value);
+  }
+
   private parseAccountType(input: unknown, fallback: AccountType): AccountType {
     const candidate = String(input ?? '').trim().toUpperCase();
     if (candidate === 'PERSONAL' || candidate === 'OA') {
@@ -903,6 +1024,32 @@ export class ZaloService {
 
     const value = String(input).trim();
     return value || undefined;
+  }
+
+  private resolveDefaultTaxonomyValue(values: string[]) {
+    for (const value of values) {
+      const normalized = this.optionalString(value);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  private resolvePreferredSourceValue(values: string[], preferred: string[]) {
+    const normalizedValues = values
+      .map((value) => this.optionalString(value))
+      .filter((value): value is string => Boolean(value));
+    if (normalizedValues.length === 0) {
+      return null;
+    }
+    for (const preferredValue of preferred) {
+      const match = normalizedValues.find((item) => item.toLowerCase() === preferredValue.toLowerCase());
+      if (match) {
+        return match;
+      }
+    }
+    return null;
   }
 
   private parseDate(input: unknown, fieldName: string) {

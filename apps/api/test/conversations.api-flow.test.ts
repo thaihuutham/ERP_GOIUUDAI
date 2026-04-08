@@ -91,6 +91,11 @@ describe('Conversations API flow integration', () => {
       contentType: 'TEXT'
     } as any);
 
+    vi.spyOn(conversationsService, 'markThreadAsRead').mockResolvedValue({
+      threadId: 'thread_api_2',
+      unreadCount: 0
+    } as any);
+
     vi.spyOn(conversationsService, 'getLatestEvaluation').mockResolvedValue({
       thread: {
         id: 'thread_api_2',
@@ -142,6 +147,14 @@ describe('Conversations API flow integration', () => {
 
     expect(appendMessageRes.status).toBe(201);
     expect(appendMessageRes.body.id).toBe('msg_api_2');
+
+    const markReadRes = await request(app.getHttpServer())
+      .post('/api/v1/conversations/threads/thread_api_2/mark-read')
+      .set('authorization', `Bearer ${managerToken}`);
+
+    expect(markReadRes.status).toBe(201);
+    expect(markReadRes.body.threadId).toBe('thread_api_2');
+    expect(markReadRes.body.unreadCount).toBe(0);
 
     const latestEvaluationRes = await request(app.getHttpServer())
       .get('/api/v1/conversations/threads/thread_api_2/evaluation/latest')

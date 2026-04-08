@@ -1,8 +1,15 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { ConversationChannel, ConversationSenderType, CustomerSocialPlatform, Prisma } from '@prisma/client';
+import {
+  ConversationChannel,
+  ConversationMessageOrigin,
+  ConversationSenderType,
+  CustomerSocialPlatform,
+  Prisma
+} from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
+import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CrmContractsService } from '../crm/crm-contracts.service';
@@ -22,6 +29,7 @@ type IngestExternalMessagePayload = {
   externalThreadId: string;
   externalMessageId?: string;
   senderType: ConversationSenderType;
+  origin?: ConversationMessageOrigin;
   senderExternalId?: string;
   senderName?: string;
   content?: string;
@@ -55,6 +63,7 @@ export class ConversationsService {
     @Inject(ClsService) private readonly cls: ClsService,
     @Inject(ZaloAccountAssignmentService) private readonly zaloAssignment: ZaloAccountAssignmentService,
     @Inject(ZaloAutomationRealtimeService) private readonly zaloRealtime: ZaloAutomationRealtimeService,
+    @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
     @Optional() @Inject(CrmContractsService) private readonly crmContractsService?: CrmContractsService
   ) {}
 
@@ -288,6 +297,9 @@ export class ConversationsService {
       throw new BadRequestException('Số điện thoại không hợp lệ.');
     }
     const normalizedEmail = this.normalizeEmail(this.optionalString(payload.email));
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    const defaultCustomerStage = this.resolveDefaultTaxonomyValue(salesPolicy.customerTaxonomy.stages);
+    const defaultCustomerSource = this.resolveDefaultTaxonomyValue(salesPolicy.customerTaxonomy.sources);
 
     const quickCreateResult = await this.prisma.client.$transaction(async (tx) => {
       const thread = await tx.conversationThread.findFirst({
@@ -366,8 +378,14 @@ export class ConversationsService {
           phoneNormalized: normalizedPhone ?? null,
           email: normalizedEmail ?? null,
           emailNormalized: normalizedEmail ?? null,
-          source: this.optionalString(payload.source) ?? this.resolveCustomerSourceByChannel(thread.channel),
-          customerStage: this.optionalString(payload.customerStage) ?? 'MOI',
+          source: this.resolveConfiguredTaxonomyValue(
+            this.optionalString(payload.source) ?? this.resolveCustomerSourceByChannel(thread.channel, defaultCustomerSource),
+            salesPolicy.customerTaxonomy.sources
+          ) ?? defaultCustomerSource ?? null,
+          customerStage: this.resolveConfiguredTaxonomyValue(
+            this.optionalString(payload.customerStage),
+            salesPolicy.customerTaxonomy.stages
+          ) ?? defaultCustomerStage ?? null,
           ownerStaffId: this.optionalString(payload.ownerStaffId) ?? null,
           segment: this.optionalString(payload.segment) ?? null,
           needsSummary: this.optionalString(payload.needsSummary) ?? null
@@ -448,6 +466,32 @@ export class ConversationsService {
     };
   }
 
+  async markThreadAsRead(threadId: string) {
+    const id = this.requiredString(threadId, 'Thiếu threadId.');
+    const thread = await this.prisma.client.conversationThread.findFirst({ where: { id } });
+    if (!thread) {
+      throw new NotFoundException('Không tìm thấy hội thoại.');
+    }
+
+    if (this.isZaloChannel(thread.channel) && thread.channelAccountId) {
+      await this.zaloAssignment.assertCanReadAccount(thread.channelAccountId);
+    }
+
+    if ((thread.unreadCount ?? 0) > 0) {
+      await this.prisma.client.conversationThread.updateMany({
+        where: { id },
+        data: {
+          unreadCount: 0
+        }
+      });
+    }
+
+    return {
+      threadId: id,
+      unreadCount: 0
+    };
+  }
+
   async appendMessage(threadId: string, payload: Record<string, unknown>) {
     const thread = await this.prisma.client.conversationThread.findFirst({ where: { id: threadId } });
     if (!thread) {
@@ -459,6 +503,7 @@ export class ConversationsService {
     }
 
     const senderType = this.parseSenderType(payload.senderType, ConversationSenderType.AGENT);
+    const origin = this.parseMessageOrigin(payload.origin, this.defaultOriginBySenderType(senderType));
     let senderName = this.optionalString(payload.senderName) ?? undefined;
     if (senderType === ConversationSenderType.AGENT && !senderName) {
       senderName = (await this.resolveCurrentSenderDisplayName()) ?? undefined;
@@ -470,6 +515,7 @@ export class ConversationsService {
       externalThreadId: thread.externalThreadId,
       externalMessageId: this.optionalString(payload.externalMessageId) ?? undefined,
       senderType,
+      origin,
       senderExternalId: this.optionalString(payload.senderExternalId) ?? undefined,
       senderName,
       content: this.optionalString(payload.content) ?? '',
@@ -643,6 +689,7 @@ export class ConversationsService {
   private async createOrReuseMessage(payload: IngestExternalMessagePayload, thread: { id: string; unreadCount: number; isReplied: boolean; }) {
     const sentAt = payload.sentAt ?? new Date();
     const contentType = payload.contentType?.trim().toUpperCase() || 'TEXT';
+    const origin = this.parseMessageOrigin(payload.origin, this.defaultOriginBySenderType(payload.senderType));
 
     if (payload.externalMessageId) {
       const duplicated = await this.prisma.client.conversationMessage.findFirst({
@@ -665,10 +712,12 @@ export class ConversationsService {
           threadId: thread.id,
           externalMessageId: payload.externalMessageId ?? null,
           senderType: payload.senderType,
+          origin,
           senderExternalId: payload.senderExternalId ?? null,
           senderName: payload.senderName ?? null,
           content: payload.content ?? null,
           contentType,
+          metadataJson: payload.metadataJson ?? undefined,
           attachmentsJson: payload.attachmentsJson ?? undefined,
           sentAt
         }
@@ -1091,8 +1140,35 @@ export class ConversationsService {
     return normalized;
   }
 
-  private resolveCustomerSourceByChannel(_channel: ConversationChannel) {
-    return 'ONLINE';
+  private resolveCustomerSourceByChannel(_channel: ConversationChannel, fallbackSource?: string | null) {
+    return fallbackSource ?? null;
+  }
+
+  private resolveConfiguredTaxonomyValue(input: string | null | undefined, allowedValues: string[]) {
+    const candidate = this.optionalString(input);
+    if (!candidate) {
+      return null;
+    }
+    if (!Array.isArray(allowedValues) || allowedValues.length === 0) {
+      return candidate;
+    }
+    const directMatch = allowedValues.find((item) => this.optionalString(item) === candidate);
+    if (directMatch) {
+      return directMatch;
+    }
+    const lower = candidate.toLowerCase();
+    const caseInsensitiveMatch = allowedValues.find((item) => this.optionalString(item)?.toLowerCase() === lower);
+    return caseInsensitiveMatch ?? null;
+  }
+
+  private resolveDefaultTaxonomyValue(values: string[]) {
+    for (const value of values) {
+      const normalized = this.optionalString(value);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
   }
 
   private formatChannelLabel(channel: ConversationChannel) {
@@ -1122,6 +1198,24 @@ export class ConversationsService {
       return candidate as ConversationSenderType;
     }
     return fallback;
+  }
+
+  private parseMessageOrigin(input: unknown, fallback: ConversationMessageOrigin): ConversationMessageOrigin {
+    const candidate = String(input ?? '').trim().toUpperCase();
+    if ((Object.values(ConversationMessageOrigin) as string[]).includes(candidate)) {
+      return candidate as ConversationMessageOrigin;
+    }
+    return fallback;
+  }
+
+  private defaultOriginBySenderType(senderType: ConversationSenderType): ConversationMessageOrigin {
+    if (senderType === ConversationSenderType.CUSTOMER) {
+      return ConversationMessageOrigin.EXTERNAL;
+    }
+    if (senderType === ConversationSenderType.AGENT) {
+      return ConversationMessageOrigin.USER;
+    }
+    return ConversationMessageOrigin.SYSTEM;
   }
 
   private requiredString(input: unknown, message: string) {
