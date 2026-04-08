@@ -10,9 +10,10 @@ import {
   type AssistantScopeType,
   type AssistantSourceType
 } from '../../lib/assistant-api';
-import { apiRequest, normalizeListPayload } from '../../lib/api-client';
+import { apiRequest, normalizeListPayload, type ApiListSortMeta } from '../../lib/api-client';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../../lib/bulk-actions';
+import { useCursorTableState } from '../../lib/use-cursor-table-state';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from '../ui/standard-data-table';
 
 type OrgNode = {
@@ -76,10 +77,16 @@ export function AssistantKnowledgeBoard() {
   const [sourceFilterQ, setSourceFilterQ] = useState('');
   const [sourceFilterType, setSourceFilterType] = useState('');
   const [sourceFilterIsActive, setSourceFilterIsActive] = useState('');
+  const [sourceSortBy, setSourceSortBy] = useState('updatedAt');
+  const [sourceSortDir, setSourceSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sourceSortMeta, setSourceSortMeta] = useState<ApiListSortMeta | null>(null);
 
   const [documentFilterQ, setDocumentFilterQ] = useState('');
   const [documentFilterSourceId, setDocumentFilterSourceId] = useState('');
   const [documentFilterScopeType, setDocumentFilterScopeType] = useState('');
+  const [documentSortBy, setDocumentSortBy] = useState('updatedAt');
+  const [documentSortDir, setDocumentSortDir] = useState<'asc' | 'desc'>('desc');
+  const [documentSortMeta, setDocumentSortMeta] = useState<ApiListSortMeta | null>(null);
 
   const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
   const [knowledgeMessage, setKnowledgeMessage] = useState<string | null>(null);
@@ -106,6 +113,32 @@ export function AssistantKnowledgeBoard() {
     STAFF: true
   });
   const [formIsActive, setFormIsActive] = useState(true);
+  const sourceTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: sourceFilterQ.trim(),
+        sourceType: sourceFilterType,
+        isActive: sourceFilterIsActive,
+        sortBy: sourceSortBy,
+        sortDir: sourceSortDir,
+        limit: 25
+      }),
+    [sourceFilterIsActive, sourceFilterQ, sourceFilterType, sourceSortBy, sourceSortDir]
+  );
+  const documentTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: documentFilterQ.trim(),
+        sourceId: documentFilterSourceId,
+        scopeType: documentFilterScopeType,
+        sortBy: documentSortBy,
+        sortDir: documentSortDir,
+        limit: 25
+      }),
+    [documentFilterQ, documentFilterScopeType, documentFilterSourceId, documentSortBy, documentSortDir]
+  );
+  const sourceTablePager = useCursorTableState(sourceTableFingerprint);
+  const documentTablePager = useCursorTableState(documentTableFingerprint);
 
   const scopeRefOptions = useMemo(
     () => [...orgOptions, ...userOptions].sort((a, b) => a.label.localeCompare(b.label)),
@@ -146,9 +179,14 @@ export function AssistantKnowledgeBoard() {
           sourceFilterIsActive === ''
             ? undefined
             : sourceFilterIsActive === 'true',
-        limit: 100
+        limit: 25,
+        cursor: sourceTablePager.cursor ?? undefined,
+        sortBy: sourceSortBy,
+        sortDir: sourceSortDir
       });
       setSources(payload.items);
+      sourceTablePager.syncFromPageInfo(payload.pageInfo);
+      setSourceSortMeta(payload.sortMeta);
     } catch (error) {
       setSources([]);
       setKnowledgeError(error instanceof Error ? error.message : 'Không thể tải danh sách nguồn tri thức.');
@@ -165,9 +203,14 @@ export function AssistantKnowledgeBoard() {
         q: documentFilterQ || undefined,
         sourceId: documentFilterSourceId || undefined,
         scopeType: (documentFilterScopeType || undefined) as AssistantScopeType | undefined,
-        limit: 100
+        limit: 25,
+        cursor: documentTablePager.cursor ?? undefined,
+        sortBy: documentSortBy,
+        sortDir: documentSortDir
       });
       setDocuments(payload.items);
+      documentTablePager.syncFromPageInfo(payload.pageInfo);
+      setDocumentSortMeta(payload.sortMeta);
     } catch (error) {
       setDocuments([]);
       setKnowledgeError(error instanceof Error ? error.message : 'Không thể tải tài liệu tri thức.');
@@ -177,8 +220,30 @@ export function AssistantKnowledgeBoard() {
   };
 
   useEffect(() => {
-    void Promise.all([loadSources(), loadDocuments(), loadPickerOptions()]);
+    void loadPickerOptions();
   }, []);
+
+  useEffect(() => {
+    void loadSources();
+  }, [
+    sourceFilterIsActive,
+    sourceFilterQ,
+    sourceFilterType,
+    sourceSortBy,
+    sourceSortDir,
+    sourceTablePager.currentPage
+  ]);
+
+  useEffect(() => {
+    void loadDocuments();
+  }, [
+    documentFilterQ,
+    documentFilterScopeType,
+    documentFilterSourceId,
+    documentSortBy,
+    documentSortDir,
+    documentTablePager.currentPage
+  ]);
 
   const onRefreshAll = async () => {
     await Promise.all([loadSources(), loadDocuments()]);
@@ -264,16 +329,18 @@ export function AssistantKnowledgeBoard() {
 
   const sourceColumns = useMemo<ColumnDefinition<AssistantKnowledgeSource>[]>(
     () => [
-      { key: 'name', label: 'Tên nguồn', render: (row) => row.name },
-      { key: 'sourceType', label: 'Loại nguồn', render: (row) => row.sourceType },
+      { key: 'name', label: 'Tên nguồn', sortKey: 'name', render: (row) => row.name },
+      { key: 'sourceType', label: 'Loại nguồn', sortKey: 'sourceType', render: (row) => row.sourceType },
       {
         key: 'target',
         label: 'Đường dẫn / URL',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo target chưa hỗ trợ ở đợt này.',
         render: (row) => row.rootPath || row.sourceUrl || '--'
       },
-      { key: 'scopeType', label: 'Phạm vi', render: (row) => row.scopeType },
-      { key: 'lastSyncedAt', label: 'Lần đồng bộ gần nhất', render: (row) => formatDate(row.lastSyncedAt) },
-      { key: 'isActive', label: 'Trạng thái', render: (row) => (row.isActive ? 'Bật' : 'Tắt') }
+      { key: 'scopeType', label: 'Phạm vi', sortKey: 'scopeType', render: (row) => row.scopeType },
+      { key: 'lastSyncedAt', label: 'Lần đồng bộ gần nhất', sortKey: 'lastSyncedAt', render: (row) => formatDate(row.lastSyncedAt) },
+      { key: 'isActive', label: 'Trạng thái', sortKey: 'isActive', render: (row) => (row.isActive ? 'Bật' : 'Tắt') }
     ],
     []
   );
@@ -345,12 +412,24 @@ export function AssistantKnowledgeBoard() {
 
   const documentColumns = useMemo<ColumnDefinition<(typeof documentRows)[number]>[]>(
     () => [
-      { key: 'title', label: 'Tiêu đề', render: (row) => row.title },
-      { key: 'sourceId', label: 'Nguồn', render: (row) => row.sourceId },
-      { key: 'scopeType', label: 'Phạm vi', render: (row) => row.scopeType },
-      { key: 'classification', label: 'Phân loại', render: (row) => row.classification || '--' },
-      { key: 'estimatedChunks', label: 'Số phân mảnh (ước lượng)', render: (row) => String(row.estimatedChunks) },
-      { key: 'lastIndexedAt', label: 'Lần lập chỉ mục', render: (row) => formatDate(row.lastIndexedAt) }
+      { key: 'title', label: 'Tiêu đề', sortKey: 'title', render: (row) => row.title },
+      {
+        key: 'sourceId',
+        label: 'Nguồn',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo nguồn liên kết chưa hỗ trợ ở đợt này.',
+        render: (row) => row.sourceId
+      },
+      { key: 'scopeType', label: 'Phạm vi', sortKey: 'scopeType', render: (row) => row.scopeType },
+      { key: 'classification', label: 'Phân loại', sortKey: 'classification', render: (row) => row.classification || '--' },
+      {
+        key: 'estimatedChunks',
+        label: 'Số phân mảnh (ước lượng)',
+        sortable: false,
+        sortDisabledTooltip: 'Cột ước lượng phía client không hỗ trợ sắp xếp server-side.',
+        render: (row) => String(row.estimatedChunks)
+      },
+      { key: 'lastIndexedAt', label: 'Lần lập chỉ mục', sortKey: 'lastIndexedAt', render: (row) => formatDate(row.lastIndexedAt) }
     ],
     [documentRows]
   );
@@ -570,6 +649,26 @@ export function AssistantKnowledgeBoard() {
           columns={sourceColumns}
           storageKey="assistant-knowledge-sources-v1"
           isLoading={loadingSources}
+          pageInfo={{
+            currentPage: sourceTablePager.currentPage,
+            hasPrevPage: sourceTablePager.hasPrevPage,
+            hasNextPage: sourceTablePager.hasNextPage,
+            visitedPages: sourceTablePager.visitedPages
+          }}
+          sortMeta={
+            sourceSortMeta ?? {
+              sortBy: sourceSortBy,
+              sortDir: sourceSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={sourceTablePager.goNextPage}
+          onPagePrev={sourceTablePager.goPrevPage}
+          onJumpVisitedPage={sourceTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setSourceSortBy(sortBy);
+            setSourceSortDir(sortDir);
+          }}
           onRowClick={(row) => void onSyncSource(row.id)}
           enableRowSelection
           selectedRowIds={selectedSourceRowIds}
@@ -632,6 +731,26 @@ export function AssistantKnowledgeBoard() {
           columns={documentColumns}
           storageKey="assistant-knowledge-documents-v1"
           isLoading={loadingDocuments}
+          pageInfo={{
+            currentPage: documentTablePager.currentPage,
+            hasPrevPage: documentTablePager.hasPrevPage,
+            hasNextPage: documentTablePager.hasNextPage,
+            visitedPages: documentTablePager.visitedPages
+          }}
+          sortMeta={
+            documentSortMeta ?? {
+              sortBy: documentSortBy,
+              sortDir: documentSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={documentTablePager.goNextPage}
+          onPagePrev={documentTablePager.goPrevPage}
+          onJumpVisitedPage={documentTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setDocumentSortBy(sortBy);
+            setDocumentSortDir(sortDir);
+          }}
           enableRowSelection
           selectedRowIds={selectedDocumentRowIds}
           onSelectedRowIdsChange={setSelectedDocumentRowIds}

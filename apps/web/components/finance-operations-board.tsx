@@ -13,9 +13,15 @@ import {
   Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -75,6 +81,7 @@ type PaymentFormState = {
 
 const STATUS_OPTIONS: InvoiceStatus[] = ['ALL', 'DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'ARCHIVED'];
 const FINANCE_COLUMN_SETTINGS_KEY = 'erp-retail.finance.invoice-table-settings.v3';
+const FINANCE_TABLE_PAGE_SIZE = 25;
 
 function toNumber(value: number | string | null | undefined) {
   const normalized = Number(value);
@@ -138,6 +145,9 @@ export function FinanceOperationsBoard() {
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<InvoiceStatus>('ALL');
+  const [tableSortBy, setTableSortBy] = useState('createdAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<FinanceInvoice | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [aging, setAging] = useState<InvoiceAging | null>(null);
@@ -152,15 +162,37 @@ export function FinanceOperationsBoard() {
   const [isAllocatingPayment, setIsAllocatingPayment] = useState(false);
   const [isArchivingInvoice, setIsArchivingInvoice] = useState(false);
   const [paymentForm, setPaymentForm] = useState<PaymentFormState>(buildInitialPaymentForm());
+  const financeTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        status,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: FINANCE_TABLE_PAGE_SIZE
+      }),
+    [search, status, tableSortBy, tableSortDir]
+  );
+  const financeTablePager = useCursorTableState(financeTableFingerprint);
 
   const loadInvoices = async () => {
     if (!canView) return;
     setIsLoading(true);
     try {
       const payload = await apiRequest<any>('/finance/invoices', {
-        query: { q: search, status: status !== 'ALL' ? status : undefined, limit: 200 }
+        query: {
+          q: search,
+          status: status !== 'ALL' ? status : undefined,
+          limit: FINANCE_TABLE_PAGE_SIZE,
+          cursor: financeTablePager.cursor ?? undefined,
+          sortBy: tableSortBy,
+          sortDir: tableSortDir
+        }
       });
-      setInvoices(normalizeListPayload(payload) as FinanceInvoice[]);
+      const normalizedInvoices = normalizePagedListPayload<FinanceInvoice>(payload);
+      setInvoices(normalizedInvoices.items);
+      financeTablePager.syncFromPageInfo(normalizedInvoices.pageInfo);
+      setTableSortMeta(normalizedInvoices.sortMeta);
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải hóa đơn');
@@ -199,7 +231,7 @@ export function FinanceOperationsBoard() {
       loadAging();
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, status, canView]);
+  }, [canView, financeTablePager.currentPage, search, status, tableSortBy, tableSortDir]);
 
   useEffect(() => {
     if (!selectedInvoice) return;
@@ -234,34 +266,41 @@ export function FinanceOperationsBoard() {
     {
       key: 'invoiceNo',
       label: 'Số hóa đơn',
+      sortKey: 'invoiceNo',
       isLink: true,
       render: (invoice) => invoice.invoiceNo || invoice.id.slice(-8)
     },
-    { key: 'invoiceType', label: 'Loại' },
-    { key: 'partnerName', label: 'Đối tác' },
+    { key: 'invoiceType', label: 'Loại', sortKey: 'invoiceType' },
+    { key: 'partnerName', label: 'Đối tác', sortKey: 'partnerName' },
     {
       key: 'orderNo',
       label: 'Đơn hàng',
+      sortable: false,
+      sortDisabledTooltip: 'Sắp xếp theo đơn hàng liên kết chưa hỗ trợ ở đợt này.',
       render: (invoice) => invoice.orderNo || '--'
     },
     {
       key: 'totalAmount',
       label: 'Tổng tiền',
+      sortKey: 'totalAmount',
       render: (invoice) => toCurrency(invoice.totalAmount)
     },
     {
       key: 'paidAmount',
       label: 'Đã trả',
+      sortKey: 'paidAmount',
       render: (invoice) => toCurrency(invoice.paidAmount)
     },
     {
       key: 'status',
       label: 'Trạng thái',
+      sortKey: 'status',
       render: (invoice) => <span className={getStatusClass(invoice.status)}>{invoice.status || '--'}</span>
     },
     {
       key: 'dueAt',
       label: 'Ngày hạn',
+      sortKey: 'dueAt',
       render: (invoice) => toDateTime(invoice.dueAt)
     }
   ];
@@ -588,6 +627,26 @@ export function FinanceOperationsBoard() {
         columns={columns}
         isLoading={isLoading}
         storageKey={FINANCE_COLUMN_SETTINGS_KEY}
+        pageInfo={{
+          currentPage: financeTablePager.currentPage,
+          hasPrevPage: financeTablePager.hasPrevPage,
+          hasNextPage: financeTablePager.hasNextPage,
+          visitedPages: financeTablePager.visitedPages
+        }}
+        sortMeta={
+          tableSortMeta ?? {
+            sortBy: tableSortBy,
+            sortDir: tableSortDir,
+            sortableFields: []
+          }
+        }
+        onPageNext={financeTablePager.goNextPage}
+        onPagePrev={financeTablePager.goPrevPage}
+        onJumpVisitedPage={financeTablePager.jumpVisitedPage}
+        onSortChange={(sortBy, sortDir) => {
+          setTableSortBy(sortBy);
+          setTableSortDir(sortDir);
+        }}
         onRowClick={(invoice) => setSelectedInvoice(invoice)}
         enableRowSelection
         selectedRowIds={selectedRowIds}

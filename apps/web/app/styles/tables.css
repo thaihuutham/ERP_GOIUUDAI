@@ -325,6 +325,40 @@
   text-align: center;
 }
 
+.standard-table-sort-btn,
+.standard-table-sort-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.standard-table-sort-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.standard-table-sort-btn:hover {
+  color: var(--primary);
+}
+
+.standard-table-sort-btn.is-active {
+  color: var(--primary);
+}
+
+.standard-table-sort-label-disabled {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.standard-table-sort-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
 /* Inline editing */
 .standard-cell-input {
   width: 100%;
@@ -373,4 +407,25 @@
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   padding: 0.2rem 0.4rem;
+}
+
+.standard-table-pagination {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.standard-table-pagination-meta {
+  font-size: 0.82rem;
+  color: #446554;
+}
+
+.standard-table-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
 }

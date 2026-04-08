@@ -1,5 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -40,13 +46,48 @@ const SHIPMENT_LIFECYCLE = {
 
 @Injectable()
 export class ScmService {
+  private readonly vendorSortableFields = ['createdAt', 'code', 'name', 'phone', 'email', 'status', 'id'] as const;
+  private readonly purchaseOrderSortableFields = [
+    'createdAt',
+    'poNo',
+    'vendorId',
+    'totalAmount',
+    'receivedAmount',
+    'lifecycleStatus',
+    'status',
+    'expectedReceiveAt',
+    'id'
+  ] as const;
+  private readonly shipmentSortableFields = [
+    'createdAt',
+    'shipmentNo',
+    'orderRef',
+    'carrier',
+    'lifecycleStatus',
+    'status',
+    'expectedDeliveryAt',
+    'shippedAt',
+    'deliveredAt',
+    'id'
+  ] as const;
+  private readonly distributionSortableFields = ['createdAt', 'distributionNo', 'destination', 'status', 'id'] as const;
+  private readonly demandForecastSortableFields = ['createdAt', 'sku', 'period', 'predictedQty', 'confidence', 'id'] as const;
+  private readonly supplyChainRiskSortableFields = ['createdAt', 'title', 'severity', 'status', 'id'] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
   ) {}
 
   async listVendors(query: ScmListQueryDto) {
-    return this.prisma.client.vendor.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.vendorSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'scm/vendors'
+    });
+    const rows = await this.prisma.client.vendor.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.q
@@ -59,8 +100,19 @@ export class ScmService {
             }
           : {})
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildVendorSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -93,7 +145,14 @@ export class ScmService {
   }
 
   async listPurchaseOrders(query: ScmListQueryDto, entityIds?: string[]) {
-    return this.prisma.client.purchaseOrder.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.purchaseOrderSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'scm/purchase-orders'
+    });
+    const rows = await this.prisma.client.purchaseOrder.findMany({
       where: {
         ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
         ...(query.status ? { status: query.status } : {}),
@@ -109,8 +168,19 @@ export class ScmService {
           : {})
       },
       include: { vendor: true, receipts: true },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildPurchaseOrderSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -354,7 +424,14 @@ export class ScmService {
   }
 
   async listShipments(query: ScmListQueryDto) {
-    return this.prisma.client.shipment.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.shipmentSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'scm/shipments'
+    });
+    const rows = await this.prisma.client.shipment.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.lifecycleStatus ? { lifecycleStatus: query.lifecycleStatus } : {}),
@@ -369,8 +446,19 @@ export class ScmService {
           : {})
       },
       include: { purchaseOrder: true },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildShipmentSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -466,7 +554,14 @@ export class ScmService {
   }
 
   async listDistributions(query: ScmListQueryDto) {
-    return this.prisma.client.distribution.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.distributionSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'scm/distributions'
+    });
+    const rows = await this.prisma.client.distribution.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.q
@@ -478,8 +573,19 @@ export class ScmService {
             }
           : {})
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildDistributionSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -508,7 +614,14 @@ export class ScmService {
   }
 
   async listDemandForecasts(query: ScmListQueryDto) {
-    return this.prisma.client.demandForecast.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.demandForecastSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'scm/demand-forecasts'
+    });
+    const rows = await this.prisma.client.demandForecast.findMany({
       where: query.q
         ? {
             OR: [
@@ -517,8 +630,19 @@ export class ScmService {
             ]
           }
         : {},
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildDemandForecastSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -549,7 +673,14 @@ export class ScmService {
   }
 
   async listSupplyChainRisks(query: ScmListQueryDto) {
-    return this.prisma.client.supplyChainRisk.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.supplyChainRiskSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'scm/supply-chain-risks'
+    });
+    const rows = await this.prisma.client.supplyChainRisk.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.q
@@ -561,8 +692,19 @@ export class ScmService {
             }
           : {})
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildSupplyChainRiskSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -745,6 +887,66 @@ export class ScmService {
   private normalizeWarehouseCode(value: unknown) {
     const normalized = String(value ?? '').trim().toUpperCase();
     return normalized || undefined;
+  }
+
+  private buildVendorSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.VendorOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.VendorOrderByWithRelationInput[];
+  }
+
+  private buildPurchaseOrderSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.PurchaseOrderOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.PurchaseOrderOrderByWithRelationInput[];
+  }
+
+  private buildShipmentSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ShipmentOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ShipmentOrderByWithRelationInput[];
+  }
+
+  private buildDistributionSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.DistributionOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.DistributionOrderByWithRelationInput[];
+  }
+
+  private buildDemandForecastSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.DemandForecastOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.DemandForecastOrderByWithRelationInput[];
+  }
+
+  private buildSupplyChainRiskSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.SupplyChainRiskOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.SupplyChainRiskOrderByWithRelationInput[];
   }
 
   private take(limit?: number, max = 200) {

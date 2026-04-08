@@ -1,5 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AssistantDispatchChannelsQueryDto,
@@ -11,10 +17,27 @@ import { isArtifactScopeWithinChannelScope, normalizeScopeType, toStringArray, u
 
 @Injectable()
 export class AssistantDispatchService {
+  private readonly channelSortableFields = [
+    'updatedAt',
+    'createdAt',
+    'name',
+    'channelType',
+    'scopeType',
+    'isActive',
+    'lastTestedAt',
+    'id'
+  ] as const;
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async listChannels(query: AssistantDispatchChannelsQueryDto) {
-    const take = this.take(query.limit);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.channelSortableFields,
+      defaultSortBy: 'updatedAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'assistant/channels'
+    });
     const where: Prisma.AssistantDispatchChannelWhereInput = {};
 
     if (query.channelType) {
@@ -41,14 +64,31 @@ export class AssistantDispatchService {
 
     const rows = await this.prisma.client.assistantDispatchChannel.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
-      take
+      orderBy: this.buildChannelSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
     });
 
-    return {
-      items: rows,
-      count: rows.length
-    };
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'realtime'
+    });
+  }
+
+  private buildChannelSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.AssistantDispatchChannelOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.AssistantDispatchChannelOrderByWithRelationInput[];
   }
 
   async createChannel(dto: CreateAssistantDispatchChannelDto, access: AssistantEffectiveAccess) {

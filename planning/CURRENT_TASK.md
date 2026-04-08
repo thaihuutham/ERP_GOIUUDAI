@@ -2,9 +2,40 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-08 09:30 +07
+- Last updated: 2026-04-08 09:47 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-08 09:47 +07 (Phase tiếp theo sau 1.5: rollout server-driven pagination/sorting cho các board còn lại)
+- User request:
+  - sau khi commit riêng Phase 1.5, tiếp tục thực thi Phase kế tiếp theo roadmap đã duyệt.
+- Giả định thực thi:
+  - Phase kế tiếp tương ứng cụm thay đổi đang mở rộng contract `cursor + sortBy/sortDir + pageInfo/sortMeta` cho các module còn lại dùng `StandardDataTable`.
+- Đã thực hiện trong session:
+  - tiếp tục validate và chốt gate kỹ thuật cho khối thay đổi Phase kế tiếp đang có trong working tree:
+    - Backend/API: `assistant` (runs/knowledge/channels), `crm` (customers/contracts/vehicles), `sales`, `finance`, `hr`, `scm`, `workflows`, `audit`.
+    - Frontend/Web: các board tương ứng + contract chuẩn hóa metadata list (`normalizeListMetadata`, `normalizePagedListPayload`) + pager state (`useCursorTableState`).
+  - xác minh nguyên nhân fail của e2e `hr-attendance-board`:
+    - fail không phải regression code, do thiếu env test override idle timeout.
+    - rerun với `NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000` thì pass.
+- Verification:
+  - System gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up).
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅.
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`).
+  - Quality:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - API tests (targeted):
+    - `npm run test --workspace @erp/api -- --run test/assistant-authz.service.test.ts test/assistant-report-dispatch-scope.api-flow.test.ts test/crm.api-flow.test.ts test/scm.api-flow.test.ts test/hr.api-flow.test.ts test/sales.service.test.ts` ✅
+    - `npm run test --workspace @erp/api -- --run test/audit.service.test.ts test/workflows.service.test.ts test/sales.service.test.ts test/finance.service.test.ts test/hr.service.test.ts test/scm.service.test.ts test/crm.service.test.ts test/crm-contracts.service.test.ts` ✅
+  - E2E targeted:
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/assistant-module.spec.ts apps/web/e2e/tests/audit-module.spec.ts apps/web/e2e/tests/workflows-module.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/hr-attendance-board.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`21 passed`).
+- Notes:
+  - Session này không thêm migration/schema và không tạo ADR mới.
+  - `NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000` là điều kiện bắt buộc khi chạy e2e case idle auto check-out của HR attendance.
 
 ## Session Update 2026-04-08 09:30 +07 (Phase 1.5: StandardDataTable stabilization cho e2e bulk/guard)
 - User request:

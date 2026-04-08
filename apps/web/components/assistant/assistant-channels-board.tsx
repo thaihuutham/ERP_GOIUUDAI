@@ -10,9 +10,10 @@ import {
   type AssistantDispatchChannel,
   type AssistantScopeType
 } from '../../lib/assistant-api';
-import { apiRequest, normalizeListPayload } from '../../lib/api-client';
+import { apiRequest, normalizeListPayload, type ApiListSortMeta } from '../../lib/api-client';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../../lib/bulk-actions';
+import { useCursorTableState } from '../../lib/use-cursor-table-state';
 import { SidePanel } from '../ui/side-panel';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from '../ui/standard-data-table';
 
@@ -76,6 +77,9 @@ export function AssistantChannelsBoard() {
   const [channelFilterType, setChannelFilterType] = useState('');
   const [channelFilterScope, setChannelFilterScope] = useState('');
   const [channelFilterActive, setChannelFilterActive] = useState('');
+  const [tableSortBy, setTableSortBy] = useState('updatedAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
 
   const [orgOptions, setOrgOptions] = useState<Array<{ id: string; label: string }>>([]);
   const [userOptions, setUserOptions] = useState<Array<{ id: string; label: string }>>([]);
@@ -107,6 +111,20 @@ export function AssistantChannelsBoard() {
   const [editScopeRefs, setEditScopeRefs] = useState<string[]>([]);
   const [editReportPackMap, setEditReportPackMap] = useState<Record<string, boolean>>(reportPackMap(false));
   const [editIsActive, setEditIsActive] = useState(true);
+  const channelsTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: channelFilterQ.trim(),
+        channelType: channelFilterType,
+        scopeType: channelFilterScope,
+        isActive: channelFilterActive,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: 25
+      }),
+    [channelFilterActive, channelFilterQ, channelFilterScope, channelFilterType, tableSortBy, tableSortDir]
+  );
+  const channelsTablePager = useCursorTableState(channelsTableFingerprint);
 
   const scopeRefOptions = useMemo(
     () => [...orgOptions, ...userOptions].sort((a, b) => a.label.localeCompare(b.label)),
@@ -148,9 +166,14 @@ export function AssistantChannelsBoard() {
           channelFilterActive === ''
             ? undefined
             : channelFilterActive === 'true',
-        limit: 100
+        limit: 25,
+        cursor: channelsTablePager.cursor ?? undefined,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir
       });
       setChannels(payload.items);
+      channelsTablePager.syncFromPageInfo(payload.pageInfo);
+      setTableSortMeta(payload.sortMeta);
     } catch (error) {
       setChannels([]);
       setFeedbackError(error instanceof Error ? error.message : 'Không thể tải danh sách kênh phân phối.');
@@ -160,8 +183,20 @@ export function AssistantChannelsBoard() {
   };
 
   useEffect(() => {
-    void Promise.all([loadChannels(), loadPickerOptions()]);
+    void loadPickerOptions();
   }, []);
+
+  useEffect(() => {
+    void loadChannels();
+  }, [
+    channelFilterActive,
+    channelFilterQ,
+    channelFilterScope,
+    channelFilterType,
+    channelsTablePager.currentPage,
+    tableSortBy,
+    tableSortDir
+  ]);
 
   const onCreateChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -279,14 +314,16 @@ export function AssistantChannelsBoard() {
 
   const channelColumns = useMemo<ColumnDefinition<AssistantDispatchChannel>[]>(
     () => [
-      { key: 'name', label: 'Tên kênh', render: (row) => row.name, isLink: true },
-      { key: 'channelType', label: 'Loại kênh', render: (row) => row.channelType },
-      { key: 'scopeType', label: 'Phạm vi', render: (row) => row.scopeType },
-      { key: 'isActive', label: 'Trạng thái', render: (row) => (row.isActive ? 'Bật' : 'Tắt') },
-      { key: 'lastTestedAt', label: 'Lần kiểm tra gần nhất', render: (row) => formatDateTime(row.lastTestedAt) },
+      { key: 'name', label: 'Tên kênh', sortKey: 'name', render: (row) => row.name, isLink: true },
+      { key: 'channelType', label: 'Loại kênh', sortKey: 'channelType', render: (row) => row.channelType },
+      { key: 'scopeType', label: 'Phạm vi', sortKey: 'scopeType', render: (row) => row.scopeType },
+      { key: 'isActive', label: 'Trạng thái', sortKey: 'isActive', render: (row) => (row.isActive ? 'Bật' : 'Tắt') },
+      { key: 'lastTestedAt', label: 'Lần kiểm tra gần nhất', sortKey: 'lastTestedAt', render: (row) => formatDateTime(row.lastTestedAt) },
       {
         key: 'testNow',
         label: 'Kiểm tra',
+        sortable: false,
+        sortDisabledTooltip: 'Cột thao tác không hỗ trợ sắp xếp.',
         render: (row) => (
           <button
             type="button"
@@ -579,6 +616,26 @@ export function AssistantChannelsBoard() {
           columns={channelColumns}
           storageKey="assistant-channels-table-v1"
           isLoading={loadingChannels}
+          pageInfo={{
+            currentPage: channelsTablePager.currentPage,
+            hasPrevPage: channelsTablePager.hasPrevPage,
+            hasNextPage: channelsTablePager.hasNextPage,
+            visitedPages: channelsTablePager.visitedPages
+          }}
+          sortMeta={
+            tableSortMeta ?? {
+              sortBy: tableSortBy,
+              sortDir: tableSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={channelsTablePager.goNextPage}
+          onPagePrev={channelsTablePager.goPrevPage}
+          onJumpVisitedPage={channelsTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setTableSortBy(sortBy);
+            setTableSortDir(sortDir);
+          }}
           onRowClick={(row) => openEditPanel(row)}
           enableRowSelection
           selectedRowIds={selectedRowIds}

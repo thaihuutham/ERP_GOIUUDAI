@@ -10,8 +10,10 @@ import {
   type AssistantReportRun,
   type AssistantRunType
 } from '../../lib/assistant-api';
+import type { ApiListSortMeta } from '../../lib/api-client';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../../lib/bulk-actions';
+import { useCursorTableState } from '../../lib/use-cursor-table-state';
 import { useAccessPolicy } from '../access-policy-context';
 import { SidePanel } from '../ui/side-panel';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from '../ui/standard-data-table';
@@ -52,7 +54,10 @@ export function AssistantRunsBoard() {
 
   const [statusFilter, setStatusFilter] = useState('');
   const [runTypeFilter, setRunTypeFilter] = useState('');
-  const [limitFilter, setLimitFilter] = useState(50);
+  const [limitFilter, setLimitFilter] = useState(25);
+  const [tableSortBy, setTableSortBy] = useState('createdAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
 
   const [createRunType, setCreateRunType] = useState<AssistantRunType>('MANUAL');
   const [createDispatchChat, setCreateDispatchChat] = useState(true);
@@ -73,6 +78,18 @@ export function AssistantRunsBoard() {
   const [selectedRunError, setSelectedRunError] = useState<string | null>(null);
   const [decisionNote, setDecisionNote] = useState('');
   const [decisionBusy, setDecisionBusy] = useState(false);
+  const runsTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        status: statusFilter,
+        runType: runTypeFilter,
+        limit: limitFilter,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir
+      }),
+    [limitFilter, runTypeFilter, statusFilter, tableSortBy, tableSortDir]
+  );
+  const runsTablePager = useCursorTableState(runsTableFingerprint);
 
   const loadRuns = async () => {
     setRunsLoading(true);
@@ -81,9 +98,14 @@ export function AssistantRunsBoard() {
       const payload = await assistantApi.listRuns({
         status: statusFilter || undefined,
         runType: (runTypeFilter || undefined) as AssistantRunType | undefined,
-        limit: limitFilter
+        limit: limitFilter,
+        cursor: runsTablePager.cursor ?? undefined,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir
       });
       setRuns(payload.items);
+      runsTablePager.syncFromPageInfo(payload.pageInfo);
+      setTableSortMeta(payload.sortMeta);
     } catch (error) {
       setRuns([]);
       setRunsError(error instanceof Error ? error.message : 'Không thể tải danh sách phiên chạy.');
@@ -109,7 +131,7 @@ export function AssistantRunsBoard() {
 
   useEffect(() => {
     void loadRuns();
-  }, [statusFilter, runTypeFilter, limitFilter]);
+  }, [limitFilter, runTypeFilter, runsTablePager.currentPage, statusFilter, tableSortBy, tableSortDir]);
 
   const onCreateRun = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -171,16 +193,24 @@ export function AssistantRunsBoard() {
 
   const runColumns = useMemo<ColumnDefinition<AssistantReportRun>[]>(
     () => [
-      { key: 'createdAt', label: 'Tạo lúc', render: (row) => formatDateTime(row.createdAt), isLink: true },
-      { key: 'runType', label: 'Loại phiên', render: (row) => row.runType },
-      { key: 'status', label: 'Trạng thái', render: (row) => <Badge variant={statusToBadge(row.status)}>{row.status}</Badge> },
+      { key: 'createdAt', label: 'Tạo lúc', sortKey: 'createdAt', render: (row) => formatDateTime(row.createdAt), isLink: true },
+      { key: 'runType', label: 'Loại phiên', sortKey: 'runType', render: (row) => row.runType },
+      { key: 'status', label: 'Trạng thái', sortKey: 'status', render: (row) => <Badge variant={statusToBadge(row.status)}>{row.status}</Badge> },
       {
         key: 'reportPacksJson',
         label: 'Gói báo cáo',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo danh sách pack chưa hỗ trợ ở đợt này.',
         render: (row) => (Array.isArray(row.reportPacksJson) ? row.reportPacksJson.join(', ') : '--')
       },
-      { key: 'requestedBy', label: 'Người yêu cầu', render: (row) => row.requestedBy },
-      { key: 'artifacts', label: 'Tệp đầu ra', render: (row) => String(row.artifacts?.length ?? 0) }
+      { key: 'requestedBy', label: 'Người yêu cầu', sortKey: 'requestedBy', render: (row) => row.requestedBy },
+      {
+        key: 'artifacts',
+        label: 'Tệp đầu ra',
+        sortable: false,
+        sortDisabledTooltip: 'Cột tổng hợp tệp đầu ra không hỗ trợ sắp xếp server-side.',
+        render: (row) => String(row.artifacts?.length ?? 0)
+      }
     ],
     []
   );
@@ -383,7 +413,7 @@ export function AssistantRunsBoard() {
           <label>
             Giới hạn
             <select value={String(limitFilter)} onChange={(event) => setLimitFilter(Number(event.target.value))}>
-              {[20, 50, 100, 200].map((limit) => (
+              {[25, 50, 100].map((limit) => (
                 <option key={limit} value={limit}>
                   {limit}
                 </option>
@@ -402,6 +432,26 @@ export function AssistantRunsBoard() {
           columns={runColumns}
           storageKey="assistant-runs-table-v1"
           isLoading={runsLoading}
+          pageInfo={{
+            currentPage: runsTablePager.currentPage,
+            hasPrevPage: runsTablePager.hasPrevPage,
+            hasNextPage: runsTablePager.hasNextPage,
+            visitedPages: runsTablePager.visitedPages
+          }}
+          sortMeta={
+            tableSortMeta ?? {
+              sortBy: tableSortBy,
+              sortDir: tableSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={runsTablePager.goNextPage}
+          onPagePrev={runsTablePager.goPrevPage}
+          onJumpVisitedPage={runsTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setTableSortBy(sortBy);
+            setTableSortDir(sortDir);
+          }}
           onRowClick={(row) => void openRun(row.id)}
           enableRowSelection
           selectedRowIds={selectedRowIds}

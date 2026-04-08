@@ -20,10 +20,14 @@ type AuditLogsQuery = {
   includeArchived?: string;
   cursor?: string;
   limit?: number;
+  sortBy?: string;
+  sortDir?: string;
 };
 
 type AuditTier = 'hot' | 'cold' | 'mixed';
 type AuditAccessScope = 'company' | 'branch' | 'department';
+type AuditSortBy = 'createdAt';
+type AuditSortDirection = 'asc' | 'desc';
 
 type ColdScanStats = {
   scannedFiles: number;
@@ -58,6 +62,7 @@ type ArchivedAuditLogRow = Record<string, unknown> & {
 
 @Injectable()
 export class AuditService {
+  private readonly sortableFields: AuditSortBy[] = ['createdAt'];
   private readonly defaultColdRangeDays: number;
   private readonly maxCursorOffsetRows: number;
   private readonly defaultActionTaxonomy = [
@@ -103,6 +108,7 @@ export class AuditService {
   async listLogs(query: AuditLogsQuery) {
     const limit = this.toInt(query.limit, 50, 1, 200);
     const includeArchived = this.parseIncludeArchived(query.includeArchived);
+    const { sortBy, sortDir, sortableFields } = this.resolveSortQuery(query);
     const normalized = this.normalizeQuery(query);
     const where = this.buildWhere(normalized);
     const access = await this.auditAccessScope.resolveCurrentUserScope();
@@ -114,6 +120,9 @@ export class AuditService {
         where: scopedWhere,
         limit,
         cursor: this.cleanString(query.cursor),
+        sortBy,
+        sortDir,
+        sortableFields,
         tier: 'hot',
         accessScope: access.accessScope
       });
@@ -135,6 +144,9 @@ export class AuditService {
         where: scopedWhere,
         limit,
         cursor: this.cleanString(query.cursor),
+        sortBy,
+        sortDir,
+        sortableFields,
         tier: queryTier,
         accessScope: access.accessScope
       });
@@ -153,7 +165,7 @@ export class AuditService {
           where: {
             AND: [scopedWhere, { createdAt: { gte: hotThreshold } }]
           },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          orderBy: this.buildOrderBy(sortBy, sortDir),
           take: fetchCount
         })
       : [];
@@ -170,10 +182,13 @@ export class AuditService {
       matcher: (row) => this.matchesColdRow(row, normalized, hotThreshold, actorScopeSet)
     });
 
-    const merged = this.mergeRows([
+    const merged = this.mergeRows(
+      [
       ...hotRows.map((row) => this.normalizeHotRow(row)),
       ...coldResult.items.map((row) => this.normalizeColdRow(row))
-    ]);
+      ],
+      sortDir
+    );
 
     const paged = merged.slice(offset, offset + limit + 1);
     const hasMore = paged.length > limit;
@@ -192,6 +207,11 @@ export class AuditService {
           scannedRows: coldResult.scannedRows,
           durationMs: coldResult.durationMs
         }
+      },
+      sortMeta: {
+        sortBy,
+        sortDir,
+        sortableFields
       }
     };
   }
@@ -268,6 +288,9 @@ export class AuditService {
     where: Prisma.AuditLogWhereInput;
     limit: number;
     cursor: string;
+    sortBy: AuditSortBy;
+    sortDir: AuditSortDirection;
+    sortableFields: string[];
     tier: AuditTier;
     accessScope: AuditAccessScope;
   }) {
@@ -276,7 +299,7 @@ export class AuditService {
     if (offsetCursor !== null) {
       const rows = await this.prisma.client.auditLog.findMany({
         where: args.where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: this.buildOrderBy(args.sortBy, args.sortDir),
         skip: offsetCursor,
         take: args.limit + 1
       });
@@ -291,13 +314,18 @@ export class AuditService {
           nextCursor: hasMore ? this.encodeOffsetCursor(offsetCursor + args.limit) : null,
           tier: args.tier,
           accessScope: args.accessScope
+        },
+        sortMeta: {
+          sortBy: args.sortBy,
+          sortDir: args.sortDir,
+          sortableFields: args.sortableFields
         }
       };
     }
 
     const rows = await this.prisma.client.auditLog.findMany({
       where: args.where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: this.buildOrderBy(args.sortBy, args.sortDir),
       take: args.limit + 1,
       ...(args.cursor
         ? {
@@ -318,6 +346,11 @@ export class AuditService {
         nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
         tier: args.tier,
         accessScope: args.accessScope
+      },
+      sortMeta: {
+        sortBy: args.sortBy,
+        sortDir: args.sortDir,
+        sortableFields: args.sortableFields
       }
     };
   }
@@ -529,7 +562,7 @@ export class AuditService {
     };
   }
 
-  private mergeRows(rows: ApiAuditLogRow[]) {
+  private mergeRows(rows: ApiAuditLogRow[], sortDir: AuditSortDirection) {
     const deduped = new Map<string, ApiAuditLogRow>();
     for (const row of rows) {
       if (!row.id || deduped.has(row.id)) {
@@ -542,10 +575,53 @@ export class AuditService {
       const leftTs = this.parseDate(left.createdAt)?.getTime() ?? 0;
       const rightTs = this.parseDate(right.createdAt)?.getTime() ?? 0;
       if (leftTs !== rightTs) {
-        return rightTs - leftTs;
+        return sortDir === 'asc' ? leftTs - rightTs : rightTs - leftTs;
       }
-      return right.id.localeCompare(left.id);
+      return sortDir === 'asc'
+        ? left.id.localeCompare(right.id)
+        : right.id.localeCompare(left.id);
     });
+  }
+
+  private buildOrderBy(sortBy: AuditSortBy, sortDir: AuditSortDirection): Prisma.AuditLogOrderByWithRelationInput[] {
+    if (sortBy === 'createdAt') {
+      return [{ createdAt: sortDir }, { id: sortDir }];
+    }
+    return [{ createdAt: 'desc' }, { id: 'desc' }];
+  }
+
+  private resolveSortQuery(query: AuditLogsQuery): {
+    sortBy: AuditSortBy;
+    sortDir: AuditSortDirection;
+    sortableFields: AuditSortBy[];
+  } {
+    const rawSortBy = this.cleanString(query.sortBy).toLowerCase();
+    let sortBy: AuditSortBy = 'createdAt';
+    if (rawSortBy) {
+      if (rawSortBy === 'createdat' || rawSortBy === 'created_at') {
+        sortBy = 'createdAt';
+      } else {
+        throw new BadRequestException(
+          `sortBy '${query.sortBy}' không hợp lệ. Chỉ hỗ trợ: ${this.sortableFields.join(', ')}.`
+        );
+      }
+    }
+
+    const rawSortDir = this.cleanString(query.sortDir).toLowerCase();
+    let sortDir: AuditSortDirection = 'desc';
+    if (rawSortDir) {
+      if (rawSortDir === 'asc' || rawSortDir === 'desc') {
+        sortDir = rawSortDir;
+      } else {
+        throw new BadRequestException("sortDir không hợp lệ. Chỉ hỗ trợ 'asc' hoặc 'desc'.");
+      }
+    }
+
+    return {
+      sortBy,
+      sortDir,
+      sortableFields: this.sortableFields
+    };
   }
 
   private matchesColdRow(

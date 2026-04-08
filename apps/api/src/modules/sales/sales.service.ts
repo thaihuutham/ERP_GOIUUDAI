@@ -1,6 +1,12 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
@@ -25,6 +31,8 @@ type OrderSettings = {
 
 @Injectable()
 export class SalesService {
+  private readonly orderSortableFields = ['createdAt', 'orderNo', 'customerName', 'totalAmount', 'status', 'id'] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SearchService) private readonly search: SearchService,
@@ -35,9 +43,16 @@ export class SalesService {
   ) {}
 
   async listOrders(query: PaginationQueryDto, status?: GenericStatus | 'ALL', entityIds?: string[]) {
-    const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    const take = resolvePageLimit(query.limit, 25, 100);
     const keyword = query.q?.trim();
     const normalizedStatus = status && status !== 'ALL' ? status : undefined;
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.orderSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'sales/orders'
+    });
+    const orderBy = this.buildOrderSortOrderBy(sortBy, sortDir);
 
     const where: Prisma.OrderWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {})
@@ -56,7 +71,7 @@ export class SalesService {
       where.status = normalizedStatus;
     }
 
-    if (keyword && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
+    if (keyword && sortBy === 'createdAt' && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
       const rankedIds = await this.search.searchOrderIds(
         keyword,
         this.prisma.getTenantId(),
@@ -87,14 +102,16 @@ export class SalesService {
           : [];
 
         const orderedRows = this.rankByIds(rankedRows, lookupIds);
-        const hasMore = rankedIds.length > take;
-        const items = hasMore ? orderedRows.slice(0, take) : orderedRows;
-
-        return {
-          items,
-          nextCursor: null,
-          limit: take
-        };
+        const { items, hasMore, nextCursor } = sliceCursorItems(orderedRows, take);
+        return buildCursorListResponse(items, {
+          limit: take,
+          hasMore,
+          nextCursor,
+          sortBy,
+          sortDir,
+          sortableFields,
+          consistency: 'snapshot'
+        });
       }
     }
 
@@ -118,19 +135,34 @@ export class SalesService {
           }
         }
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       take: take + 1
     });
 
-    const hasMore = orders.length > take;
-    const items = hasMore ? orders.slice(0, take) : orders;
+    const { items, hasMore, nextCursor } = sliceCursorItems(orders, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
 
-    return {
-      items,
-      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
-      limit: take
-    };
+  private buildOrderSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.OrderOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [
+      { [sortBy]: sortDir },
+      { id: sortDir }
+    ] as Prisma.OrderOrderByWithRelationInput[];
   }
 
   async createOrder(payload: CreateSalesOrderDto) {

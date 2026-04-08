@@ -2,9 +2,15 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, FileText, GitBranch, RefreshCw, SendHorizonal, ShieldAlert } from 'lucide-react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { SidePanel } from './ui/side-panel';
 import { StandardDataTable, type ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
@@ -135,6 +141,7 @@ const STEP_TEMPLATE_OPTIONS = [
   { id: 'director_approval', key: 'director_approval', name: 'Phê duyệt giám đốc' },
   { id: 'final_review', key: 'final_review', name: 'Kiểm tra cuối' }
 ];
+const WORKFLOW_TABLE_PAGE_SIZE = 25;
 
 function createClientId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -311,6 +318,15 @@ export function WorkflowsOperationsBoard() {
   const [bulkTaskNote, setBulkTaskNote] = useState('');
   const [bulkTaskTargetApprover, setBulkTaskTargetApprover] = useState('');
   const [isRunningInboxBulkAction, setIsRunningInboxBulkAction] = useState(false);
+  const [inboxSortBy, setInboxSortBy] = useState('dueAt');
+  const [inboxSortDir, setInboxSortDir] = useState<'asc' | 'desc'>('asc');
+  const [inboxSortMeta, setInboxSortMeta] = useState<ApiListSortMeta | null>(null);
+  const [requestSortBy, setRequestSortBy] = useState('createdAt');
+  const [requestSortDir, setRequestSortDir] = useState<'asc' | 'desc'>('desc');
+  const [requestSortMeta, setRequestSortMeta] = useState<ApiListSortMeta | null>(null);
+  const [monitorSortBy, setMonitorSortBy] = useState('createdAt');
+  const [monitorSortDir, setMonitorSortDir] = useState<'asc' | 'desc'>('desc');
+  const [monitorSortMeta, setMonitorSortMeta] = useState<ApiListSortMeta | null>(null);
 
   const [selectedInstance, setSelectedInstance] = useState<WorkflowInstance | null>(null);
   const [builderDraft, setBuilderDraft] = useState<BuilderDraft>(() => createEmptyDraft());
@@ -321,6 +337,38 @@ export function WorkflowsOperationsBoard() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<unknown>(null);
+  const inboxTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        actorId: actorId.trim(),
+        sortBy: inboxSortBy,
+        sortDir: inboxSortDir,
+        limit: WORKFLOW_TABLE_PAGE_SIZE
+      }),
+    [actorId, inboxSortBy, inboxSortDir]
+  );
+  const requestTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        actorId: actorId.trim(),
+        sortBy: requestSortBy,
+        sortDir: requestSortDir,
+        limit: WORKFLOW_TABLE_PAGE_SIZE
+      }),
+    [actorId, requestSortBy, requestSortDir]
+  );
+  const monitorTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        sortBy: monitorSortBy,
+        sortDir: monitorSortDir,
+        limit: WORKFLOW_TABLE_PAGE_SIZE
+      }),
+    [monitorSortBy, monitorSortDir]
+  );
+  const inboxTablePager = useCursorTableState(inboxTableFingerprint);
+  const requestTablePager = useCursorTableState(requestTableFingerprint);
+  const monitorTablePager = useCursorTableState(monitorTableFingerprint);
 
   const loadDefinitions = async () => {
     const payload = await apiRequest('/workflows/definitions', { query: { limit: 100 } });
@@ -340,10 +388,16 @@ export function WorkflowsOperationsBoard() {
     const payload = await apiRequest('/workflows/inbox', {
       query: {
         approverId: actorId.trim(),
-        limit: 100
+        limit: WORKFLOW_TABLE_PAGE_SIZE,
+        cursor: inboxTablePager.cursor ?? undefined,
+        sortBy: inboxSortBy,
+        sortDir: inboxSortDir
       }
     });
-    setInboxRows(normalizeList<WorkflowTask>(payload));
+    const normalized = normalizePagedListPayload<WorkflowTask>(payload);
+    setInboxRows(normalized.items);
+    inboxTablePager.syncFromPageInfo(normalized.pageInfo);
+    setInboxSortMeta(normalized.sortMeta);
   };
 
   const loadRequests = async () => {
@@ -354,17 +408,31 @@ export function WorkflowsOperationsBoard() {
     const payload = await apiRequest('/workflows/requests', {
       query: {
         requesterId: actorId.trim(),
-        limit: 100
+        limit: WORKFLOW_TABLE_PAGE_SIZE,
+        cursor: requestTablePager.cursor ?? undefined,
+        sortBy: requestSortBy,
+        sortDir: requestSortDir
       }
     });
-    setRequestRows(normalizeList<WorkflowInstance>(payload));
+    const normalized = normalizePagedListPayload<WorkflowInstance>(payload);
+    setRequestRows(normalized.items);
+    requestTablePager.syncFromPageInfo(normalized.pageInfo);
+    setRequestSortMeta(normalized.sortMeta);
   };
 
   const loadMonitor = async () => {
     const payload = await apiRequest('/workflows/instances', {
-      query: { limit: 100 }
+      query: {
+        limit: WORKFLOW_TABLE_PAGE_SIZE,
+        cursor: monitorTablePager.cursor ?? undefined,
+        sortBy: monitorSortBy,
+        sortDir: monitorSortDir
+      }
     });
-    setMonitorRows(normalizeList<WorkflowInstance>(payload));
+    const normalized = normalizePagedListPayload<WorkflowInstance>(payload);
+    setMonitorRows(normalized.items);
+    monitorTablePager.syncFromPageInfo(normalized.pageInfo);
+    setMonitorSortMeta(normalized.sortMeta);
   };
 
   const refreshAll = async () => {
@@ -384,8 +452,46 @@ export function WorkflowsOperationsBoard() {
   };
 
   useEffect(() => {
-    void refreshAll();
+    if (!canView) {
+      return;
+    }
+    setIsBusy(true);
+    setErrorMessage(null);
+    void Promise.all([loadDefinitions(), loadUsers()])
+      .catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : 'Không thể tải dữ liệu quy trình.');
+      })
+      .finally(() => {
+        setIsBusy(false);
+      });
   }, [canView]);
+
+  useEffect(() => {
+    if (!canView) {
+      return;
+    }
+    void loadInbox().catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tải hộp duyệt.');
+    });
+  }, [actorId, canView, inboxSortBy, inboxSortDir, inboxTablePager.currentPage]);
+
+  useEffect(() => {
+    if (!canView) {
+      return;
+    }
+    void loadRequests().catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tải danh sách yêu cầu.');
+    });
+  }, [actorId, canView, requestSortBy, requestSortDir, requestTablePager.currentPage]);
+
+  useEffect(() => {
+    if (!canView) {
+      return;
+    }
+    void loadMonitor().catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tải danh sách giám sát.');
+    });
+  }, [canView, monitorSortBy, monitorSortDir, monitorTablePager.currentPage]);
 
   useEffect(() => {
     return () => {
@@ -775,14 +881,27 @@ export function WorkflowsOperationsBoard() {
 
   const inboxColumns = useMemo<ColumnDefinition<WorkflowTask>[]>(
     () => [
-      { key: 'createdAt', label: 'Tạo lúc', render: (row) => formatDate(row.createdAt) },
-      { key: 'targetType', label: 'Loại', render: (row) => row.targetType },
-      { key: 'targetId', label: 'Đối tượng', render: (row) => row.targetId },
-      { key: 'stepKey', label: 'Bước', render: (row) => row.stepKey ?? '--' },
-      { key: 'dueAt', label: 'SLA', render: (row) => formatDate(row.dueAt) },
+      { key: 'createdAt', label: 'Tạo lúc', sortKey: 'createdAt', render: (row) => formatDate(row.createdAt) },
+      { key: 'targetType', label: 'Loại', sortKey: 'targetType', render: (row) => row.targetType },
+      {
+        key: 'targetId',
+        label: 'Đối tượng',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo mã đối tượng chưa hỗ trợ ở đợt này.',
+        render: (row) => row.targetId
+      },
+      {
+        key: 'stepKey',
+        label: 'Bước',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo step key chưa hỗ trợ ở đợt này.',
+        render: (row) => row.stepKey ?? '--'
+      },
+      { key: 'dueAt', label: 'SLA', sortKey: 'dueAt', render: (row) => formatDate(row.dueAt) },
       {
         key: 'status',
         label: 'Trạng thái',
+        sortKey: 'status',
         render: (row) => <span className={toStatusBadgeClass(row.status)}>{row.status}</span>
       }
     ],
@@ -791,13 +910,20 @@ export function WorkflowsOperationsBoard() {
 
   const requestColumns = useMemo<ColumnDefinition<WorkflowInstance>[]>(
     () => [
-      { key: 'createdAt', label: 'Tạo lúc', render: (row) => formatDate(row.createdAt) },
-      { key: 'targetType', label: 'Loại', render: (row) => row.targetType },
-      { key: 'targetId', label: 'Đối tượng', render: (row) => row.targetId },
-      { key: 'currentStep', label: 'Bước hiện tại', render: (row) => row.currentStep ?? '--' },
+      { key: 'createdAt', label: 'Tạo lúc', sortKey: 'createdAt', render: (row) => formatDate(row.createdAt) },
+      { key: 'targetType', label: 'Loại', sortKey: 'targetType', render: (row) => row.targetType },
+      {
+        key: 'targetId',
+        label: 'Đối tượng',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo mã đối tượng chưa hỗ trợ ở đợt này.',
+        render: (row) => row.targetId
+      },
+      { key: 'currentStep', label: 'Bước hiện tại', sortKey: 'currentStep', render: (row) => row.currentStep ?? '--' },
       {
         key: 'status',
         label: 'Trạng thái',
+        sortKey: 'status',
         render: (row) => <span className={toStatusBadgeClass(row.status)}>{row.status}</span>
       }
     ],
@@ -806,14 +932,27 @@ export function WorkflowsOperationsBoard() {
 
   const monitorColumns = useMemo<ColumnDefinition<WorkflowInstance>[]>(
     () => [
-      { key: 'createdAt', label: 'Tạo lúc', render: (row) => formatDate(row.createdAt), isLink: true },
-      { key: 'definitionId', label: 'Định nghĩa', render: (row) => row.definition?.name ?? row.definitionId },
-      { key: 'targetType', label: 'Loại', render: (row) => row.targetType },
-      { key: 'targetId', label: 'Đối tượng', render: (row) => row.targetId },
-      { key: 'currentStep', label: 'Bước', render: (row) => row.currentStep ?? '--' },
+      { key: 'createdAt', label: 'Tạo lúc', sortKey: 'createdAt', render: (row) => formatDate(row.createdAt), isLink: true },
+      {
+        key: 'definitionId',
+        label: 'Định nghĩa',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo định nghĩa chưa hỗ trợ ở đợt này.',
+        render: (row) => row.definition?.name ?? row.definitionId
+      },
+      { key: 'targetType', label: 'Loại', sortKey: 'targetType', render: (row) => row.targetType },
+      {
+        key: 'targetId',
+        label: 'Đối tượng',
+        sortable: false,
+        sortDisabledTooltip: 'Sắp xếp theo mã đối tượng chưa hỗ trợ ở đợt này.',
+        render: (row) => row.targetId
+      },
+      { key: 'currentStep', label: 'Bước', sortKey: 'currentStep', render: (row) => row.currentStep ?? '--' },
       {
         key: 'status',
         label: 'Trạng thái',
+        sortKey: 'status',
         render: (row) => <span className={toStatusBadgeClass(row.status)}>{row.status}</span>
       }
     ],
@@ -938,6 +1077,26 @@ export function WorkflowsOperationsBoard() {
             columns={inboxColumns}
             storageKey="erp-workflows-inbox"
             isLoading={isBusy}
+            pageInfo={{
+              currentPage: inboxTablePager.currentPage,
+              hasPrevPage: inboxTablePager.hasPrevPage,
+              hasNextPage: inboxTablePager.hasNextPage,
+              visitedPages: inboxTablePager.visitedPages
+            }}
+            sortMeta={
+              inboxSortMeta ?? {
+                sortBy: inboxSortBy,
+                sortDir: inboxSortDir,
+                sortableFields: []
+              }
+            }
+            onPageNext={inboxTablePager.goNextPage}
+            onPagePrev={inboxTablePager.goPrevPage}
+            onJumpVisitedPage={inboxTablePager.jumpVisitedPage}
+            onSortChange={(sortBy, sortDir) => {
+              setInboxSortBy(sortBy);
+              setInboxSortDir(sortDir);
+            }}
             onRowClick={(row) => setSelectedTask(row)}
             enableRowSelection
             selectedRowIds={selectedInboxRowIds}
@@ -963,6 +1122,26 @@ export function WorkflowsOperationsBoard() {
             columns={requestColumns}
             storageKey="erp-workflows-requests"
             isLoading={isBusy}
+            pageInfo={{
+              currentPage: requestTablePager.currentPage,
+              hasPrevPage: requestTablePager.hasPrevPage,
+              hasNextPage: requestTablePager.hasNextPage,
+              visitedPages: requestTablePager.visitedPages
+            }}
+            sortMeta={
+              requestSortMeta ?? {
+                sortBy: requestSortBy,
+                sortDir: requestSortDir,
+                sortableFields: []
+              }
+            }
+            onPageNext={requestTablePager.goNextPage}
+            onPagePrev={requestTablePager.goPrevPage}
+            onJumpVisitedPage={requestTablePager.jumpVisitedPage}
+            onSortChange={(sortBy, sortDir) => {
+              setRequestSortBy(sortBy);
+              setRequestSortDir(sortDir);
+            }}
             enableRowSelection
             selectedRowIds={selectedRequestRowIds}
             onSelectedRowIdsChange={setSelectedRequestRowIds}
@@ -1414,6 +1593,26 @@ export function WorkflowsOperationsBoard() {
             columns={monitorColumns}
             storageKey="erp-workflows-monitor"
             isLoading={isBusy}
+            pageInfo={{
+              currentPage: monitorTablePager.currentPage,
+              hasPrevPage: monitorTablePager.hasPrevPage,
+              hasNextPage: monitorTablePager.hasNextPage,
+              visitedPages: monitorTablePager.visitedPages
+            }}
+            sortMeta={
+              monitorSortMeta ?? {
+                sortBy: monitorSortBy,
+                sortDir: monitorSortDir,
+                sortableFields: []
+              }
+            }
+            onPageNext={monitorTablePager.goNextPage}
+            onPagePrev={monitorTablePager.goPrevPage}
+            onJumpVisitedPage={monitorTablePager.jumpVisitedPage}
+            onSortChange={(sortBy, sortDir) => {
+              setMonitorSortBy(sortBy);
+              setMonitorSortDir(sortDir);
+            }}
             onRowClick={(row) => void openMonitorDetail(row.id)}
             enableRowSelection
             selectedRowIds={selectedMonitorRowIds}

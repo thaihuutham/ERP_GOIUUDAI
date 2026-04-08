@@ -1,4 +1,11 @@
-import { apiRequest, normalizeListPayload, normalizeObjectPayload } from './api-client';
+import {
+  apiRequest,
+  normalizeListMetadata,
+  normalizeListPayload,
+  normalizeObjectPayload,
+  type ApiListPageInfo,
+  type ApiListSortMeta
+} from './api-client';
 
 export const ASSISTANT_SCOPE_OPTIONS = ['company', 'branch', 'department', 'self'] as const;
 export type AssistantScopeType = (typeof ASSISTANT_SCOPE_OPTIONS)[number];
@@ -157,16 +164,21 @@ export type AssistantDispatchChannel = {
 export type AssistantListResponse<T> = {
   items: T[];
   count: number;
+  pageInfo: ApiListPageInfo | null;
+  sortMeta: ApiListSortMeta | null;
 };
 
 function normalizeAssistantListResponse<T>(payload: unknown): AssistantListResponse<T> {
   const normalizedObject = normalizeObjectPayload(payload);
+  const metadata = normalizeListMetadata(payload);
   const items = normalizeListPayload(payload) as T[];
   const rawCount = normalizedObject?.count;
   const count = typeof rawCount === 'number' && Number.isFinite(rawCount) ? rawCount : items.length;
   return {
     items,
-    count
+    count,
+    pageInfo: metadata.pageInfo,
+    sortMeta: metadata.sortMeta
   };
 }
 
@@ -190,13 +202,24 @@ export const assistantApi = {
     });
   },
 
-  listKnowledgeSources(query?: { q?: string; sourceType?: AssistantSourceType; isActive?: boolean; limit?: number }) {
+  listKnowledgeSources(query?: {
+    q?: string;
+    sourceType?: AssistantSourceType;
+    isActive?: boolean;
+    limit?: number;
+    cursor?: string;
+    sortBy?: string;
+    sortDir?: 'asc' | 'desc';
+  }) {
     return apiRequest<unknown>('/assistant/knowledge/sources', {
       query: buildListQuery({
         q: query?.q,
         sourceType: query?.sourceType,
         isActive: query?.isActive === undefined ? undefined : String(query.isActive),
-        limit: query?.limit
+        limit: query?.limit,
+        cursor: query?.cursor,
+        sortBy: query?.sortBy,
+        sortDir: query?.sortDir
       })
     }).then((payload) => normalizeAssistantListResponse<AssistantKnowledgeSource>(payload));
   },
@@ -234,23 +257,44 @@ export const assistantApi = {
     });
   },
 
-  listKnowledgeDocuments(query?: { q?: string; sourceId?: string; scopeType?: AssistantScopeType; limit?: number }) {
+  listKnowledgeDocuments(query?: {
+    q?: string;
+    sourceId?: string;
+    scopeType?: AssistantScopeType;
+    limit?: number;
+    cursor?: string;
+    sortBy?: string;
+    sortDir?: 'asc' | 'desc';
+  }) {
     return apiRequest<unknown>('/assistant/knowledge/documents', {
       query: buildListQuery({
         q: query?.q,
         sourceId: query?.sourceId,
         scopeType: query?.scopeType,
-        limit: query?.limit
+        limit: query?.limit,
+        cursor: query?.cursor,
+        sortBy: query?.sortBy,
+        sortDir: query?.sortDir
       })
     }).then((payload) => normalizeAssistantListResponse<AssistantKnowledgeDocument>(payload));
   },
 
-  listRuns(query?: { status?: string; runType?: AssistantRunType; limit?: number }) {
+  listRuns(query?: {
+    status?: string;
+    runType?: AssistantRunType;
+    limit?: number;
+    cursor?: string;
+    sortBy?: string;
+    sortDir?: 'asc' | 'desc';
+  }) {
     return apiRequest<unknown>('/assistant/reports/runs', {
       query: buildListQuery({
         status: query?.status,
         runType: query?.runType,
-        limit: query?.limit
+        limit: query?.limit,
+        cursor: query?.cursor,
+        sortBy: query?.sortBy,
+        sortDir: query?.sortDir
       })
     }).then((payload) => normalizeAssistantListResponse<AssistantReportRun>(payload));
   },
@@ -298,6 +342,9 @@ export const assistantApi = {
     scopeType?: AssistantScopeType;
     isActive?: boolean;
     limit?: number;
+    cursor?: string;
+    sortBy?: string;
+    sortDir?: 'asc' | 'desc';
   }) {
     return apiRequest<unknown>('/assistant/channels', {
       query: buildListQuery({
@@ -305,7 +352,10 @@ export const assistantApi = {
         channelType: query?.channelType,
         scopeType: query?.scopeType,
         isActive: query?.isActive === undefined ? undefined : String(query.isActive),
-        limit: query?.limit
+        limit: query?.limit,
+        cursor: query?.cursor,
+        sortBy: query?.sortBy,
+        sortDir: query?.sortDir
       })
     }).then((payload) => normalizeAssistantListResponse<AssistantDispatchChannel>(payload));
   },

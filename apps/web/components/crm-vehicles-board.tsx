@@ -4,9 +4,15 @@ import { ArrowLeft, Car, Plus, Trash2 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { readStoredAuthSession } from '../lib/auth-session';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { downloadExcelTemplate } from '../lib/excel-template';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { ExcelImportBlock } from './ui/excel-import-block';
 import { useUserRole } from './user-role-context';
@@ -89,6 +95,7 @@ type VehicleImportResponse = {
 
 const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
 const FETCH_LIMIT = 200;
+const VEHICLE_TABLE_PAGE_SIZE = 25;
 const VEHICLE_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.vehicles-table-settings.v1';
 
 function toDateTime(value: string | null | undefined) {
@@ -277,6 +284,9 @@ export function CrmVehiclesBoard() {
   const [search, setSearch] = useState('');
   const [ownerCustomerFilter, setOwnerCustomerFilter] = useState('');
   const [vehicleKindFilter, setVehicleKindFilter] = useState<VehicleKindOption>('ALL');
+  const [tableSortBy, setTableSortBy] = useState('updatedAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleRecord | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create');
@@ -286,6 +296,19 @@ export function CrmVehiclesBoard() {
   const [archivingVehicleId, setArchivingVehicleId] = useState<string | null>(null);
   const [isImportingFile, setIsImportingFile] = useState(false);
   const [importSummary, setImportSummary] = useState<VehicleImportResponse | null>(null);
+  const vehicleTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        ownerCustomerId: ownerCustomerFilter,
+        vehicleKind: vehicleKindFilter,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: VEHICLE_TABLE_PAGE_SIZE
+      }),
+    [ownerCustomerFilter, search, tableSortBy, tableSortDir, vehicleKindFilter]
+  );
+  const vehicleTablePager = useCursorTableState(vehicleTableFingerprint);
 
   const manageableCustomers = useMemo(() => {
     if (actorIdentity.isAdmin) {
@@ -332,11 +355,17 @@ export function CrmVehiclesBoard() {
           q: search || undefined,
           ownerCustomerId: ownerCustomerFilter || undefined,
           vehicleKind: vehicleKindFilter !== 'ALL' ? vehicleKindFilter : undefined,
-          limit: FETCH_LIMIT
+          limit: VEHICLE_TABLE_PAGE_SIZE,
+          cursor: vehicleTablePager.cursor ?? undefined,
+          sortBy: tableSortBy,
+          sortDir: tableSortDir
         }
       });
-      const rows = normalizeListPayload(payload) as VehicleRecord[];
+      const normalizedVehicles = normalizePagedListPayload<VehicleRecord>(payload);
+      const rows = normalizedVehicles.items;
       setVehicles(rows);
+      vehicleTablePager.syncFromPageInfo(normalizedVehicles.pageInfo);
+      setTableSortMeta(normalizedVehicles.sortMeta);
       setErrorMessage(null);
       setSelectedVehicle((prev) => {
         if (!prev) return prev;
@@ -375,7 +404,15 @@ export function CrmVehiclesBoard() {
       void loadVehicles();
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, ownerCustomerFilter, vehicleKindFilter, canView]);
+  }, [
+    canView,
+    ownerCustomerFilter,
+    search,
+    tableSortBy,
+    tableSortDir,
+    vehicleKindFilter,
+    vehicleTablePager.currentPage
+  ]);
 
   useEffect(() => {
     if (actorIdentity.isAdmin) {
@@ -607,33 +644,41 @@ export function CrmVehiclesBoard() {
     {
       key: 'plateNumber',
       label: 'Biển số',
+      sortKey: 'plateNumber',
       isLink: true
     },
     {
       key: 'ownerFullName',
-      label: 'Chủ xe'
+      label: 'Chủ xe',
+      sortKey: 'ownerFullName'
     },
     {
       key: 'ownerCustomer',
       label: 'Khách hàng',
+      sortable: false,
+      sortDisabledTooltip: 'Sắp xếp theo khách hàng liên kết chưa hỗ trợ ở đợt này.',
       render: (row) => row.ownerCustomer?.fullName || '--'
     },
     {
       key: 'vehicleKind',
-      label: 'Nhóm xe'
+      label: 'Nhóm xe',
+      sortKey: 'vehicleKind'
     },
     {
       key: 'vehicleType',
-      label: 'Dòng xe'
+      label: 'Dòng xe',
+      sortKey: 'vehicleType'
     },
     {
       key: 'status',
       label: 'Trạng thái',
+      sortKey: 'status',
       render: (row) => <Badge variant={statusToBadge(row.status)}>{row.status || '--'}</Badge>
     },
     {
       key: 'updatedAt',
       label: 'Cập nhật',
+      sortKey: 'updatedAt',
       render: (row) => toDateTime(row.updatedAt)
     }
   ];
@@ -717,6 +762,26 @@ export function CrmVehiclesBoard() {
         columns={columns}
         storageKey={VEHICLE_COLUMN_SETTINGS_STORAGE_KEY}
         isLoading={isLoading}
+        pageInfo={{
+          currentPage: vehicleTablePager.currentPage,
+          hasPrevPage: vehicleTablePager.hasPrevPage,
+          hasNextPage: vehicleTablePager.hasNextPage,
+          visitedPages: vehicleTablePager.visitedPages
+        }}
+        sortMeta={
+          tableSortMeta ?? {
+            sortBy: tableSortBy,
+            sortDir: tableSortDir,
+            sortableFields: []
+          }
+        }
+        onPageNext={vehicleTablePager.goNextPage}
+        onPagePrev={vehicleTablePager.goPrevPage}
+        onJumpVisitedPage={vehicleTablePager.jumpVisitedPage}
+        onSortChange={(sortBy, sortDir) => {
+          setTableSortBy(sortBy);
+          setTableSortDir(sortDir);
+        }}
         onRowClick={(vehicle) => setSelectedVehicle(vehicle)}
       />
 

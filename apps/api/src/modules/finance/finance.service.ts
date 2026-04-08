@@ -1,5 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
@@ -34,6 +40,18 @@ const INVOICE_TRANSITIONS: Record<InvoiceAction, { from: GenericStatus[]; to: Ge
 
 @Injectable()
 export class FinanceService {
+  private readonly invoiceSortableFields = [
+    'createdAt',
+    'invoiceNo',
+    'invoiceType',
+    'partnerName',
+    'totalAmount',
+    'paidAmount',
+    'dueAt',
+    'status',
+    'id'
+  ] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SettingsPolicyService) private readonly settingsPolicy: SettingsPolicyService,
@@ -42,6 +60,14 @@ export class FinanceService {
   ) {}
 
   async listInvoices(query: FinanceListQueryDto, entityIds?: string[]) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.invoiceSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'finance/invoices'
+    });
+    const orderBy = this.buildInvoiceSortOrderBy(sortBy, sortDir);
     const where: Prisma.InvoiceWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
       ...(query.status ? { status: query.status } : {}),
@@ -81,11 +107,13 @@ export class FinanceService {
           }
         }
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
     });
 
-    return invoices.map((invoice) => {
+    const { items, hasMore, nextCursor } = sliceCursorItems(invoices, take);
+    const normalizedItems = items.map((invoice) => {
       const total = Number(invoice.totalAmount ?? 0);
       const paid = Number(invoice.paidAmount ?? 0);
       return {
@@ -95,6 +123,29 @@ export class FinanceService {
         outstandingAmount: Math.max(0, total - paid)
       };
     });
+
+    return buildCursorListResponse(normalizedItems, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildInvoiceSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.InvoiceOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [
+      { [sortBy]: sortDir },
+      { id: sortDir }
+    ] as Prisma.InvoiceOrderByWithRelationInput[];
   }
 
   async createInvoice(body: CreateInvoiceDto) {

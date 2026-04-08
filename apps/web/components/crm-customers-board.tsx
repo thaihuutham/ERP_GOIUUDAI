@@ -20,9 +20,16 @@ import {
 } from 'lucide-react';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { readStoredAuthSession } from '../lib/auth-session';
-import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizeObjectPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkModalRenderContext } from './ui/standard-data-table';
@@ -349,7 +356,7 @@ const CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS = [
   'zaloNickType',
   'updatedAt',
 ];
-const FETCH_LIMIT = 200;
+const CUSTOMER_TABLE_PAGE_SIZE = 25;
 const DEFAULT_STAGE_OPTIONS = ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'];
 const DEFAULT_SOURCE_OPTIONS = ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL'];
 const DEFAULT_CUSTOMER_TAG_OPTIONS = ['vip', 'khach_moi', 'da_mua'];
@@ -814,203 +821,6 @@ function toCustomerFilterQueryPayload(draft: CustomerFilterDraft | null) {
   };
 }
 
-function splitListValue(input: unknown) {
-  if (Array.isArray(input)) {
-    return input.map((item) => String(item ?? '').trim()).filter(Boolean);
-  }
-  return String(input ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function toComparableString(input: unknown) {
-  if (input === null || input === undefined) {
-    return '';
-  }
-  if (Array.isArray(input)) {
-    return input.map((item) => String(item ?? '').trim()).filter(Boolean).join(', ');
-  }
-  return String(input).trim();
-}
-
-function normalizeDateOnly(input: string) {
-  const parsed = new Date(input);
-  if (Number.isNaN(parsed.getTime())) {
-    return '';
-  }
-  return parsed.toISOString().slice(0, 10);
-}
-
-function resolveConditionFieldValue(customer: Customer, field: CustomerFilterFieldKey): unknown {
-  switch (field) {
-    case 'fullName':
-      return customer.fullName;
-    case 'phone':
-      return customer.phone;
-    case 'email':
-      return customer.email;
-    case 'customerStage':
-      return customer.customerStage;
-    case 'source':
-      return customer.source;
-    case 'status':
-      return customer.status;
-    case 'zaloNickType':
-      return customer.zaloNickType;
-    case 'segment':
-      return customer.segment;
-    case 'tags':
-      return customer.tags ?? [];
-    case 'lastContactAt':
-      return customer.lastContactAt;
-    case 'updatedAt':
-      return customer.updatedAt;
-    case 'contractPackageNames':
-      return customer.contractPackageNames;
-    case 'contractProductTypes':
-      return customer.contractProductTypes;
-    case 'nextContractExpiryAt':
-      return customer.nextContractExpiryAt;
-    case 'contractServicePhones':
-      return customer.contractServicePhones;
-    case 'vehicleKinds':
-      return customer.vehicleKinds;
-    case 'vehicleTypes':
-      return customer.vehicleTypes;
-    case 'vehiclePlateNumbers':
-      return customer.vehiclePlateNumbers;
-    case 'insuranceExpiryDates':
-      return customer.insuranceExpiryDates;
-    case 'insurancePolicyNumbers':
-      return customer.insurancePolicyNumbers;
-    case 'digitalServiceNames':
-      return customer.digitalServiceNames;
-    default:
-      return '';
-  }
-}
-
-function evaluateFilterCondition(
-  customer: Customer,
-  condition: CustomerFilterCondition,
-  fieldConfig: CustomerFilterFieldConfig
-) {
-  const rawValue = resolveConditionFieldValue(customer, condition.field);
-  const inputValue = condition.value.trim();
-  const inputValueTo = condition.valueTo.trim();
-
-  if (fieldConfig.inputType === 'date') {
-    const values = splitListValue(rawValue).map(normalizeDateOnly).filter(Boolean);
-    const hasValue = values.length > 0;
-    if (condition.operator === 'is_empty') {
-      return !hasValue;
-    }
-    if (condition.operator === 'is_not_empty') {
-      return hasValue;
-    }
-    if (!inputValue) {
-      return true;
-    }
-    const from = normalizeDateOnly(inputValue);
-    if (!from) {
-      return true;
-    }
-    if (condition.operator === 'before') {
-      return values.some((value) => value <= from);
-    }
-    if (condition.operator === 'after') {
-      return values.some((value) => value >= from);
-    }
-    if (condition.operator === 'on') {
-      return values.some((value) => value === from);
-    }
-    if (condition.operator === 'between') {
-      const to = normalizeDateOnly(inputValueTo || inputValue);
-      if (!to) {
-        return true;
-      }
-      const left = from <= to ? from : to;
-      const right = from <= to ? to : from;
-      return values.some((value) => value >= left && value <= right);
-    }
-    return true;
-  }
-
-  if (fieldConfig.inputType === 'tag') {
-    const values = splitListValue(rawValue).map((item) => item.toLowerCase());
-    if (!inputValue) {
-      return true;
-    }
-    const keyword = inputValue.toLowerCase();
-    if (condition.operator === 'has') {
-      return values.includes(keyword);
-    }
-    if (condition.operator === 'not_has') {
-      return !values.includes(keyword);
-    }
-    return true;
-  }
-
-  const sourceText = toComparableString(rawValue);
-  const sourceTokens = splitListValue(rawValue).map((item) => item.toLowerCase());
-  const normalizedSource = sourceText.toLowerCase();
-  const normalizedInput = inputValue.toLowerCase();
-  const hasSourceValue = sourceTokens.length > 0;
-
-  if (condition.operator === 'is_empty') {
-    return !hasSourceValue;
-  }
-  if (condition.operator === 'is_not_empty') {
-    return hasSourceValue;
-  }
-  if (!inputValue) {
-    return true;
-  }
-  if (condition.operator === 'contains') {
-    return normalizedSource.includes(normalizedInput);
-  }
-  if (condition.operator === 'equals') {
-    return sourceTokens.some((item) => item === normalizedInput);
-  }
-  if (condition.operator === 'not_equals') {
-    return sourceTokens.every((item) => item !== normalizedInput);
-  }
-  return true;
-}
-
-function applyCustomerFilterDraft(
-  customers: Customer[],
-  draft: CustomerFilterDraft | null,
-  fieldConfigs: CustomerFilterFieldConfig[]
-) {
-  if (!draft || !Array.isArray(draft.conditions) || draft.conditions.length === 0) {
-    return customers;
-  }
-
-  const validConditions = draft.conditions.filter((condition) => {
-    const fieldConfig = fieldConfigs.find((item) => item.value === condition.field);
-    return Boolean(fieldConfig && fieldConfig.operators.includes(condition.operator));
-  });
-  if (validConditions.length === 0) {
-    return customers;
-  }
-
-  return customers.filter((customer) => {
-    const results = validConditions.map((condition) => {
-      const fieldConfig = fieldConfigs.find((item) => item.value === condition.field);
-      if (!fieldConfig) {
-        return true;
-      }
-      return evaluateFilterCondition(customer, condition, fieldConfig);
-    });
-    if (draft.logic === 'OR') {
-      return results.some(Boolean);
-    }
-    return results.every(Boolean);
-  });
-}
-
 export function CrmCustomersBoard() {
   const { canModule, canAction } = useAccessPolicy();
   const { role } = useUserRole();
@@ -1029,6 +839,9 @@ export function CrmCustomersBoard() {
   const [customerTagOptions, setCustomerTagOptions] = useState<string[]>(DEFAULT_CUSTOMER_TAG_OPTIONS);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<CustomerStatusFilter>('ALL');
+  const [tableSortBy, setTableSortBy] = useState('updatedAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
   const [initialCustomerId, setInitialCustomerId] = useState('');
   const [hasAppliedInitialCustomerId, setHasAppliedInitialCustomerId] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -1087,6 +900,43 @@ export function CrmCustomersBoard() {
     conditions: [createDefaultFilterCondition(customerFilterFieldConfigs)],
   });
   const [hasInitializedDefaultFilter, setHasInitializedDefaultFilter] = useState(false);
+  const appliedSavedFilter = useMemo(
+    () => savedCustomerFilters.find((item) => item.id === appliedSavedFilterId) ?? null,
+    [appliedSavedFilterId, savedCustomerFilters]
+  );
+  const normalizedAppliedFilterDraft = useMemo(() => {
+    if (appliedSavedFilter) {
+      return toCustomerFilterDraft(appliedSavedFilter, customerFilterFieldConfigs);
+    }
+    if (appliedCustomFilter) {
+      return {
+        ...appliedCustomFilter,
+        conditions: appliedCustomFilter.conditions.map((condition) => ({ ...condition })),
+      };
+    }
+    return null;
+  }, [appliedCustomFilter, appliedSavedFilter, customerFilterFieldConfigs]);
+  const activeCustomerFilterPayload = useMemo(
+    () => toCustomerFilterQueryPayload(normalizedAppliedFilterDraft),
+    [normalizedAppliedFilterDraft]
+  );
+  const activeCustomerFilterFingerprint = useMemo(
+    () => (activeCustomerFilterPayload ? JSON.stringify(activeCustomerFilterPayload) : ''),
+    [activeCustomerFilterPayload]
+  );
+  const customerTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        status,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: CUSTOMER_TABLE_PAGE_SIZE,
+        filter: activeCustomerFilterFingerprint
+      }),
+    [activeCustomerFilterFingerprint, search, status, tableSortBy, tableSortDir]
+  );
+  const customerTablePager = useCursorTableState(customerTableFingerprint);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1150,25 +1000,21 @@ export function CrmCustomersBoard() {
     if (!canView) return;
     setIsLoading(true);
     try {
-      const appliedSavedFilter = savedCustomerFilters.find((item) => item.id === appliedSavedFilterId) ?? null;
-      const activeDraft = appliedSavedFilter
-        ? toCustomerFilterDraft(appliedSavedFilter, customerFilterFieldConfigs)
-        : (appliedCustomFilter
-            ? {
-                ...appliedCustomFilter,
-                conditions: appliedCustomFilter.conditions.map((condition) => ({ ...condition })),
-              }
-            : null);
-      const customFilter = toCustomerFilterQueryPayload(activeDraft);
       const payload = await apiRequest<any>('/crm/customers', {
         query: {
           q: search,
           status: status !== 'ALL' ? status : undefined,
-          limit: FETCH_LIMIT,
-          customFilter: customFilter ? JSON.stringify(customFilter) : undefined,
+          limit: CUSTOMER_TABLE_PAGE_SIZE,
+          cursor: customerTablePager.cursor ?? undefined,
+          sortBy: tableSortBy,
+          sortDir: tableSortDir,
+          customFilter: activeCustomerFilterPayload ? JSON.stringify(activeCustomerFilterPayload) : undefined,
         }
       });
-      setCustomers(normalizeListPayload(payload) as Customer[]);
+      const normalizedCustomers = normalizePagedListPayload<Customer>(payload);
+      setCustomers(normalizedCustomers.items);
+      customerTablePager.syncFromPageInfo(normalizedCustomers.pageInfo);
+      setTableSortMeta(normalizedCustomers.sortMeta);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi tải dữ liệu');
     } finally {
@@ -1696,7 +1542,15 @@ export function CrmCustomersBoard() {
   useEffect(() => {
     const timer = setTimeout(loadCustomers, 300);
     return () => clearTimeout(timer);
-  }, [appliedCustomFilter, appliedSavedFilterId, customerFilterFieldConfigs, savedCustomerFilters, search, status]);
+  }, [
+    activeCustomerFilterFingerprint,
+    canView,
+    customerTablePager.currentPage,
+    search,
+    status,
+    tableSortBy,
+    tableSortDir
+  ]);
 
   useEffect(() => {
     if (!initialCustomerId || hasAppliedInitialCustomerId) {
@@ -1777,26 +1631,6 @@ export function CrmCustomersBoard() {
       detailCustomer?.tags?.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean) ?? [];
     return Array.from(new Set([...customerTagOptions, ...selectedTags]));
   }, [customerTagOptions, detailCustomer]);
-  const appliedSavedFilter = useMemo(
-    () => savedCustomerFilters.find((item) => item.id === appliedSavedFilterId) ?? null,
-    [appliedSavedFilterId, savedCustomerFilters]
-  );
-  const normalizedAppliedFilterDraft = useMemo(() => {
-    if (appliedSavedFilter) {
-      return toCustomerFilterDraft(appliedSavedFilter, customerFilterFieldConfigs);
-    }
-    if (appliedCustomFilter) {
-      return {
-        ...appliedCustomFilter,
-        conditions: appliedCustomFilter.conditions.map((condition) => ({ ...condition })),
-      };
-    }
-    return null;
-  }, [appliedCustomFilter, appliedSavedFilter, customerFilterFieldConfigs]);
-  const filteredCustomers = useMemo(
-    () => applyCustomerFilterDraft(customers, normalizedAppliedFilterDraft, customerFilterFieldConfigs),
-    [customerFilterFieldConfigs, customers, normalizedAppliedFilterDraft]
-  );
   const appliedFilterLabel = appliedSavedFilter
     ? appliedSavedFilter.name
     : normalizedAppliedFilterDraft
@@ -2377,7 +2211,7 @@ export function CrmCustomersBoard() {
 
       {/* Table Data */}
       <StandardDataTable
-        data={filteredCustomers}
+        data={customers}
         columns={columns}
         storageKey={CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY}
         defaultVisibleColumnKeys={CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS}
@@ -2412,6 +2246,26 @@ export function CrmCustomersBoard() {
           </div>
         )}
         isLoading={isLoading}
+        pageInfo={{
+          currentPage: customerTablePager.currentPage,
+          hasPrevPage: customerTablePager.hasPrevPage,
+          hasNextPage: customerTablePager.hasNextPage,
+          visitedPages: customerTablePager.visitedPages
+        }}
+        sortMeta={
+          tableSortMeta ?? {
+            sortBy: tableSortBy,
+            sortDir: tableSortDir,
+            sortableFields: []
+          }
+        }
+        onPageNext={customerTablePager.goNextPage}
+        onPagePrev={customerTablePager.goPrevPage}
+        onJumpVisitedPage={customerTablePager.jumpVisitedPage}
+        onSortChange={(sortBy, sortDir) => {
+          setTableSortBy(sortBy);
+          setTableSortDir(sortDir);
+        }}
         onRowClick={(c) => setSelectedCustomer(c)}
         editableKeys={canUpdate ? ['fullName', 'phone', 'email', 'customerStage', 'status', 'zaloNickType'] : []}
         onSaveRow={handleSaveCustomer}

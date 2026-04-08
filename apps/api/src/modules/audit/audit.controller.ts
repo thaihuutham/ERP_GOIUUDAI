@@ -25,7 +25,9 @@ export class AuditController {
       q: query.q ? String(query.q) : undefined,
       includeArchived: query.includeArchived === undefined ? undefined : String(query.includeArchived),
       cursor: query.cursor ? String(query.cursor) : undefined,
-      limit: query.limit ? Number(query.limit) : undefined
+      limit: query.limit ? Number(query.limit) : undefined,
+      sortBy: query.sortBy ? String(query.sortBy) : undefined,
+      sortDir: query.sortDir ? String(query.sortDir) : undefined
     });
   }
 
@@ -47,7 +49,9 @@ export class AuditController {
       q: query.q ? String(query.q) : undefined,
       includeArchived: query.includeArchived === undefined ? undefined : String(query.includeArchived),
       cursor: query.cursor ? String(query.cursor) : undefined,
-      limit: query.limit ? Number(query.limit) : undefined
+      limit: query.limit ? Number(query.limit) : undefined,
+      sortBy: query.sortBy ? String(query.sortBy) : undefined,
+      sortDir: query.sortDir ? String(query.sortDir) : undefined
     });
   }
 

@@ -21,9 +21,15 @@ import {
   Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -71,6 +77,7 @@ type Payroll = {
 };
 
 const HR_COLUMN_SETTINGS_KEY = 'erp-retail.hr.employee-table-settings.v2';
+const HR_TABLE_PAGE_SIZE = 25;
 
 function toCurrency(value: any) {
   return formatRuntimeCurrency(Number(value || 0));
@@ -93,6 +100,9 @@ export function HrOperationsBoard() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [tableSortBy, setTableSortBy] = useState('createdAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -103,13 +113,35 @@ export function HrOperationsBoard() {
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const hrTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: HR_TABLE_PAGE_SIZE
+      }),
+    [search, tableSortBy, tableSortDir]
+  );
+  const hrTablePager = useCursorTableState(hrTableFingerprint);
 
   const loadEmployees = async () => {
     if (!canView) return;
     setIsLoading(true);
     try {
-      const payload = await apiRequest<any>('/hr/employees', { query: { q: search, limit: 100 } });
-      setEmployees(normalizeListPayload(payload) as Employee[]);
+      const payload = await apiRequest<any>('/hr/employees', {
+        query: {
+          q: search,
+          limit: HR_TABLE_PAGE_SIZE,
+          cursor: hrTablePager.cursor ?? undefined,
+          sortBy: tableSortBy,
+          sortDir: tableSortDir
+        }
+      });
+      const normalizedEmployees = normalizePagedListPayload<Employee>(payload);
+      setEmployees(normalizedEmployees.items);
+      hrTablePager.syncFromPageInfo(normalizedEmployees.pageInfo);
+      setTableSortMeta(normalizedEmployees.sortMeta);
       setErrorMessage(null);
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : 'Không thể tải danh sách nhân sự');
@@ -160,20 +192,20 @@ export function HrOperationsBoard() {
 
   useEffect(() => {
     loadEmployees();
-  }, [search]);
+  }, [canView, hrTablePager.currentPage, search, tableSortBy, tableSortDir]);
 
   useEffect(() => {
     if (selectedEmployee) loadDetails(selectedEmployee.id);
   }, [selectedEmployee]);
 
   const columns: ColumnDefinition<Employee>[] = [
-    { key: 'code', label: 'Mã NV', isLink: true },
-    { key: 'fullName', label: 'Họ và tên' },
-    { key: 'department', label: 'Phòng ban' },
-    { key: 'position', label: 'Chức danh' },
-    { key: 'employmentType', label: 'Loại HĐ' },
-    { key: 'status', label: 'Trạng thái', render: (e) => <Badge variant={statusToBadge(e.status)}>{e.status}</Badge> },
-    { key: 'joinDate', label: 'Ngày vào', render: (e) => toDateTime(e.joinDate) },
+    { key: 'code', label: 'Mã NV', sortKey: 'code', isLink: true },
+    { key: 'fullName', label: 'Họ và tên', sortKey: 'fullName' },
+    { key: 'department', label: 'Phòng ban', sortKey: 'department' },
+    { key: 'position', label: 'Chức danh', sortKey: 'position' },
+    { key: 'employmentType', label: 'Loại HĐ', sortKey: 'employmentType' },
+    { key: 'status', label: 'Trạng thái', sortKey: 'status', render: (e) => <Badge variant={statusToBadge(e.status)}>{e.status}</Badge> },
+    { key: 'joinDate', label: 'Ngày vào', sortKey: 'joinDate', render: (e) => toDateTime(e.joinDate) },
   ];
 
   const bulkActions: StandardTableBulkAction<Employee>[] = canDelete
@@ -285,6 +317,26 @@ export function HrOperationsBoard() {
         columns={columns}
         isLoading={isLoading}
         storageKey={HR_COLUMN_SETTINGS_KEY}
+        pageInfo={{
+          currentPage: hrTablePager.currentPage,
+          hasPrevPage: hrTablePager.hasPrevPage,
+          hasNextPage: hrTablePager.hasNextPage,
+          visitedPages: hrTablePager.visitedPages
+        }}
+        sortMeta={
+          tableSortMeta ?? {
+            sortBy: tableSortBy,
+            sortDir: tableSortDir,
+            sortableFields: []
+          }
+        }
+        onPageNext={hrTablePager.goNextPage}
+        onPagePrev={hrTablePager.goPrevPage}
+        onJumpVisitedPage={hrTablePager.jumpVisitedPage}
+        onSortChange={(sortBy, sortDir) => {
+          setTableSortBy(sortBy);
+          setTableSortDir(sortDir);
+        }}
         onRowClick={(e) => setSelectedEmployee(e)}
         enableRowSelection
         selectedRowIds={selectedRowIds}

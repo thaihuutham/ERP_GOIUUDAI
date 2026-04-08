@@ -5,6 +5,22 @@ const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:
 const WEB_ROLE_STORAGE_KEY = 'erp_web_role';
 const DEV_ROLES = new Set(['STAFF', 'MANAGER', 'ADMIN']);
 
+export type ApiListPageInfo = {
+  limit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  currentPage?: number;
+  hasPrevPage?: boolean;
+  visitedPages?: number[];
+};
+
+export type ApiListSortMeta = {
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+  sortableFields: string[];
+  consistency?: 'snapshot' | 'realtime';
+};
+
 export type ApiRequestOptions = {
   method?: HttpMethod;
   query?: Record<string, string | number | boolean | null | undefined>;
@@ -210,4 +226,73 @@ export function normalizeObjectPayload(payload: unknown): Record<string, unknown
   }
 
   return unwrapCustomFieldsEntity(payload);
+}
+
+export function normalizeListMetadata(payload: unknown): {
+  pageInfo: ApiListPageInfo | null;
+  sortMeta: ApiListSortMeta | null;
+} {
+  if (!isRecord(payload)) {
+    return {
+      pageInfo: null,
+      sortMeta: null
+    };
+  }
+
+  const pageInfoRaw = isRecord(payload.pageInfo) ? payload.pageInfo : null;
+  const sortMetaRaw = isRecord(payload.sortMeta) ? payload.sortMeta : null;
+
+  const pageInfo: ApiListPageInfo | null = pageInfoRaw
+    ? {
+        limit: typeof pageInfoRaw.limit === 'number' && Number.isFinite(pageInfoRaw.limit) ? pageInfoRaw.limit : 25,
+        hasMore: Boolean(pageInfoRaw.hasMore),
+        nextCursor:
+          typeof pageInfoRaw.nextCursor === 'string'
+            ? pageInfoRaw.nextCursor
+            : pageInfoRaw.nextCursor === null
+              ? null
+              : null,
+        currentPage:
+          typeof pageInfoRaw.currentPage === 'number' && Number.isFinite(pageInfoRaw.currentPage)
+            ? pageInfoRaw.currentPage
+            : undefined,
+        hasPrevPage: typeof pageInfoRaw.hasPrevPage === 'boolean' ? pageInfoRaw.hasPrevPage : undefined,
+        visitedPages: Array.isArray(pageInfoRaw.visitedPages)
+          ? pageInfoRaw.visitedPages.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+          : undefined
+      }
+    : null;
+
+  const sortMeta: ApiListSortMeta | null = sortMetaRaw
+    ? {
+        sortBy: typeof sortMetaRaw.sortBy === 'string' ? sortMetaRaw.sortBy : '',
+        sortDir: sortMetaRaw.sortDir === 'asc' ? 'asc' : 'desc',
+        sortableFields: Array.isArray(sortMetaRaw.sortableFields)
+          ? sortMetaRaw.sortableFields.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [],
+        consistency:
+          sortMetaRaw.consistency === 'snapshot' || sortMetaRaw.consistency === 'realtime'
+            ? sortMetaRaw.consistency
+            : undefined
+      }
+    : null;
+
+  return {
+    pageInfo,
+    sortMeta
+  };
+}
+
+export function normalizePagedListPayload<T = Record<string, unknown>>(payload: unknown): {
+  items: T[];
+  pageInfo: ApiListPageInfo | null;
+  sortMeta: ApiListSortMeta | null;
+} {
+  const items = normalizeListPayload(payload) as T[];
+  const { pageInfo, sortMeta } = normalizeListMetadata(payload);
+  return {
+    items,
+    pageInfo,
+    sortMeta
+  };
 }

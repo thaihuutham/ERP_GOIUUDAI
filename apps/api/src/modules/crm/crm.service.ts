@@ -4,6 +4,12 @@ import { ClsService } from 'nestjs-cls';
 import { CustomerCareStatus, CustomerZaloNickType, GenericStatus, Prisma, ServiceContractProductType, ServiceContractStatus, UserRole, VehicleKind } from '@prisma/client';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { assertValidVietnamPhone, normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -130,6 +136,20 @@ const CUSTOMER_FILTER_FIELD_OPERATORS: Record<CustomerSavedFilterField, Customer
 
 @Injectable()
 export class CrmService {
+  private readonly customerSortableFields = [
+    'updatedAt',
+    'createdAt',
+    'fullName',
+    'phone',
+    'customerStage',
+    'source',
+    'status',
+    'lastContactAt',
+    'totalSpent',
+    'totalOrders',
+    'id'
+  ] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SearchService) private readonly search: SearchService,
@@ -249,7 +269,13 @@ export class CrmService {
     filters: { status?: CustomerCareStatus | 'ALL'; stage?: string; tag?: string; customFilter?: unknown } = {},
     entityIds?: string[]
   ) {
-    const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.customerSortableFields,
+      defaultSortBy: 'updatedAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'crm/customers'
+    });
     const keyword = query.q?.trim();
     const normalizedTag = this.cleanString(filters.tag).toLowerCase();
     const customFilter = this.parseCustomerQueryFilter(filters.customFilter);
@@ -296,7 +322,7 @@ export class CrmService {
 
     const baseWhere = this.combineCustomerWhereClauses(baseWhereClauses);
 
-    if (keyword && !customFilter && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
+    if (keyword && !customFilter && sortBy === 'updatedAt' && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
       const rankedIds = await this.search.searchCustomerIds(
         keyword,
         this.prisma.getTenantId(),
@@ -320,15 +346,17 @@ export class CrmService {
           : [];
 
         const orderedRows = this.rankByIds(rankedRows, lookupIds);
-        const hasMore = rankedIds.length > take;
-        const items = hasMore ? orderedRows.slice(0, take) : orderedRows;
+        const { items, hasMore, nextCursor } = sliceCursorItems(orderedRows, take);
         const enrichedItems = await this.enrichCustomerListRows(items);
-
-        return {
-          items: enrichedItems,
-          nextCursor: null,
-          limit: take
-        };
+        return buildCursorListResponse(enrichedItems, {
+          limit: take,
+          hasMore,
+          nextCursor,
+          sortBy,
+          sortDir,
+          sortableFields,
+          consistency: 'snapshot'
+        });
       }
     }
 
@@ -348,20 +376,33 @@ export class CrmService {
 
     const rows = await this.prisma.client.customer.findMany({
       where: finalWhere,
-      orderBy: { updatedAt: 'desc' },
+      orderBy: this.buildCustomerSortOrderBy(sortBy, sortDir),
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       take: take + 1
     });
 
-    const hasMore = rows.length > take;
-    const items = hasMore ? rows.slice(0, take) : rows;
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
     const enrichedItems = await this.enrichCustomerListRows(items);
 
-    return {
-      items: enrichedItems,
-      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
-      limit: take
-    };
+    return buildCursorListResponse(enrichedItems, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildCustomerSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.CustomerOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.CustomerOrderByWithRelationInput[];
   }
 
   private async enrichCustomerListRows<T extends { id: string | number }>(rows: T[]) {

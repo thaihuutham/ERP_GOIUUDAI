@@ -3,6 +3,12 @@ import { GenericStatus, PermissionAction, Prisma, UserRole } from '@prisma/clien
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY, IAM_SCOPE_CONTEXT_KEY } from '../../common/request/request.constants';
 import { AuthUser } from '../../common/auth/auth-user.type';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IamAccessService } from '../iam/iam-access.service';
@@ -113,6 +119,10 @@ const TERMINAL_STATUSES: GenericStatus[] = [
 @Injectable()
 export class WorkflowsService {
   private readonly logger = new Logger(WorkflowsService.name);
+  private readonly definitionSortableFields = ['createdAt', 'name', 'module', 'version', 'status', 'id'] as const;
+  private readonly instanceSortableFields = ['createdAt', 'submittedAt', 'status', 'targetType', 'currentStep', 'id'] as const;
+  private readonly inboxSortableFields = ['dueAt', 'createdAt', 'status', 'targetType', 'approverId', 'id'] as const;
+  private readonly requestSortableFields = ['createdAt', 'submittedAt', 'status', 'targetType', 'currentStep', 'id'] as const;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -123,14 +133,32 @@ export class WorkflowsService {
   ) {}
 
   async listDefinitions(query: WorkflowsListQueryDto, entityIds?: string[]) {
-    return this.prisma.client.workflowDefinition.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.definitionSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'workflows/definitions'
+    });
+    const rows = await this.prisma.client.workflowDefinition.findMany({
       where: {
         ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.module ? { module: query.module } : {})
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildDefinitionSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -299,6 +327,13 @@ export class WorkflowsService {
   }
 
   async listInstances(query: WorkflowsListQueryDto) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.instanceSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'workflows/instances'
+    });
     const rows = await this.prisma.client.workflowInstance.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
@@ -311,13 +346,23 @@ export class WorkflowsService {
           orderBy: { createdAt: 'asc' }
         }
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildInstanceSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take * 3 + 1
     });
 
     const actor = await this.resolveDecisionActor(query.requesterId);
     if (!(await this.shouldEnforceWorkflowRecordAccess(actor))) {
-      return rows;
+      const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+      return buildCursorListResponse(items, {
+        limit: take,
+        hasMore,
+        nextCursor,
+        sortBy,
+        sortDir,
+        sortableFields,
+        consistency: 'snapshot'
+      });
     }
 
     const filtered: typeof rows = [];
@@ -326,7 +371,16 @@ export class WorkflowsService {
         filtered.push(row);
       }
     }
-    return filtered;
+    const { items, hasMore, nextCursor } = sliceCursorItems(filtered, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
   }
 
   async getInstanceDetail(id: string) {
@@ -791,6 +845,13 @@ export class WorkflowsService {
   }
 
   async listInbox(query: WorkflowsListQueryDto) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.inboxSortableFields,
+      defaultSortBy: 'dueAt',
+      defaultSortDir: 'asc',
+      errorLabel: 'workflows/inbox'
+    });
     const actor = await this.resolveDecisionActor(query.approverId);
     if (!actor.actorId) {
       throw new ForbiddenException('Không xác định được người duyệt hiện tại.');
@@ -813,7 +874,7 @@ export class WorkflowsService {
       ]
     };
 
-    return this.prisma.client.approval.findMany({
+    const rows = await this.prisma.client.approval.findMany({
       where,
       include: {
         instance: {
@@ -822,18 +883,36 @@ export class WorkflowsService {
           }
         }
       },
-      orderBy: [{ dueAt: 'asc' }, { createdAt: 'asc' }],
-      take: this.take(query.limit)
+      orderBy: this.buildInboxSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
   async listRequests(query: WorkflowsListQueryDto) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.requestSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'workflows/requests'
+    });
     const actor = await this.resolveDecisionActor(query.requesterId);
     if (!actor.actorId) {
       throw new ForbiddenException('Không xác định được người gửi yêu cầu hiện tại.');
     }
 
-    return this.prisma.client.workflowInstance.findMany({
+    const rows = await this.prisma.client.workflowInstance.findMany({
       where: {
         startedBy: actor.actorId,
         ...(query.status ? { status: query.status } : {}),
@@ -849,9 +928,60 @@ export class WorkflowsService {
           orderBy: { createdAt: 'asc' }
         }
       },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildRequestSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
     });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildDefinitionSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.WorkflowDefinitionOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.WorkflowDefinitionOrderByWithRelationInput[];
+  }
+
+  private buildInstanceSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.WorkflowInstanceOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.WorkflowInstanceOrderByWithRelationInput[];
+  }
+
+  private buildInboxSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ApprovalOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ApprovalOrderByWithRelationInput[];
+  }
+
+  private buildRequestSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.WorkflowInstanceOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.WorkflowInstanceOrderByWithRelationInput[];
   }
 
   async listApprovals(query: WorkflowsListQueryDto) {

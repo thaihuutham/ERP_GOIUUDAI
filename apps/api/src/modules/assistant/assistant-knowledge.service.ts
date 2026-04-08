@@ -3,6 +3,12 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AssistantKnowledgeDocumentsQueryDto,
@@ -22,10 +28,39 @@ type IngestedDocument = {
 
 @Injectable()
 export class AssistantKnowledgeService {
+  private readonly sourceSortableFields = [
+    'updatedAt',
+    'createdAt',
+    'name',
+    'sourceType',
+    'scopeType',
+    'classification',
+    'isActive',
+    'lastSyncedAt',
+    'id'
+  ] as const;
+  private readonly documentSortableFields = [
+    'updatedAt',
+    'createdAt',
+    'title',
+    'uri',
+    'scopeType',
+    'classification',
+    'status',
+    'lastIndexedAt',
+    'id'
+  ] as const;
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async listSources(query: AssistantKnowledgeSourcesQueryDto) {
-    const take = this.take(query.limit);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.sourceSortableFields,
+      defaultSortBy: 'updatedAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'assistant/knowledge/sources'
+    });
     const where: Prisma.AssistantKnowledgeSourceWhereInput = {};
 
     if (query.sourceType) {
@@ -50,14 +85,21 @@ export class AssistantKnowledgeService {
 
     const rows = await this.prisma.client.assistantKnowledgeSource.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
-      take
+      orderBy: this.buildSourceSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
     });
 
-    return {
-      items: rows,
-      count: rows.length
-    };
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'realtime'
+    });
   }
 
   async createSource(dto: CreateAssistantKnowledgeSourceDto, access: AssistantEffectiveAccess) {
@@ -154,7 +196,13 @@ export class AssistantKnowledgeService {
   }
 
   async listDocuments(query: AssistantKnowledgeDocumentsQueryDto, access: AssistantEffectiveAccess) {
-    const take = this.take(query.limit);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.documentSortableFields,
+      defaultSortBy: 'updatedAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'assistant/knowledge/documents'
+    });
     const where: Prisma.AssistantKnowledgeDocumentWhereInput = {};
 
     if (query.sourceId) {
@@ -176,16 +224,42 @@ export class AssistantKnowledgeService {
 
     const rows = await this.prisma.client.assistantKnowledgeDocument.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
-      take: take * 5
+      orderBy: this.buildDocumentSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take * 8 + 1
     });
 
     const visible = rows.filter((row) => this.canAccessKnowledge(row, access));
+    const { items, hasMore, nextCursor } = sliceCursorItems(visible, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'realtime'
+    });
+  }
 
-    return {
-      items: visible.slice(0, take),
-      count: Math.min(visible.length, take)
-    };
+  private buildSourceSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.AssistantKnowledgeSourceOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.AssistantKnowledgeSourceOrderByWithRelationInput[];
+  }
+
+  private buildDocumentSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.AssistantKnowledgeDocumentOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.AssistantKnowledgeDocumentOrderByWithRelationInput[];
   }
 
   async retrieveContext(access: AssistantEffectiveAccess, options: { query?: string; limit?: number } = {}) {

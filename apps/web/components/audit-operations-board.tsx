@@ -2,9 +2,15 @@
 
 import { CalendarClock, Filter, RefreshCw, Search } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import type { BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, type ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -81,6 +87,7 @@ type FilterState = {
 
 const AUDIT_COLUMN_SETTINGS_KEY = 'erp-retail.audit.logs-table-settings.v1';
 const HOT_WINDOW_MONTHS = 12;
+const AUDIT_TABLE_PAGE_SIZE = 25;
 
 function createInitialFilters(): FilterState {
   return {
@@ -119,17 +126,6 @@ function stringifyJson(value: unknown) {
   } catch {
     return String(value);
   }
-}
-
-function mergeRowsById(prev: AuditLogRow[], incoming: AuditLogRow[]) {
-  const byId = new Map<string, AuditLogRow>();
-  for (const row of prev) {
-    byId.set(row.id, row);
-  }
-  for (const row of incoming) {
-    byId.set(row.id, row);
-  }
-  return Array.from(byId.values());
 }
 
 function deriveHotThreshold(now = new Date()) {
@@ -193,17 +189,32 @@ export function AuditOperationsBoard() {
   const canView = canModule('audit');
 
   const [filters, setFilters] = useState<FilterState>(createInitialFilters());
+  const [appliedFilters, setAppliedFilters] = useState<FilterState>(createInitialFilters());
   const [rows, setRows] = useState<AuditLogRow[]>([]);
   const [actionItems, setActionItems] = useState<AuditActionItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<AuditLogRow | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [pageInfo, setPageInfo] = useState<AuditPageInfo | null>(null);
+  const [sortBy, setSortBy] = useState('createdAt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortMeta, setSortMeta] = useState<ApiListSortMeta | null>(null);
 
-  const archiveLikely = useMemo(() => likelyTouchesArchive(filters), [filters]);
-  const archiveRangeOk = useMemo(() => isArchiveRangeValid(filters), [filters]);
+  const tableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        filters: appliedFilters,
+        sortBy,
+        sortDir,
+        limit: AUDIT_TABLE_PAGE_SIZE
+      }),
+    [appliedFilters, sortBy, sortDir]
+  );
+  const tablePager = useCursorTableState(tableFingerprint);
+
+  const archiveLikely = useMemo(() => likelyTouchesArchive(appliedFilters), [appliedFilters]);
+  const archiveRangeOk = useMemo(() => isArchiveRangeValid(appliedFilters), [appliedFilters]);
 
   const loadActions = async () => {
     if (!canView) {
@@ -218,24 +229,13 @@ export function AuditOperationsBoard() {
     }
   };
 
-  const loadLogs = async (
-    nextFilters: FilterState,
-    options: {
-      append?: boolean;
-      cursor?: string | null;
-    } = {}
-  ) => {
+  const loadLogs = async (nextFilters: FilterState) => {
     if (!canView) {
       return;
     }
 
-    const append = options.append === true;
-    if (append) {
-      setIsLoadingMore(true);
-    } else {
-      setIsLoading(true);
-      setErrorMessage(null);
-    }
+    setIsLoading(true);
+    setErrorMessage(null);
 
     try {
       const trimmedEntityType = nextFilters.entityType.trim();
@@ -258,23 +258,33 @@ export function AuditOperationsBoard() {
           to: normalizeDateTime(nextFilters.to) || undefined,
           q: nextFilters.q || undefined,
           includeArchived: true,
-          cursor: options.cursor || undefined,
-          limit: 100
+          cursor: tablePager.cursor ?? undefined,
+          limit: AUDIT_TABLE_PAGE_SIZE,
+          sortBy,
+          sortDir
         }
       });
 
-      const fetchedRows = normalizeListPayload(payload) as AuditLogRow[];
-      setRows((prev) => (append ? mergeRowsById(prev, fetchedRows) : fetchedRows));
-      setPageInfo(payload.pageInfo ?? null);
+      const normalized = normalizePagedListPayload<AuditLogRow>(payload);
+      const rawPageInfo =
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? ((payload as { pageInfo?: AuditPageInfo }).pageInfo ?? null)
+          : null;
+      setRows(normalized.items);
+      setPageInfo(rawPageInfo);
+      setSortMeta(normalized.sortMeta);
+      tablePager.syncFromPageInfo(normalized.pageInfo);
     } catch (error) {
       setErrorMessage(toAuditFriendlyError(error, 'Không thể tải audit log.'));
     } finally {
       setIsLoading(false);
-      setIsLoadingMore(false);
     }
   };
 
   useEffect(() => {
+    if (!canView) {
+      return;
+    }
     if (typeof window === 'undefined') {
       return;
     }
@@ -294,19 +304,21 @@ export function AuditOperationsBoard() {
     };
 
     setFilters(nextFilters);
-    void Promise.all([loadActions(), loadLogs(nextFilters)]);
+    setAppliedFilters(nextFilters);
+    void loadActions();
   }, [canView]);
+
+  useEffect(() => {
+    if (!canView) {
+      return;
+    }
+    void loadLogs(appliedFilters);
+  }, [appliedFilters, canView, sortBy, sortDir, tablePager.currentPage]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    await loadLogs(filters, { append: false });
-  };
-
-  const handleLoadMore = async () => {
-    if (!pageInfo?.hasMore || !pageInfo.nextCursor) {
-      return;
-    }
-    await loadLogs(filters, { append: true, cursor: pageInfo.nextCursor });
+    setSelectedRowIds([]);
+    setAppliedFilters({ ...filters });
   };
 
   const columns: ColumnDefinition<AuditLogRow>[] = useMemo(
@@ -314,6 +326,7 @@ export function AuditOperationsBoard() {
       {
         key: 'createdAt',
         label: 'Thời gian',
+        sortKey: 'createdAt',
         isLink: true,
         render: (row) => formatDateTime(row.createdAt)
       },
@@ -482,7 +495,14 @@ export function AuditOperationsBoard() {
           <button type="submit" className="btn btn-primary">
             <Filter size={14} /> Lọc
           </button>
-          <button type="button" className="btn btn-ghost" onClick={() => loadLogs(filters, { append: false })}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              setSelectedRowIds([]);
+              setAppliedFilters({ ...filters });
+            }}
+          >
             <RefreshCw size={14} /> Làm mới
           </button>
         </div>
@@ -494,7 +514,7 @@ export function AuditOperationsBoard() {
         </div>
       )}
 
-      {(isLoading || isLoadingMore) && archiveLikely && (
+      {isLoading && archiveLikely && (
         <div className="banner banner-info" style={{ marginBottom: '0.75rem' }}>
           Đang tra cứu archive (có thể chậm hơn dữ liệu 12 tháng gần nhất)...
         </div>
@@ -520,20 +540,32 @@ export function AuditOperationsBoard() {
         columns={columns}
         storageKey={AUDIT_COLUMN_SETTINGS_KEY}
         isLoading={isLoading}
+        pageInfo={{
+          currentPage: tablePager.currentPage,
+          hasPrevPage: tablePager.hasPrevPage,
+          hasNextPage: tablePager.hasNextPage,
+          visitedPages: tablePager.visitedPages
+        }}
+        sortMeta={
+          sortMeta ?? {
+            sortBy,
+            sortDir,
+            sortableFields: ['createdAt']
+          }
+        }
+        onPageNext={tablePager.goNextPage}
+        onPagePrev={tablePager.goPrevPage}
+        onJumpVisitedPage={tablePager.jumpVisitedPage}
+        onSortChange={(nextSortBy, nextSortDir) => {
+          setSortBy(nextSortBy);
+          setSortDir(nextSortDir);
+        }}
         onRowClick={(row) => setSelectedRow(row)}
         enableRowSelection
         selectedRowIds={selectedRowIds}
         onSelectedRowIdsChange={setSelectedRowIds}
         showDefaultBulkUtilities
       />
-
-      {pageInfo?.hasMore && (
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.85rem' }}>
-          <button type="button" className="btn btn-ghost" onClick={handleLoadMore} disabled={isLoadingMore}>
-            {isLoadingMore ? 'Đang tải thêm...' : 'Tải thêm 100 dòng'}
-          </button>
-        </div>
-      )}
 
       {errorMessage && <div className="banner banner-error" style={{ marginTop: '0.75rem' }}>{errorMessage}</div>}
 

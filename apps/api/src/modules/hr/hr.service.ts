@@ -18,6 +18,12 @@ import {
 import { ClsService } from 'nestjs-cls';
 import { AuthUser } from '../../common/auth/auth-user.type';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -117,6 +123,18 @@ const GOAL_AUTO_STALE_MS = 10_000;
 
 @Injectable()
 export class HrService {
+  private readonly employeeSortableFields = [
+    'createdAt',
+    'code',
+    'fullName',
+    'department',
+    'position',
+    'employmentType',
+    'status',
+    'joinDate',
+    'id'
+  ] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
@@ -126,6 +144,14 @@ export class HrService {
   ) {}
 
   async listEmployees(query: PaginationQueryDto, entityIds?: string[]) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.employeeSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'hr/employees'
+    });
+    const orderBy = this.buildEmployeeSortOrderBy(sortBy, sortDir);
     const keyword = query.q?.trim();
     const where: Prisma.EmployeeWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
@@ -143,11 +169,36 @@ export class HrService {
         : {})
     };
 
-    return this.prisma.client.employee.findMany({
+    const rows = await this.prisma.client.employee.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit, 250)
+      orderBy,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
     });
+
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildEmployeeSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.EmployeeOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [
+      { [sortBy]: sortDir },
+      { id: sortDir }
+    ] as Prisma.EmployeeOrderByWithRelationInput[];
   }
 
   async createEmployee(payload: HrPayload) {

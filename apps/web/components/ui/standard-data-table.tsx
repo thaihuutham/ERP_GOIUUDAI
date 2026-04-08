@@ -3,6 +3,9 @@
 import {
   Settings2,
   ArrowUpRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Check,
   X,
   Pencil,
@@ -23,6 +26,9 @@ import {
 export interface ColumnDefinition<T> {
   key: string;
   label: string;
+  sortKey?: string;
+  sortable?: boolean;
+  sortDisabledTooltip?: string;
   group?: string;
   description?: string;
   render?: (item: T) => ReactNode;
@@ -49,10 +55,29 @@ export interface StandardTableBulkModalRenderContext<T> {
   clearSelection: () => void;
 }
 
+export type StandardTablePageInfo = {
+  currentPage: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+  visitedPages: number[];
+};
+
+export type StandardTableSortMeta = {
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+  sortableFields: string[];
+};
+
 interface StandardDataTableProps<T> {
   data: T[];
   columns: ColumnDefinition<T>[];
   storageKey: string;
+  pageInfo?: StandardTablePageInfo | null;
+  sortMeta?: StandardTableSortMeta | null;
+  onPageNext?: () => void;
+  onPagePrev?: () => void;
+  onJumpVisitedPage?: (page: number) => void;
+  onSortChange?: (sortBy: string, sortDir: 'asc' | 'desc') => void;
   defaultVisibleColumnKeys?: string[];
   toolbarLeftContent?: ReactNode;
   onRowClick?: (item: T) => void;
@@ -152,6 +177,12 @@ export function StandardDataTable<T extends { id: string | number }>({
   data,
   columns,
   storageKey,
+  pageInfo,
+  sortMeta,
+  onPageNext,
+  onPagePrev,
+  onJumpVisitedPage,
+  onSortChange,
   defaultVisibleColumnKeys,
   toolbarLeftContent,
   onRowClick,
@@ -534,6 +565,21 @@ export function StandardDataTable<T extends { id: string | number }>({
   }
 
   const canEdit = editableKeys.length > 0 && !!onSaveRow;
+  const activeSortBy = sortMeta?.sortBy ?? '';
+  const activeSortDir = sortMeta?.sortDir ?? 'asc';
+  const sourceVisitedPages = pageInfo?.visitedPages ?? [];
+  const visitedPages = Array.from(
+    new Set(
+      sourceVisitedPages
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.round(value))
+    )
+  ).sort((left, right) => left - right);
+  if (visitedPages.length === 0 && pageInfo?.currentPage) {
+    visitedPages.push(Math.max(1, Math.round(pageInfo.currentPage)));
+  }
+  const currentPage = pageInfo?.currentPage ? Math.max(1, Math.round(pageInfo.currentPage)) : 1;
+  const showPagingControls = Boolean(pageInfo && (onPageNext || onPagePrev || onJumpVisitedPage));
   const isArchivedMode = hideArchivedRows && archiveViewMode === 'archived';
   const emptyMessage = isArchivedMode ? 'Không có dữ liệu đã xóa' : 'Không có dữ liệu';
   const hasBulkModalControls = enableRowSelection
@@ -754,7 +800,47 @@ export function StandardDataTable<T extends { id: string | number }>({
               )}
               {orderedColumns.map((col) => (
                 <th key={col.key}>
-                  {col.label}
+                  {(() => {
+                    const sortKey = col.sortKey ?? col.key;
+                    const supportsSortFromServer = sortMeta ? sortMeta.sortableFields.includes(sortKey) : false;
+                    const isSortable = Boolean(onSortChange) && (col.sortable ?? supportsSortFromServer);
+                    const isActiveSort = activeSortBy === sortKey;
+                    const disabledSortTooltip = col.sortDisabledTooltip ?? 'Cột này chưa hỗ trợ sắp xếp server-side.';
+                    const sortTitle = isSortable
+                      ? `Sắp xếp theo ${col.label}`
+                      : disabledSortTooltip;
+
+                    if (!onSortChange) {
+                      return col.label;
+                    }
+
+                    const icon = isActiveSort
+                      ? activeSortDir === 'asc'
+                        ? <ArrowUp size={13} />
+                        : <ArrowDown size={13} />
+                      : <ArrowUpDown size={13} />;
+
+                    if (!isSortable) {
+                      return (
+                        <span className="standard-table-sort-label standard-table-sort-label-disabled" title={sortTitle}>
+                          <span>{col.label}</span>
+                          <span className="standard-table-sort-icon">{icon}</span>
+                        </span>
+                      );
+                    }
+
+                    return (
+                      <button
+                        type="button"
+                        className={`standard-table-sort-btn ${isActiveSort ? 'is-active' : ''}`}
+                        onClick={() => onSortChange(sortKey, isActiveSort && activeSortDir === 'asc' ? 'desc' : 'asc')}
+                        title={sortTitle}
+                      >
+                        <span>{col.label}</span>
+                        <span className="standard-table-sort-icon">{icon}</span>
+                      </button>
+                    );
+                  })()}
                 </th>
               ))}
               {canEdit && <th className="standard-table-actions-head">Thao tác</th>}
@@ -873,6 +959,45 @@ export function StandardDataTable<T extends { id: string | number }>({
           </tbody>
         </table>
       </div>
+
+      {showPagingControls && (
+        <div className="standard-table-pagination">
+          <div className="standard-table-pagination-meta">
+            Trang <strong>{currentPage}</strong>
+          </div>
+          <div className="standard-table-pagination-actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => onPagePrev?.()}
+              disabled={!pageInfo?.hasPrevPage || !onPagePrev}
+            >
+              Trước
+            </button>
+
+            {visitedPages.map((page) => (
+              <button
+                key={page}
+                type="button"
+                className={`btn ${page === currentPage ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => onJumpVisitedPage?.(page)}
+                disabled={page === currentPage || !onJumpVisitedPage}
+              >
+                {page}
+              </button>
+            ))}
+
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => onPageNext?.()}
+              disabled={!pageInfo?.hasNextPage || !onPageNext}
+            >
+              Sau
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

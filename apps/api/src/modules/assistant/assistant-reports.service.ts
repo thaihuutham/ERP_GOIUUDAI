@@ -1,5 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AssistantRunDecisionDto,
@@ -19,6 +25,8 @@ type ReportPackResolver = {
 
 @Injectable()
 export class AssistantReportsService {
+  private readonly runSortableFields = ['createdAt', 'startedAt', 'completedAt', 'status', 'runType', 'requestedBy', 'id'] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AssistantProxyService) private readonly proxyService: AssistantProxyService,
@@ -119,7 +127,13 @@ export class AssistantReportsService {
   }
 
   async listRuns(query: AssistantRunsQueryDto, access: AssistantEffectiveAccess) {
-    const take = this.take(query.limit);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.runSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'assistant/reports/runs'
+    });
 
     const where: Prisma.AssistantReportRunWhereInput = {
       ...(query.status ? { status: query.status } : {}),
@@ -144,14 +158,31 @@ export class AssistantReportsService {
           }
         }
       },
-      orderBy: { createdAt: 'desc' },
-      take
+      orderBy: this.buildRunSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
     });
 
-    return {
-      items: rows,
-      count: rows.length
-    };
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'realtime'
+    });
+  }
+
+  private buildRunSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.AssistantReportRunOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.AssistantReportRunOrderByWithRelationInput[];
   }
 
   async getRun(runIdRaw: string, access: AssistantEffectiveAccess) {

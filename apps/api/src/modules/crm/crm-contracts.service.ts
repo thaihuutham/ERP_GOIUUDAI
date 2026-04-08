@@ -20,6 +20,12 @@ import {
 } from '@prisma/client';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -62,6 +68,18 @@ type VehicleImportSummary = {
 @Injectable()
 export class CrmContractsService {
   private readonly logger = new Logger(CrmContractsService.name);
+  private readonly contractSortableFields = ['endsAt', 'createdAt', 'status', 'productType', 'sourceType', 'id'] as const;
+  private readonly renewalWorklistSortableFields = ['dueAt', 'status', 'assigneeStaffId', 'createdAt', 'id'] as const;
+  private readonly vehicleSortableFields = [
+    'updatedAt',
+    'createdAt',
+    'plateNumber',
+    'vehicleKind',
+    'vehicleType',
+    'ownerFullName',
+    'status',
+    'id'
+  ] as const;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -172,7 +190,13 @@ export class CrmContractsService {
   }
 
   async listContracts(query: PaginationQueryDto, filters: Record<string, unknown> = {}) {
-    const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.contractSortableFields,
+      defaultSortBy: 'endsAt',
+      defaultSortDir: 'asc',
+      errorLabel: 'crm/contracts'
+    });
     const keyword = this.cleanString(query.q);
     const customerId = this.cleanString(filters.customerId);
     const productType = this.optionalProductType(filters.productType);
@@ -219,19 +243,32 @@ export class CrmContractsService {
         motoInsuranceDetail: true,
         digitalServiceDetail: true
       },
-      orderBy: [{ endsAt: 'asc' }, { createdAt: 'desc' }],
+      orderBy: this.buildContractSortOrderBy(sortBy, sortDir),
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       take: take + 1
     });
 
-    const hasMore = rows.length > take;
-    const items = hasMore ? rows.slice(0, take) : rows;
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
 
-    return {
-      items,
-      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
-      limit: take
-    };
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildContractSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ServiceContractOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ServiceContractOrderByWithRelationInput[];
   }
 
   async listCustomerContracts(customerId: string, query: PaginationQueryDto) {
@@ -278,7 +315,13 @@ export class CrmContractsService {
   }
 
   async listRenewalWorklist(query: PaginationQueryDto, filters: Record<string, unknown> = {}) {
-    const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.renewalWorklistSortableFields,
+      defaultSortBy: 'dueAt',
+      defaultSortDir: 'asc',
+      errorLabel: 'crm/renewal-worklist'
+    });
     const status = this.optionalReminderStatus(filters.status);
     const assigneeStaffId = this.cleanString(filters.assigneeStaffId);
 
@@ -318,18 +361,31 @@ export class CrmContractsService {
           }
         }
       },
-      orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }],
+      orderBy: this.buildRenewalWorklistSortOrderBy(sortBy, sortDir),
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       take: take + 1
     });
 
-    const hasMore = rows.length > take;
-    const items = hasMore ? rows.slice(0, take) : rows;
-    return {
-      items,
-      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
-      limit: take
-    };
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildRenewalWorklistSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ContractRenewalReminderOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ContractRenewalReminderOrderByWithRelationInput[];
   }
 
   async runRenewalReminderSweep(payload: Record<string, unknown> = {}) {
@@ -494,7 +550,13 @@ export class CrmContractsService {
   }
 
   async listVehicles(query: PaginationQueryDto, filters: Record<string, unknown> = {}) {
-    const take = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.vehicleSortableFields,
+      defaultSortBy: 'updatedAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'crm/vehicles'
+    });
     const keyword = this.cleanString(query.q);
     const ownerCustomerId = this.cleanString(filters.ownerCustomerId);
     const vehicleKind = this.optionalVehicleKind(filters.vehicleKind);
@@ -528,19 +590,32 @@ export class CrmContractsService {
           }
         }
       },
-      orderBy: [{ updatedAt: 'desc' }],
+      orderBy: this.buildVehicleSortOrderBy(sortBy, sortDir),
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       take: take + 1
     });
 
-    const hasMore = rows.length > take;
-    const items = hasMore ? rows.slice(0, take) : rows;
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
 
-    return {
-      items,
-      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
-      limit: take
-    };
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
+  }
+
+  private buildVehicleSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.VehicleOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.VehicleOrderByWithRelationInput[];
   }
 
   async createVehicle(payload: Record<string, unknown>) {

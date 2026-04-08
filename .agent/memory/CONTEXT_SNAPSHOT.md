@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-08 09:30 +07
+- Time: 2026-04-08 09:47 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-08_0930_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_0947_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,40 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 09:47 (Phase tiếp theo sau 1.5: rollout server-driven list contract cho module boards còn lại)
+- User request:
+  - sau commit Phase 1.5, tiếp tục Phase kế tiếp theo roadmap đã duyệt.
+- Đã xử lý trong session:
+  - tiếp tục validate và chốt gate cho khối thay đổi Phase kế tiếp đang rollout:
+    - API/Web cho assistant, audit, crm/contracts/vehicles, sales, finance, hr, scm, workflows.
+    - contract chung list metadata (`pageInfo/sortMeta`) và pager state theo `cursor`.
+  - khoanh và xác nhận nguyên nhân fail e2e HR attendance idle auto check-out:
+    - fail do thiếu env test override timeout.
+    - chạy lại với `NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000` pass ổn định.
+- Verify:
+  - Docker/DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Build/lint:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - Tests:
+    - API targeted suites (assistant/crm/scm/hr/sales + audit/workflows/finance/crm-contracts) ✅
+    - E2E targeted suite:
+      - `assistant-module.spec.ts`
+      - `audit-module.spec.ts`
+      - `workflows-module.spec.ts`
+      - `crm-sales-finance-core-flow.spec.ts`
+      - `hr-attendance-board.spec.ts`
+      - command chạy với `NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000`
+      - kết quả ✅ `21 passed`.
+- Notes:
+  - Không có migration/schema mới.
+  - Không phát sinh ADR mới trong session này.
 
 ## Update 2026-04-08 09:30 (Phase 1.5 stabilization: e2e regression alignment sau StandardDataTable server-driven rollout)
 - User request:

@@ -16,9 +16,15 @@ import {
   Trash2
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -80,6 +86,7 @@ type CreateOrderFormState = {
 };
 
 const SALES_COLUMN_SETTINGS_KEY = 'erp-retail.sales.order-table-settings.v3';
+const SALES_TABLE_PAGE_SIZE = 25;
 
 function toCurrency(value: number | null | undefined) {
   return formatRuntimeCurrency(Number(value || 0));
@@ -143,6 +150,9 @@ export function SalesOperationsBoard() {
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [tableSortBy, setTableSortBy] = useState('createdAt');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<SalesOrder | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -156,16 +166,38 @@ export function SalesOperationsBoard() {
   const [isHandlingDecision, setIsHandlingDecision] = useState(false);
   const [isExportingInvoice, setIsExportingInvoice] = useState(false);
   const [isArchivingOrder, setIsArchivingOrder] = useState(false);
+  const salesTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: SALES_TABLE_PAGE_SIZE
+      }),
+    [search, tableSortBy, tableSortDir]
+  );
+  const salesTablePager = useCursorTableState(salesTableFingerprint);
 
   const loadData = async () => {
     if (!canView) return;
     setIsLoading(true);
     try {
       const [ordersPayload, approvalsPayload] = await Promise.all([
-        apiRequest<any>('/sales/orders', { query: { q: search, limit: 200 } }),
+        apiRequest<any>('/sales/orders', {
+          query: {
+            q: search,
+            limit: SALES_TABLE_PAGE_SIZE,
+            cursor: salesTablePager.cursor ?? undefined,
+            sortBy: tableSortBy,
+            sortDir: tableSortDir
+          }
+        }),
         apiRequest<any>('/sales/approvals')
       ]);
-      setOrders(normalizeListPayload(ordersPayload) as SalesOrder[]);
+      const normalizedOrders = normalizePagedListPayload<SalesOrder>(ordersPayload);
+      setOrders(normalizedOrders.items);
+      salesTablePager.syncFromPageInfo(normalizedOrders.pageInfo);
+      setTableSortMeta(normalizedOrders.sortMeta);
       setApprovals(normalizeListPayload(approvalsPayload) as ApprovalRecord[]);
       setErrorMessage(null);
     } catch (error) {
@@ -180,7 +212,7 @@ export function SalesOperationsBoard() {
       loadData();
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, canView]);
+  }, [canView, salesTablePager.currentPage, search, tableSortBy, tableSortDir]);
 
   useEffect(() => {
     if (!selectedOrder) return;
@@ -214,29 +246,40 @@ export function SalesOperationsBoard() {
     {
       key: 'orderNo',
       label: 'Số đơn hàng',
+      sortKey: 'orderNo',
       isLink: true,
       render: (order) => order.orderNo || order.id.slice(-8)
     },
-    { key: 'customerName', label: 'Khách hàng' },
+    { key: 'customerName', label: 'Khách hàng', sortKey: 'customerName' },
     {
       key: 'totalAmount',
       label: 'Tổng tiền',
+      sortKey: 'totalAmount',
       render: (order) => toCurrency(order.totalAmount ?? 0)
     },
     {
       key: 'status',
       label: 'Trạng thái',
+      sortKey: 'status',
       render: (order) => <Badge variant={statusToBadge(order.status)}>{order.status || '--'}</Badge>
     },
     {
       key: 'invoices',
       label: 'Hóa đơn liên kết',
+      sortable: false,
+      sortDisabledTooltip: 'Sắp xếp theo hóa đơn liên kết chưa hỗ trợ ở đợt này.',
       render: (order) => order.invoices?.[0]?.invoiceNo ?? '--'
     },
-    { key: 'createdBy', label: 'Người tạo' },
+    {
+      key: 'createdBy',
+      label: 'Người tạo',
+      sortable: false,
+      sortDisabledTooltip: 'Sắp xếp theo người tạo chưa hỗ trợ ở đợt này.'
+    },
     {
       key: 'createdAt',
       label: 'Ngày tạo',
+      sortKey: 'createdAt',
       render: (order) => toDateTime(order.createdAt)
     }
   ];
@@ -603,6 +646,26 @@ export function SalesOperationsBoard() {
         columns={columns}
         isLoading={isLoading}
         storageKey={SALES_COLUMN_SETTINGS_KEY}
+        pageInfo={{
+          currentPage: salesTablePager.currentPage,
+          hasPrevPage: salesTablePager.hasPrevPage,
+          hasNextPage: salesTablePager.hasNextPage,
+          visitedPages: salesTablePager.visitedPages
+        }}
+        sortMeta={
+          tableSortMeta ?? {
+            sortBy: tableSortBy,
+            sortDir: tableSortDir,
+            sortableFields: []
+          }
+        }
+        onPageNext={salesTablePager.goNextPage}
+        onPagePrev={salesTablePager.goPrevPage}
+        onJumpVisitedPage={salesTablePager.jumpVisitedPage}
+        onSortChange={(sortBy, sortDir) => {
+          setTableSortBy(sortBy);
+          setTableSortDir(sortDir);
+        }}
         onRowClick={(order) => setSelectedOrder(order)}
         enableRowSelection
         selectedRowIds={selectedRowIds}

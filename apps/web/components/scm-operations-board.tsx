@@ -20,9 +20,15 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizeListPayload,
+  normalizePagedListPayload,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import type { BulkRowId } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition } from './ui/standard-data-table';
 import { SidePanel } from './ui/side-panel';
@@ -69,6 +75,7 @@ type Shipment = {
 
 const SCM_VENDOR_STORAGE_KEY = 'erp-retail.scm.vendor-table-settings.v2';
 const SCM_PO_STORAGE_KEY = 'erp-retail.scm.po-table-settings.v2';
+const SCM_TABLE_PAGE_SIZE = 25;
 
 function toCurrency(value: any) {
   return formatRuntimeCurrency(Number(value || 0));
@@ -93,22 +100,72 @@ export function ScmOperationsBoard() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [poSortBy, setPoSortBy] = useState('createdAt');
+  const [poSortDir, setPoSortDir] = useState<'asc' | 'desc'>('desc');
+  const [poSortMeta, setPoSortMeta] = useState<ApiListSortMeta | null>(null);
+  const [vendorSortBy, setVendorSortBy] = useState('createdAt');
+  const [vendorSortDir, setVendorSortDir] = useState<'asc' | 'desc'>('desc');
+  const [vendorSortMeta, setVendorSortMeta] = useState<ApiListSortMeta | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [selectedPo, setSelectedPo] = useState<PurchaseOrder | null>(null);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const poTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        sortBy: poSortBy,
+        sortDir: poSortDir,
+        limit: SCM_TABLE_PAGE_SIZE
+      }),
+    [poSortBy, poSortDir, search]
+  );
+  const vendorTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        sortBy: vendorSortBy,
+        sortDir: vendorSortDir,
+        limit: SCM_TABLE_PAGE_SIZE
+      }),
+    [search, vendorSortBy, vendorSortDir]
+  );
+  const poTablePager = useCursorTableState(poTableFingerprint);
+  const vendorTablePager = useCursorTableState(vendorTableFingerprint);
 
   const loadData = async () => {
     if (!canView) return;
     setIsLoading(true);
     try {
       const [poData, vendorData, shipData] = await Promise.all([
-        apiRequest<any>('/scm/purchase-orders', { query: { q: search, limit: 100 } }),
-        apiRequest<any>('/scm/vendors', { query: { q: search, limit: 100 } }),
+        apiRequest<any>('/scm/purchase-orders', {
+          query: {
+            q: search,
+            limit: SCM_TABLE_PAGE_SIZE,
+            cursor: poTablePager.cursor ?? undefined,
+            sortBy: poSortBy,
+            sortDir: poSortDir
+          }
+        }),
+        apiRequest<any>('/scm/vendors', {
+          query: {
+            q: search,
+            limit: SCM_TABLE_PAGE_SIZE,
+            cursor: vendorTablePager.cursor ?? undefined,
+            sortBy: vendorSortBy,
+            sortDir: vendorSortDir
+          }
+        }),
         apiRequest<any>('/scm/shipments', { query: { q: search, limit: 100 } }),
       ]);
-      setPurchaseOrders(normalizeListPayload(poData) as PurchaseOrder[]);
-      setVendors(normalizeListPayload(vendorData) as Vendor[]);
+      const normalizedPos = normalizePagedListPayload<PurchaseOrder>(poData);
+      const normalizedVendors = normalizePagedListPayload<Vendor>(vendorData);
+      setPurchaseOrders(normalizedPos.items);
+      poTablePager.syncFromPageInfo(normalizedPos.pageInfo);
+      setPoSortMeta(normalizedPos.sortMeta);
+      setVendors(normalizedVendors.items);
+      vendorTablePager.syncFromPageInfo(normalizedVendors.pageInfo);
+      setVendorSortMeta(normalizedVendors.sortMeta);
       setShipments(normalizeListPayload(shipData) as Shipment[]);
     } catch (e) {
     } finally {
@@ -129,28 +186,37 @@ export function ScmOperationsBoard() {
 
   useEffect(() => {
     loadData();
-  }, [search]);
+  }, [
+    canView,
+    poSortBy,
+    poSortDir,
+    poTablePager.currentPage,
+    search,
+    vendorSortBy,
+    vendorSortDir,
+    vendorTablePager.currentPage
+  ]);
 
   useEffect(() => {
     if (selectedPo) loadPoDetails(selectedPo.id);
   }, [selectedPo]);
 
   const poColumns: ColumnDefinition<PurchaseOrder>[] = [
-    { key: 'poNo', label: 'Số PO', isLink: true, render: (p) => p.poNo || p.id.slice(-8) },
-    { key: 'vendor', label: 'Nhà cung cấp', render: (p) => p.vendor?.name || p.vendorId || '--' },
-    { key: 'totalAmount', label: 'Tổng tiền', render: (p) => toCurrency(p.totalAmount) },
-    { key: 'receivedAmount', label: 'Đã nhận', render: (p) => toCurrency(p.receivedAmount) },
-    { key: 'lifecycleStatus', label: 'Vòng đời', render: (p) => <Badge variant={statusToBadge(p.lifecycleStatus)}>{p.lifecycleStatus}</Badge> },
-    { key: 'status', label: 'Trạng thái', render: (p) => <Badge variant={statusToBadge(p.status)}>{p.status}</Badge> },
-    { key: 'expectedReceiveAt', label: 'Ngày nhận dự kiến', render: (p) => toDateTime(p.expectedReceiveAt) },
+    { key: 'poNo', label: 'Số PO', sortKey: 'poNo', isLink: true, render: (p) => p.poNo || p.id.slice(-8) },
+    { key: 'vendor', label: 'Nhà cung cấp', sortKey: 'vendorId', render: (p) => p.vendor?.name || p.vendorId || '--' },
+    { key: 'totalAmount', label: 'Tổng tiền', sortKey: 'totalAmount', render: (p) => toCurrency(p.totalAmount) },
+    { key: 'receivedAmount', label: 'Đã nhận', sortKey: 'receivedAmount', render: (p) => toCurrency(p.receivedAmount) },
+    { key: 'lifecycleStatus', label: 'Vòng đời', sortKey: 'lifecycleStatus', render: (p) => <Badge variant={statusToBadge(p.lifecycleStatus)}>{p.lifecycleStatus}</Badge> },
+    { key: 'status', label: 'Trạng thái', sortKey: 'status', render: (p) => <Badge variant={statusToBadge(p.status)}>{p.status}</Badge> },
+    { key: 'expectedReceiveAt', label: 'Ngày nhận dự kiến', sortKey: 'expectedReceiveAt', render: (p) => toDateTime(p.expectedReceiveAt) },
   ];
 
   const vendorColumns: ColumnDefinition<Vendor>[] = [
-    { key: 'code', label: 'Mã NCC', isLink: true },
-    { key: 'name', label: 'Tên nhà cung cấp' },
-    { key: 'phone', label: 'Điện thoại' },
-    { key: 'email', label: 'Email' },
-    { key: 'status', label: 'Trạng thái', render: (v) => <Badge variant={statusToBadge(v.status)}>{v.status}</Badge> },
+    { key: 'code', label: 'Mã NCC', sortKey: 'code', isLink: true },
+    { key: 'name', label: 'Tên nhà cung cấp', sortKey: 'name' },
+    { key: 'phone', label: 'Điện thoại', sortKey: 'phone' },
+    { key: 'email', label: 'Email', sortKey: 'email' },
+    { key: 'status', label: 'Trạng thái', sortKey: 'status', render: (v) => <Badge variant={statusToBadge(v.status)}>{v.status}</Badge> },
   ];
 
   if (!canView) return null;
@@ -230,6 +296,26 @@ export function ScmOperationsBoard() {
           columns={poColumns}
           isLoading={isLoading}
           storageKey={SCM_PO_STORAGE_KEY}
+          pageInfo={{
+            currentPage: poTablePager.currentPage,
+            hasPrevPage: poTablePager.hasPrevPage,
+            hasNextPage: poTablePager.hasNextPage,
+            visitedPages: poTablePager.visitedPages
+          }}
+          sortMeta={
+            poSortMeta ?? {
+              sortBy: poSortBy,
+              sortDir: poSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={poTablePager.goNextPage}
+          onPagePrev={poTablePager.goPrevPage}
+          onJumpVisitedPage={poTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setPoSortBy(sortBy);
+            setPoSortDir(sortDir);
+          }}
           onRowClick={(p) => setSelectedPo(p)}
           enableRowSelection
           selectedRowIds={selectedRowIds}
@@ -244,6 +330,26 @@ export function ScmOperationsBoard() {
           columns={vendorColumns}
           isLoading={isLoading}
           storageKey={SCM_VENDOR_STORAGE_KEY}
+          pageInfo={{
+            currentPage: vendorTablePager.currentPage,
+            hasPrevPage: vendorTablePager.hasPrevPage,
+            hasNextPage: vendorTablePager.hasNextPage,
+            visitedPages: vendorTablePager.visitedPages
+          }}
+          sortMeta={
+            vendorSortMeta ?? {
+              sortBy: vendorSortBy,
+              sortDir: vendorSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={vendorTablePager.goNextPage}
+          onPagePrev={vendorTablePager.goPrevPage}
+          onJumpVisitedPage={vendorTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setVendorSortBy(sortBy);
+            setVendorSortDir(sortDir);
+          }}
           enableRowSelection
           selectedRowIds={selectedRowIds}
           onSelectedRowIdsChange={setSelectedRowIds}

@@ -1,5 +1,8 @@
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+
+export const SORT_DIRECTIONS = ['asc', 'desc'] as const;
+export type SortDirection = (typeof SORT_DIRECTIONS)[number];
 
 export class PaginationQueryDto {
   @IsOptional()
@@ -10,10 +13,19 @@ export class PaginationQueryDto {
   @Transform(({ value }) => Number(value))
   @IsInt()
   @Min(1)
-  @Max(200)
-  limit?: number = 50;
+  @Max(100)
+  limit?: number = 25;
 
   @IsOptional()
   @IsString()
   q?: string;
+
+  @IsOptional()
+  @IsString()
+  sortBy?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => String(value).toLowerCase())
+  @IsIn(SORT_DIRECTIONS)
+  sortDir?: SortDirection;
 }

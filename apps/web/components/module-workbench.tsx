@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, RefreshCw, Filter, FileText, LayoutDashboard, ChevronRight, Database, Edit2, Trash2, CheckCircle2 } from 'lucide-react';
-import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import {
+  apiRequest,
+  normalizePagedListPayload,
+  type ApiListPageInfo,
+  type ApiListSortMeta
+} from '../lib/api-client';
 import { inferPermissionActionFromRequest } from '../lib/access-policy';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import {
@@ -11,6 +16,7 @@ import {
   type BulkExecutionResult,
   type BulkRowId
 } from '../lib/bulk-actions';
+import { useCursorTableState } from '../lib/use-cursor-table-state';
 import type {
   FeatureAction,
   FeatureFilter,
@@ -206,12 +212,17 @@ function ActionForm({
 
 function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKey: string }) {
   const { canAction } = useAccessPolicy();
+  const tablePageSize = 25;
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState<FilterValues>(createDefaultFilterValues(feature.filters ?? []));
+  const [tableSortBy, setTableSortBy] = useState('');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tableSortMeta, setTableSortMeta] = useState<ApiListSortMeta | null>(null);
+  const [tablePageInfo, setTablePageInfo] = useState<ApiListPageInfo | null>(null);
   
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const [activeAction, setActiveAction] = useState<FeatureAction | null>(null);
@@ -219,6 +230,19 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   const [pendingBulkAction, setPendingBulkAction] = useState<PendingBulkActionContext | null>(null);
   const [isRunningBulkAction, setIsRunningBulkAction] = useState(false);
   const featureFilters = feature.filters ?? [];
+  const tableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        featureKey: feature.key,
+        search: search.trim(),
+        filters: filterValues,
+        sortBy: tableSortBy,
+        sortDir: tableSortDir,
+        limit: tablePageSize
+      }),
+    [feature.key, filterValues, search, tablePageSize, tableSortBy, tableSortDir]
+  );
+  const tablePager = useCursorTableState(tableFingerprint);
 
   const loadData = async () => {
     if (!feature.listEndpoint) return;
@@ -244,9 +268,20 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
         query[queryKey] = value;
       }
 
-      query.limit = 100;
+      query.limit = tablePageSize;
+      if (tablePager.cursor) {
+        query.cursor = tablePager.cursor;
+      }
+      if (tableSortBy) {
+        query.sortBy = tableSortBy;
+        query.sortDir = tableSortDir;
+      }
       const payload = await apiRequest(feature.listEndpoint, { query });
-      setRows(normalizeListPayload(payload));
+      const normalized = normalizePagedListPayload(payload);
+      setRows(normalized.items);
+      setTablePageInfo(normalized.pageInfo);
+      setTableSortMeta(normalized.sortMeta);
+      tablePager.syncFromPageInfo(normalized.pageInfo);
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : 'Lỗi tải dữ liệu');
     } finally {
@@ -257,6 +292,10 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   useEffect(() => {
     setFilterValues(createDefaultFilterValues(featureFilters));
     setSelectedRowIds([]);
+    setTableSortBy('');
+    setTableSortDir('desc');
+    setTableSortMeta(null);
+    setTablePageInfo(null);
     setPendingBulkAction((current) => {
       current?.resolve(undefined);
       return null;
@@ -265,7 +304,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
 
   useEffect(() => {
     if (feature.autoLoad !== false) loadData();
-  }, [feature.key, search, filterValues]);
+  }, [feature.key, search, filterValues, tablePager.currentPage, tableSortBy, tableSortDir]);
 
   useEffect(() => {
     return () => {
@@ -594,6 +633,30 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
         isLoading={isLoading}
         onRowClick={(r) => setSelectedRow(r)}
         storageKey={`erp.workbench.${moduleKey}.${feature.key}`}
+        pageInfo={
+          tablePageInfo
+            ? {
+                currentPage: tablePager.currentPage,
+                hasPrevPage: tablePager.hasPrevPage,
+                hasNextPage: tablePager.hasNextPage,
+                visitedPages: tablePager.visitedPages
+              }
+            : undefined
+        }
+        sortMeta={
+          tableSortMeta ?? {
+            sortBy: tableSortBy,
+            sortDir: tableSortDir,
+            sortableFields: []
+          }
+        }
+        onPageNext={tablePageInfo ? tablePager.goNextPage : undefined}
+        onPagePrev={tablePageInfo ? tablePager.goPrevPage : undefined}
+        onJumpVisitedPage={tablePageInfo ? tablePager.jumpVisitedPage : undefined}
+        onSortChange={(sortBy, sortDir) => {
+          setTableSortBy(sortBy);
+          setTableSortDir(sortDir);
+        }}
         editableKeys={updateAction ? updateAction.fields.map(f => f.name) : []}
         onSaveRow={updateAction ? (id, values) => handleAction(updateAction, { ...values, id } as FormValues) : undefined}
         enableRowSelection
