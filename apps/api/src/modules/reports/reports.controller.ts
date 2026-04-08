@@ -25,7 +25,7 @@ export class ReportsController {
   @Get('module')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
   moduleData(@Query() query: ModuleDataQueryDto) {
-    return this.reportsService.byModule(query.name, query.limit ?? 50);
+    return this.reportsService.byModule(query);
   }
 
   @Get()

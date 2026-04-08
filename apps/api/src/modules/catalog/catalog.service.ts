@@ -1,5 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SearchService } from '../search/search.service';
 import {
@@ -12,14 +18,31 @@ import {
 
 @Injectable()
 export class CatalogService {
+  private readonly productSortableFields = [
+    'createdAt',
+    'sku',
+    'name',
+    'productType',
+    'unitPrice',
+    'status',
+    'id'
+  ] as const;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SearchService) private readonly search: SearchService
   ) {}
 
   async listProducts(query: CatalogListQueryDto, entityIds?: string[]) {
-    const take = this.take(query.limit);
+    const take = resolvePageLimit(query.limit, 25, 100);
     const keyword = query.q?.trim();
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.productSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'catalog/products'
+    });
+    const orderBy = this.buildProductSortOrderBy(sortBy, sortDir);
     const where: Prisma.ProductWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
       ...(query.status ? { status: query.status } : {}),
@@ -66,7 +89,7 @@ export class CatalogService {
       }
     };
 
-    if (keyword && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
+    if (keyword && sortBy === 'createdAt' && await this.search.shouldUseHybridSearch(keyword, query.cursor)) {
       const rankedIds = await this.search.searchProductIds(
         keyword,
         this.prisma.getTenantId(),
@@ -78,25 +101,48 @@ export class CatalogService {
       );
 
       if (rankedIds !== null) {
+        const cursorIndex = query.cursor ? rankedIds.findIndex((id) => id === query.cursor) : -1;
+        const startIndex = cursorIndex >= 0 ? cursorIndex + 1 : 0;
+        const lookupIds = rankedIds.slice(startIndex, startIndex + take + 1);
         const rankedRows = rankedIds.length > 0
           ? await this.prisma.client.product.findMany({
               where: {
                 ...where,
-                id: { in: rankedIds }
+                id: { in: lookupIds }
               },
               include: baseInclude
             })
           : [];
-        const orderedRows = this.rankByIds(rankedRows, rankedIds);
-        return orderedRows.slice(0, take);
+        const orderedRows = this.rankByIds(rankedRows, lookupIds);
+        const { items, hasMore, nextCursor } = sliceCursorItems(orderedRows, take);
+        return buildCursorListResponse(items, {
+          limit: take,
+          hasMore,
+          nextCursor,
+          sortBy,
+          sortDir,
+          sortableFields,
+          consistency: 'snapshot'
+        });
       }
     }
 
-    return this.prisma.client.product.findMany({
+    const rows = await this.prisma.client.product.findMany({
       where,
       include: baseInclude,
-      orderBy: { createdAt: 'desc' },
-      take
+      orderBy,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -232,11 +278,18 @@ export class CatalogService {
     return product;
   }
 
-  private take(limit?: number) {
-    if (!limit || limit <= 0) {
-      return 100;
+  private buildProductSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ProductOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
     }
-    return Math.min(limit, 250);
+
+    return [
+      { [sortBy]: sortDir },
+      { id: sortDir }
+    ] as Prisma.ProductOrderByWithRelationInput[];
   }
 
   private rankByIds<T extends { id: string }>(rows: T[], orderedIds: string[]) {

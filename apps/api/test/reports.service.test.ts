@@ -51,6 +51,73 @@ function makePrismaMock() {
 }
 
 describe('ReportsService', () => {
+  it('returns module snapshot with cursor pagination + sort metadata', async () => {
+    const prisma = makePrismaMock();
+    prisma.client.order.findMany.mockResolvedValue([
+      { id: 'ord_3', status: GenericStatus.PENDING, createdAt: new Date('2026-04-01T00:00:00.000Z') },
+      { id: 'ord_2', status: GenericStatus.APPROVED, createdAt: new Date('2026-03-31T00:00:00.000Z') },
+      { id: 'ord_1', status: GenericStatus.APPROVED, createdAt: new Date('2026-03-30T00:00:00.000Z') }
+    ]);
+
+    const service = new ReportsService(prisma as any);
+    const result = await service.byModule({
+      name: 'sales',
+      limit: 2,
+      sortBy: 'createdAt',
+      sortDir: 'desc'
+    } as any);
+
+    expect(prisma.client.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 3
+      })
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.pageInfo).toMatchObject({
+      limit: 2,
+      hasMore: true,
+      nextCursor: 'ord_2'
+    });
+    expect(result.sortMeta).toMatchObject({
+      sortBy: 'createdAt',
+      sortDir: 'desc'
+    });
+  });
+
+  it('lists report definitions with cursor pagination + sort metadata', async () => {
+    const prisma = makePrismaMock();
+    prisma.client.report.findMany.mockResolvedValue([
+      { id: 'rep_3', name: 'C report' },
+      { id: 'rep_2', name: 'B report' },
+      { id: 'rep_1', name: 'A report' }
+    ]);
+
+    const service = new ReportsService(prisma as any);
+    const result = await service.listDefinitions({
+      limit: 2,
+      sortBy: 'name',
+      sortDir: 'asc'
+    } as any);
+
+    expect(prisma.client.report.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        take: 3
+      })
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.pageInfo).toMatchObject({
+      limit: 2,
+      hasMore: true,
+      nextCursor: 'rep_2'
+    });
+    expect(result.sortMeta).toMatchObject({
+      sortBy: 'name',
+      sortDir: 'asc'
+    });
+  });
+
   it('generates report run and creates notification', async () => {
     const prisma = makePrismaMock();
     prisma.client.report.findFirst.mockResolvedValue({

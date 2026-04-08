@@ -1,6 +1,12 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AllocateAssetDto,
@@ -23,9 +29,38 @@ const ASSET_LIFECYCLE = {
 
 @Injectable()
 export class AssetsService {
+  private readonly assetSortableFields = [
+    'createdAt',
+    'assetCode',
+    'name',
+    'category',
+    'value',
+    'status',
+    'purchaseAt',
+    'lifecycleStatus',
+    'id'
+  ] as const;
+
+  private readonly allocationSortableFields = [
+    'allocatedAt',
+    'returnedAt',
+    'status',
+    'assetId',
+    'employeeId',
+    'createdAt',
+    'id'
+  ] as const;
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async listAssets(query: AssetsListQueryDto) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.assetSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'assets'
+    });
     const keyword = query.q?.trim();
     const where: Prisma.AssetWhereInput = {
       ...(query.status ? { status: query.status } : {}),
@@ -40,10 +75,21 @@ export class AssetsService {
       ];
     }
 
-    return this.prisma.client.asset.findMany({
+    const rows = await this.prisma.client.asset.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(Math.max(query.limit ?? 100, 1), 200)
+      orderBy: this.buildAssetSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -183,8 +229,28 @@ export class AssetsService {
   }
 
   async listAllocations(query: PaginationQueryDto, assetId?: string) {
-    return this.prisma.client.assetAllocation.findMany({
-      where: assetId ? { assetId } : {},
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.allocationSortableFields,
+      defaultSortBy: 'allocatedAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'assets/allocations'
+    });
+    const keyword = query.q?.trim();
+    const where: Prisma.AssetAllocationWhereInput = {
+      ...(assetId ? { assetId } : {})
+    };
+
+    if (keyword) {
+      where.OR = [
+        { assetId: { contains: keyword, mode: 'insensitive' } },
+        { employeeId: { contains: keyword, mode: 'insensitive' } },
+        { note: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.assetAllocation.findMany({
+      where,
       include: {
         asset: {
           select: {
@@ -195,8 +261,19 @@ export class AssetsService {
           }
         }
       },
-      orderBy: { allocatedAt: 'desc' },
-      take: Math.min(Math.max(query.limit ?? 100, 1), 300)
+      orderBy: this.buildAllocationSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -416,5 +493,33 @@ export class AssetsService {
     const year = date.getUTCFullYear();
     const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
     return `${year}-${month}`;
+  }
+
+  private buildAssetSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.AssetOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+
+    return [
+      { [sortBy]: sortDir },
+      { id: sortDir }
+    ] as Prisma.AssetOrderByWithRelationInput[];
+  }
+
+  private buildAllocationSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.AssetAllocationOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+
+    return [
+      { [sortBy]: sortDir },
+      { id: sortDir }
+    ] as Prisma.AssetAllocationOrderByWithRelationInput[];
   }
 }

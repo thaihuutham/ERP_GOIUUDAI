@@ -167,6 +167,12 @@ describe('Hybrid search API flow', () => {
       .set('authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.map((item: { id: string }) => item.id)).toEqual(['prod_2', 'prod_1']);
+    expect(res.body.items.map((item: { id: string }) => item.id)).toEqual(['prod_2', 'prod_1']);
+    expect(res.body.sortMeta).toEqual(
+      expect.objectContaining({
+        sortBy: 'createdAt',
+        sortDir: 'desc'
+      })
+    );
   });
 });

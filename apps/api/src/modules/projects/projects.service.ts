@@ -1,5 +1,12 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateProjectBudgetDto,
@@ -16,9 +23,22 @@ const COMPLETED_TASK_STATUSES: GenericStatus[] = [GenericStatus.APPROVED, Generi
 
 @Injectable()
 export class ProjectsService {
+  private readonly projectSortableFields = ['createdAt', 'code', 'name', 'status', 'startAt', 'endAt', 'id'] as const;
+  private readonly taskSortableFields = ['createdAt', 'projectId', 'title', 'assignedTo', 'status', 'dueAt', 'id'] as const;
+  private readonly resourceSortableFields = ['createdAt', 'projectId', 'resourceType', 'resourceRef', 'quantity', 'id'] as const;
+  private readonly budgetSortableFields = ['createdAt', 'projectId', 'budgetType', 'amount', 'id'] as const;
+  private readonly timeEntrySortableFields = ['workDate', 'createdAt', 'projectId', 'employeeId', 'hours', 'id'] as const;
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async listProjects(query: ProjectsListQueryDto, entityIds?: string[]) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.projectSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'projects'
+    });
     const keyword = query.q?.trim();
     const where: Prisma.ProjectWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
@@ -33,10 +53,21 @@ export class ProjectsService {
       ];
     }
 
-    return this.prisma.client.project.findMany({
+    const rows = await this.prisma.client.project.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildProjectSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -87,15 +118,41 @@ export class ProjectsService {
   }
 
   async listTasks(projectId: string | undefined, query: ProjectsListQueryDto, status?: GenericStatus | 'ALL') {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.taskSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'projects/tasks'
+    });
+    const keyword = query.q?.trim();
     const where: Prisma.ProjectTaskWhereInput = {
       ...(projectId ? { projectId } : {}),
       ...(status && status !== 'ALL' ? { status } : {})
     };
 
-    return this.prisma.client.projectTask.findMany({
+    if (keyword) {
+      where.OR = [
+        { title: { contains: keyword, mode: 'insensitive' } },
+        { assignedTo: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.projectTask.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildTaskSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -141,10 +198,42 @@ export class ProjectsService {
     };
   }
 
-  async listResources(projectId?: string) {
-    return this.prisma.client.projectResource.findMany({
-      where: projectId ? { projectId } : {},
-      orderBy: { createdAt: 'desc' }
+  async listResources(projectId?: string, query: PaginationQueryDto = {}) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.resourceSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'projects/resources'
+    });
+    const keyword = query.q?.trim();
+    const where: Prisma.ProjectResourceWhereInput = {
+      ...(projectId ? { projectId } : {})
+    };
+
+    if (keyword) {
+      where.OR = [
+        { resourceType: { contains: keyword, mode: 'insensitive' } },
+        { resourceRef: { contains: keyword, mode: 'insensitive' } },
+        { projectId: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.projectResource.findMany({
+      where,
+      orderBy: this.buildResourceSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -162,10 +251,41 @@ export class ProjectsService {
     });
   }
 
-  async listBudgets(projectId?: string) {
-    return this.prisma.client.projectBudget.findMany({
-      where: projectId ? { projectId } : {},
-      orderBy: { createdAt: 'desc' }
+  async listBudgets(projectId?: string, query: PaginationQueryDto = {}) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.budgetSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'projects/budgets'
+    });
+    const keyword = query.q?.trim();
+    const where: Prisma.ProjectBudgetWhereInput = {
+      ...(projectId ? { projectId } : {})
+    };
+
+    if (keyword) {
+      where.OR = [
+        { budgetType: { contains: keyword, mode: 'insensitive' } },
+        { projectId: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.projectBudget.findMany({
+      where,
+      orderBy: this.buildBudgetSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -182,10 +302,42 @@ export class ProjectsService {
     });
   }
 
-  async listTimeEntries(projectId?: string) {
-    return this.prisma.client.timeEntry.findMany({
-      where: projectId ? { projectId } : {},
-      orderBy: { workDate: 'desc' }
+  async listTimeEntries(projectId?: string, query: PaginationQueryDto = {}) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.timeEntrySortableFields,
+      defaultSortBy: 'workDate',
+      defaultSortDir: 'desc',
+      errorLabel: 'projects/time-entries'
+    });
+    const keyword = query.q?.trim();
+    const where: Prisma.TimeEntryWhereInput = {
+      ...(projectId ? { projectId } : {})
+    };
+
+    if (keyword) {
+      where.OR = [
+        { employeeId: { contains: keyword, mode: 'insensitive' } },
+        { note: { contains: keyword, mode: 'insensitive' } },
+        { projectId: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
+
+    const rows = await this.prisma.client.timeEntry.findMany({
+      where,
+      orderBy: this.buildTimeEntrySortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -341,11 +493,54 @@ export class ProjectsService {
     return parsed;
   }
 
-  private take(limit?: number) {
-    if (!limit || limit <= 0) {
-      return 100;
+  private buildProjectSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ProjectOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
     }
-    return Math.min(limit, 250);
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ProjectOrderByWithRelationInput[];
+  }
+
+  private buildTaskSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ProjectTaskOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ProjectTaskOrderByWithRelationInput[];
+  }
+
+  private buildResourceSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ProjectResourceOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ProjectResourceOrderByWithRelationInput[];
+  }
+
+  private buildBudgetSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ProjectBudgetOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ProjectBudgetOrderByWithRelationInput[];
+  }
+
+  private buildTimeEntrySortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.TimeEntryOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.TimeEntryOrderByWithRelationInput[];
   }
 
   private async ensureProject(id: string) {

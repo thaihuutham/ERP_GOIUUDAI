@@ -1,10 +1,17 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import {
+  buildCursorListResponse,
+  resolvePageLimit,
+  resolveSortQuery,
+  sliceCursorItems
+} from '../../common/pagination/pagination-response';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateReportDefinitionDto,
   GenerateReportRunDto,
+  ModuleDataQueryDto,
   ReportOutputFormat,
   REPORT_OUTPUT_FORMATS,
   ReportsListQueryDto,
@@ -14,6 +21,10 @@ import {
 
 @Injectable()
 export class ReportsService {
+  private readonly moduleSnapshotSortableFields = ['createdAt', 'status', 'id'] as const;
+  private readonly reportDefinitionSortableFields = ['createdAt', 'name', 'moduleName', 'reportType', 'status', 'templateCode', 'id'] as const;
+  private readonly reportRunSortableFields = ['createdAt', 'generatedAt', 'status', 'outputFormat', 'id'] as const;
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async overview() {
@@ -52,53 +63,105 @@ export class ReportsService {
     };
   }
 
-  async byModule(module: string, limit = 50): Promise<unknown[]> {
-    const normalized = module.trim().toLowerCase();
-    const take = Math.min(Math.max(limit, 1), 200);
+  async byModule(query: ModuleDataQueryDto) {
+    const normalized = query.name.trim().toLowerCase();
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.moduleSnapshotSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: `reports/module(${normalized})`
+    });
 
+    const queryArgs = {
+      orderBy: this.buildModuleSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    };
+
+    let rows: Array<{ id: string; [key: string]: unknown }> = [];
     switch (normalized) {
       case 'sales':
-        return this.prisma.client.order.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.order.findMany(queryArgs as Prisma.OrderFindManyArgs) as any;
+        break;
       case 'hr':
-        return this.prisma.client.employee.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.employee.findMany(queryArgs as Prisma.EmployeeFindManyArgs) as any;
+        break;
       case 'finance':
-        return this.prisma.client.invoice.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.invoice.findMany(queryArgs as Prisma.InvoiceFindManyArgs) as any;
+        break;
       case 'scm':
-        return this.prisma.client.purchaseOrder.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.purchaseOrder.findMany(queryArgs as Prisma.PurchaseOrderFindManyArgs) as any;
+        break;
       case 'projects':
-        return this.prisma.client.project.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.project.findMany(queryArgs as Prisma.ProjectFindManyArgs) as any;
+        break;
       case 'assets':
-        return this.prisma.client.asset.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.asset.findMany(queryArgs as Prisma.AssetFindManyArgs) as any;
+        break;
       case 'catalog':
-        return this.prisma.client.product.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.product.findMany(queryArgs as Prisma.ProductFindManyArgs) as any;
+        break;
       case 'crm':
-        return this.prisma.client.customer.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.customer.findMany(queryArgs as Prisma.CustomerFindManyArgs) as any;
+        break;
       case 'workflows':
-        return this.prisma.client.workflowInstance.findMany({ orderBy: { createdAt: 'desc' }, take });
+        rows = await this.prisma.client.workflowInstance.findMany(queryArgs as Prisma.WorkflowInstanceFindManyArgs) as any;
+        break;
       default:
-        throw new BadRequestException(`Unsupported report module: ${module}`);
+        throw new BadRequestException(`Unsupported report module: ${query.name}`);
     }
+
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
+    });
   }
 
   async listDefinitions(query: ReportsListQueryDto) {
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.reportDefinitionSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'reports'
+    });
+    const keyword = query.q?.trim();
     const where: Prisma.ReportWhereInput = {
       ...(query.status ? { status: query.status } : {}),
       ...(query.moduleName ? { moduleName: query.moduleName } : {}),
-      ...(query.q
+      ...(keyword
         ? {
             OR: [
-              { name: { contains: query.q, mode: 'insensitive' } },
-              { reportType: { contains: query.q, mode: 'insensitive' } },
-              { templateCode: { contains: query.q, mode: 'insensitive' } }
+              { name: { contains: keyword, mode: 'insensitive' } },
+              { reportType: { contains: keyword, mode: 'insensitive' } },
+              { templateCode: { contains: keyword, mode: 'insensitive' } }
             ]
           }
         : {})
     };
 
-    return this.prisma.client.report.findMany({
+    const rows = await this.prisma.client.report.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildDefinitionSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -148,11 +211,28 @@ export class ReportsService {
 
   async listRuns(reportId: string, query: PaginationQueryDto) {
     await this.ensureDefinition(reportId);
-
-    return this.prisma.client.reportRun.findMany({
+    const take = resolvePageLimit(query.limit, 25, 100);
+    const { sortBy, sortDir, sortableFields } = resolveSortQuery(query, {
+      sortableFields: this.reportRunSortableFields,
+      defaultSortBy: 'createdAt',
+      defaultSortDir: 'desc',
+      errorLabel: 'reports/runs'
+    });
+    const rows = await this.prisma.client.reportRun.findMany({
       where: { reportId },
-      orderBy: { createdAt: 'desc' },
-      take: this.take(query.limit)
+      orderBy: this.buildRunSortOrderBy(sortBy, sortDir),
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      take: take + 1
+    });
+    const { items, hasMore, nextCursor } = sliceCursorItems(rows, take);
+    return buildCursorListResponse(items, {
+      limit: take,
+      hasMore,
+      nextCursor,
+      sortBy,
+      sortDir,
+      sortableFields,
+      consistency: 'snapshot'
     });
   }
 
@@ -162,7 +242,11 @@ export class ReportsService {
       payload.outputFormat ?? (report.outputFormat as ReportOutputFormat | null) ?? 'JSON'
     );
     const moduleName = report.moduleName ?? 'sales';
-    const rows = await this.byModule(moduleName, payload.limit ?? 100);
+    const moduleData = await this.byModule({
+      name: moduleName,
+      limit: payload.limit ?? 100
+    } as ModuleDataQueryDto);
+    const rows = moduleData.items;
     const generatedAt = new Date();
 
     const summary = {
@@ -308,5 +392,35 @@ export class ReportsService {
       return 100;
     }
     return Math.min(limit, 250);
+  }
+
+  private buildModuleSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ) {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }];
+  }
+
+  private buildDefinitionSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ReportOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ReportOrderByWithRelationInput[];
+  }
+
+  private buildRunSortOrderBy(
+    sortBy: string,
+    sortDir: 'asc' | 'desc'
+  ): Prisma.ReportRunOrderByWithRelationInput[] {
+    if (sortBy === 'id') {
+      return [{ id: sortDir }];
+    }
+    return [{ [sortBy]: sortDir }, { id: sortDir }] as Prisma.ReportRunOrderByWithRelationInput[];
   }
 }

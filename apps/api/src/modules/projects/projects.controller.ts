@@ -64,8 +64,8 @@ export class ProjectsController {
 
   @Get('resources')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  listResources(@Query('projectId') projectId?: string) {
-    return this.projectsService.listResources(projectId);
+  listResources(@Query() query: PaginationQueryDto, @Query('projectId') projectId?: string) {
+    return this.projectsService.listResources(projectId, query);
   }
 
   @Post('resources')
@@ -76,8 +76,8 @@ export class ProjectsController {
 
   @Get('budgets')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  listBudgets(@Query('projectId') projectId?: string) {
-    return this.projectsService.listBudgets(projectId);
+  listBudgets(@Query() query: PaginationQueryDto, @Query('projectId') projectId?: string) {
+    return this.projectsService.listBudgets(projectId, query);
   }
 
   @Post('budgets')
@@ -88,8 +88,8 @@ export class ProjectsController {
 
   @Get('time-entries')
   @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
-  listTimeEntries(@Query('projectId') projectId?: string) {
-    return this.projectsService.listTimeEntries(projectId);
+  listTimeEntries(@Query() query: PaginationQueryDto, @Query('projectId') projectId?: string) {
+    return this.projectsService.listTimeEntries(projectId, query);
   }
 
   @Post('time-entries')

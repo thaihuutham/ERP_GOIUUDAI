@@ -17,6 +17,50 @@ function makePrismaMock() {
 }
 
 describe('CatalogService', () => {
+  it('lists products with cursor pagination + sort metadata', async () => {
+    const prisma = makePrismaMock();
+    const search = {
+      shouldUseHybridSearch: vi.fn().mockResolvedValue(false),
+      searchProductIds: vi.fn(),
+      syncProductUpsert: vi.fn().mockResolvedValue(undefined)
+    };
+    prisma.client.product.findMany.mockResolvedValue([
+      { id: 'prod_3', name: 'C Product' },
+      { id: 'prod_2', name: 'B Product' },
+      { id: 'prod_1', name: 'A Product' }
+    ]);
+
+    const service = new CatalogService(prisma as any, search as any);
+    const result = await service.listProducts(
+      {
+        limit: 2,
+        cursor: 'prod_4',
+        sortBy: 'name',
+        sortDir: 'asc'
+      } as any,
+      undefined
+    );
+
+    expect(prisma.client.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        cursor: { id: 'prod_4' },
+        skip: 1,
+        take: 3
+      })
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.pageInfo).toMatchObject({
+      limit: 2,
+      hasMore: true,
+      nextCursor: 'prod_2'
+    });
+    expect(result.sortMeta).toMatchObject({
+      sortBy: 'name',
+      sortDir: 'asc'
+    });
+  });
+
   it('archives product with soft-delete fields', async () => {
     const prisma = makePrismaMock();
     const search = { syncProductUpsert: vi.fn().mockResolvedValue(undefined) };

@@ -38,6 +38,72 @@ function makePrismaMock() {
 }
 
 describe('ProjectsService', () => {
+  it('lists projects with cursor pagination + sortable metadata', async () => {
+    const prisma = makePrismaMock();
+    prisma.client.project.findMany.mockResolvedValue([
+      { id: 'proj_3', name: 'Project C' },
+      { id: 'proj_2', name: 'Project B' },
+      { id: 'proj_1', name: 'Project A' }
+    ]);
+
+    const service = new ProjectsService(prisma as any);
+    const result = await service.listProjects({
+      limit: 2,
+      sortBy: 'name',
+      sortDir: 'asc'
+    } as any);
+
+    expect(prisma.client.project.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        take: 3
+      })
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.pageInfo).toMatchObject({
+      limit: 2,
+      hasMore: true,
+      nextCursor: 'proj_2'
+    });
+    expect(result.sortMeta).toMatchObject({
+      sortBy: 'name',
+      sortDir: 'asc'
+    });
+  });
+
+  it('lists project resources with cursor pagination + sortable metadata', async () => {
+    const prisma = makePrismaMock();
+    prisma.client.projectResource.findMany.mockResolvedValue([
+      { id: 'res_3', projectId: 'proj_1', resourceType: 'staff' },
+      { id: 'res_2', projectId: 'proj_1', resourceType: 'asset' },
+      { id: 'res_1', projectId: 'proj_2', resourceType: 'vendor' }
+    ]);
+
+    const service = new ProjectsService(prisma as any);
+    const result = await service.listResources(undefined, {
+      limit: 2,
+      sortBy: 'createdAt',
+      sortDir: 'desc'
+    } as any);
+
+    expect(prisma.client.projectResource.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 3
+      })
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.pageInfo).toMatchObject({
+      limit: 2,
+      hasMore: true,
+      nextCursor: 'res_2'
+    });
+    expect(result.sortMeta).toMatchObject({
+      sortBy: 'createdAt',
+      sortDir: 'desc'
+    });
+  });
+
   it('computes weighted progress, schedule variance and burnup metrics', async () => {
     const prisma = makePrismaMock();
 
