@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-08 09:47 +07
+- Time: 2026-04-08 10:20 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-08_0947_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_1020_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,37 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 10:20 (Phase tiếp theo: pagination/sorting server-driven cho module còn lại)
+- User request:
+  - tiếp tục theo roadmap xây dựng chức năng phân trang và sắp xếp dữ liệu cho cột.
+- Đã xử lý:
+  - mở rộng contract list chuẩn (`items/pageInfo/sortMeta`) cho:
+    - `catalog`: `/catalog/products`
+    - `assets`: `/assets`, `/assets/allocations`
+    - `projects`: `/projects`, `/projects/tasks`, `/projects/resources`, `/projects/budgets`, `/projects/time-entries`
+    - `reports`: `/reports/module`, `/reports`, `/reports/:id/runs`
+  - cập nhật controller `projects` nhận `PaginationQueryDto` cho resources/budgets/time-entries.
+  - cập nhật controller `reports/module` để forward full query dto.
+  - bổ sung unit/integration tests cho cursor/sort contract:
+    - `catalog.service.test.ts`
+    - `assets.service.test.ts`
+    - `projects.service.test.ts`
+    - `reports.service.test.ts`
+    - `search-hybrid.api-flow.test.ts` (assert contract mới của `catalog/products`).
+- Verify:
+  - Docker/DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Build/lint:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+  - Tests:
+    - `npm run test --workspace @erp/api -- --run test/catalog.service.test.ts test/assets.service.test.ts test/projects.service.test.ts test/reports.service.test.ts test/search-hybrid.api-flow.test.ts` ✅ (`19 passed`).
+- Notes:
+  - Không có migration/schema mới.
+  - Không phát sinh ADR mới trong session này.
 
 ## Update 2026-04-08 09:47 (Phase tiếp theo sau 1.5: rollout server-driven list contract cho module boards còn lại)
 - User request:

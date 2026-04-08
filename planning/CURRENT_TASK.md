@@ -2,7 +2,7 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-08 09:47 +07
+- Last updated: 2026-04-08 10:20 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
 
@@ -10,6 +10,43 @@
 - [ ] Chuẩn hóa artifact build frontend:
   - `apps/web/tsconfig.tsbuildinfo` là cache TypeScript (không mang business logic).
   - Kế hoạch: tách một `chore` riêng để quyết định policy (ngừng track + cập nhật `.gitignore` + verify clean build) nhằm tránh noise diff/commit.
+
+## Session Update 2026-04-08 10:20 +07 (Phase tiếp theo: rollout pagination/sorting server-driven cho nhóm module còn lại)
+- User request:
+  - tiếp tục theo roadmap chức năng phân trang và sắp xếp dữ liệu cho cột.
+- Đã triển khai:
+  - Backend `catalog`:
+    - `GET /catalog/products` hỗ trợ đầy đủ `cursor + sortBy/sortDir`, trả `items + pageInfo + sortMeta`.
+    - giữ nhánh hybrid search, đồng bộ response contract mới.
+  - Backend `assets`:
+    - `GET /assets` và `GET /assets/allocations` chuẩn hóa server-driven pagination/sorting + metadata list.
+  - Backend `projects`:
+    - chuẩn hóa list endpoints:
+      - `GET /projects`
+      - `GET /projects/tasks`
+      - `GET /projects/resources`
+      - `GET /projects/budgets`
+      - `GET /projects/time-entries`
+    - update controller nhận `PaginationQueryDto` cho resources/budgets/time-entries.
+  - Backend `reports`:
+    - `GET /reports/module`, `GET /reports`, `GET /reports/:id/runs` trả contract list metadata đồng nhất.
+    - cập nhật controller `reports/module` forward full query object.
+  - Test updates:
+    - bổ sung service tests cho `catalog/assets/projects/reports` để verify cursor/sort contract.
+    - update integration test `search-hybrid.api-flow` cho contract mới của `catalog/products`.
+- Verification:
+  - System gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` và toàn stack Up).
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅.
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`).
+  - Backend quality:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+  - Targeted tests:
+    - `npm run test --workspace @erp/api -- --run test/catalog.service.test.ts test/assets.service.test.ts test/projects.service.test.ts test/reports.service.test.ts test/search-hybrid.api-flow.test.ts` ✅ (`19 passed`).
+- Notes:
+  - Session này không thêm migration/schema.
+  - Không phát sinh ADR mới (không có quyết định kiến trúc mới ngoài việc mở rộng contract list theo pattern đã duyệt).
 
 ## Session Update 2026-04-08 09:47 +07 (Phase tiếp theo sau 1.5: rollout server-driven pagination/sorting cho các board còn lại)
 - User request:
