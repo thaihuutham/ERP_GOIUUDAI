@@ -6,6 +6,11 @@
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
 
+## Open housekeeping
+- [ ] Chuẩn hóa artifact build frontend:
+  - `apps/web/tsconfig.tsbuildinfo` là cache TypeScript (không mang business logic).
+  - Kế hoạch: tách một `chore` riêng để quyết định policy (ngừng track + cập nhật `.gitignore` + verify clean build) nhằm tránh noise diff/commit.
+
 ## Session Update 2026-04-08 09:47 +07 (Phase tiếp theo sau 1.5: rollout server-driven pagination/sorting cho các board còn lại)
 - User request:
   - sau khi commit riêng Phase 1.5, tiếp tục thực thi Phase kế tiếp theo roadmap đã duyệt.
