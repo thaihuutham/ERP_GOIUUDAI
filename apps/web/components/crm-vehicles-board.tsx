@@ -718,50 +718,51 @@ export function CrmVehiclesBoard() {
         />
       ) : null}
 
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: 0 }}>
-        <div className="toolbar-left" style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-          <div className="field" style={{ minWidth: '220px' }}>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Tìm biển số / chủ xe / số khung..."
-            />
-          </div>
-          <div className="field" style={{ minWidth: '220px' }}>
-            <select value={ownerCustomerFilter} onChange={(event) => setOwnerCustomerFilter(event.target.value)}>
-              <option value="">Tất cả khách hàng</option>
-              {(actorIdentity.isAdmin ? customers : manageableCustomers).map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.fullName || customer.id}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field" style={{ minWidth: '160px' }}>
-            <select value={vehicleKindFilter} onChange={(event) => setVehicleKindFilter(event.target.value as VehicleKindOption)}>
-              <option value="ALL">Tất cả nhóm xe</option>
-              <option value="AUTO">Ô tô</option>
-              <option value="MOTO">Xe máy</option>
-            </select>
-          </div>
-        </div>
-        <div className="toolbar-right">
-          <a className="btn btn-ghost" href="/modules/crm">
-            <ArrowLeft size={16} /> Về CRM
-          </a>
-          {canCreateVehicle && (
-            <button className="btn btn-primary" onClick={openCreateEditor}>
-              <Plus size={16} /> Thêm xe
-            </button>
-          )}
-        </div>
-      </div>
-
       <StandardDataTable
         data={vehicles}
         columns={columns}
         storageKey={VEHICLE_COLUMN_SETTINGS_STORAGE_KEY}
         isLoading={isLoading}
+        toolbarLeftContent={(
+          <>
+            <div className="field" style={{ minWidth: '220px' }}>
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Tìm biển số / chủ xe / số khung..."
+              />
+            </div>
+            <div className="field" style={{ minWidth: '220px' }}>
+              <select value={ownerCustomerFilter} onChange={(event) => setOwnerCustomerFilter(event.target.value)}>
+                <option value="">Tất cả khách hàng</option>
+                {(actorIdentity.isAdmin ? customers : manageableCustomers).map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.fullName || customer.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ minWidth: '160px' }}>
+              <select value={vehicleKindFilter} onChange={(event) => setVehicleKindFilter(event.target.value as VehicleKindOption)}>
+                <option value="ALL">Tất cả nhóm xe</option>
+                <option value="AUTO">Ô tô</option>
+                <option value="MOTO">Xe máy</option>
+              </select>
+            </div>
+          </>
+        )}
+        toolbarRightContent={(
+          <>
+            <a className="btn btn-ghost" href="/modules/crm">
+              <ArrowLeft size={16} /> Về CRM
+            </a>
+            {canCreateVehicle && (
+              <button className="btn btn-primary" onClick={openCreateEditor}>
+                <Plus size={16} /> Thêm xe
+              </button>
+            )}
+          </>
+        )}
         pageInfo={{
           currentPage: vehicleTablePager.currentPage,
           hasPrevPage: vehicleTablePager.hasPrevPage,

@@ -80,6 +80,7 @@ interface StandardDataTableProps<T> {
   onSortChange?: (sortBy: string, sortDir: 'asc' | 'desc') => void;
   defaultVisibleColumnKeys?: string[];
   toolbarLeftContent?: ReactNode;
+  toolbarRightContent?: ReactNode;
   onRowClick?: (item: T) => void;
   isLoading?: boolean;
   editableKeys?: string[];
@@ -185,6 +186,7 @@ export function StandardDataTable<T extends { id: string | number }>({
   onSortChange,
   defaultVisibleColumnKeys,
   toolbarLeftContent,
+  toolbarRightContent,
   onRowClick,
   isLoading,
   editableKeys = [],
@@ -599,6 +601,11 @@ export function StandardDataTable<T extends { id: string | number }>({
           {toolbarLeftContent}
         </div>
         <div className="standard-table-toolbar-right">
+          {toolbarRightContent ? (
+            <div className="standard-table-toolbar-right-custom">
+              {toolbarRightContent}
+            </div>
+          ) : null}
           <button
             className="btn btn-ghost standard-table-config-btn"
             onClick={() => setIsColumnPickerOpen(!isColumnPickerOpen)}

@@ -584,49 +584,52 @@ export function FinanceOperationsBoard() {
         </div>
       )}
 
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
-        <div className="toolbar-left">
-          <div className="field" style={{ width: '320px' }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-              <input
-                placeholder="Tìm hóa đơn, đối tác..."
-                style={{ paddingLeft: '36px' }}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-          </div>
-          <div className="field" style={{ width: '170px' }}>
-            <select value={status} onChange={(event) => setStatus(event.target.value as InvoiceStatus)}>
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option === 'ALL' ? 'Tất cả trạng thái' : option}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="toolbar-right">
-          <button className="btn btn-ghost" onClick={() => { loadInvoices(); loadAging(); }}><RefreshCw size={16} /> Làm mới</button>
-          {canCreate && (
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                setIsCreatePanelOpen(true);
-              }}
-            >
-              <Plus size={16} /> Tạo hóa đơn
-            </button>
-          )}
-        </div>
-      </div>
-
       <StandardDataTable
         data={invoices}
         columns={columns}
         isLoading={isLoading}
         storageKey={FINANCE_COLUMN_SETTINGS_KEY}
+        toolbarLeftContent={(
+          <>
+            <div className="field" style={{ width: '320px' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+                <input
+                  placeholder="Tìm hóa đơn, đối tác..."
+                  style={{ paddingLeft: '36px' }}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="field" style={{ width: '170px' }}>
+              <select value={status} onChange={(event) => setStatus(event.target.value as InvoiceStatus)}>
+                {STATUS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option === 'ALL' ? 'Tất cả trạng thái' : option}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
+        toolbarRightContent={(
+          <>
+            <button className="btn btn-ghost" onClick={() => { loadInvoices(); loadAging(); }}>
+              <RefreshCw size={16} /> Làm mới
+            </button>
+            {canCreate && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setIsCreatePanelOpen(true);
+                }}
+              >
+                <Plus size={16} /> Tạo hóa đơn
+              </button>
+            )}
+          </>
+        )}
         pageInfo={{
           currentPage: financeTablePager.currentPage,
           hasPrevPage: financeTablePager.hasPrevPage,

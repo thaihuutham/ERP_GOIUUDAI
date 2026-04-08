@@ -69,6 +69,13 @@
   margin-left: auto;
 }
 
+.standard-table-toolbar-right-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .standard-table-config-btn {
   gap: 0.35rem;
 }

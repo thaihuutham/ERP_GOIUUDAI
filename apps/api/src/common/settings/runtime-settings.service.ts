@@ -330,6 +330,9 @@ export class RuntimeSettingsService {
     const domain = await this.getDomain('finance_controls');
     const postingPeriods = this.toRecord(domain.postingPeriods);
     const documentNumbering = this.toRecord(domain.documentNumbering);
+    const recordIdentity = this.toRecord(domain.recordIdentity);
+    const normalizedIdentityMode = this.readString(recordIdentity.mode, 'compact').toLowerCase();
+    const normalizedForeignKeyMode = this.readString(recordIdentity.foreignKeyMode, 'compact').toLowerCase();
     return {
       postingPeriods: {
         lockedPeriods: this.toStringArray(postingPeriods.lockedPeriods),
@@ -339,6 +342,17 @@ export class RuntimeSettingsService {
         invoicePrefix: this.readString(documentNumbering.invoicePrefix, 'INV'),
         orderPrefix: this.readString(documentNumbering.orderPrefix, 'SO'),
         autoNumber: this.toBool(documentNumbering.autoNumber, true)
+      },
+      recordIdentity: {
+        mode: normalizedIdentityMode === 'technical' || normalizedIdentityMode === 'compact' || normalizedIdentityMode === 'sequence'
+          ? normalizedIdentityMode
+          : 'compact',
+        foreignKeyMode: normalizedForeignKeyMode === 'technical' || normalizedForeignKeyMode === 'compact'
+          ? normalizedForeignKeyMode
+          : 'compact',
+        prefix: this.readString(recordIdentity.prefix, 'ID').toUpperCase() || 'ID',
+        sequencePadding: this.toInt(recordIdentity.sequencePadding, 5, 2, 10),
+        compactLength: this.toInt(recordIdentity.compactLength, 8, 4, 20)
       },
       transactionCutoffHour: this.toInt(domain.transactionCutoffHour, 23, 0, 23)
     };

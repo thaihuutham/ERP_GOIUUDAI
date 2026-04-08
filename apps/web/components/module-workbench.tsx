@@ -37,7 +37,179 @@ import { SidePanel } from './ui/side-panel';
 type FormValue = FieldValue;
 type FormValues = Record<string, FormValue>;
 type FilterValues = Record<string, FormValue>;
-type TableRow = Record<string, unknown> & { id: BulkRowId };
+type TableRow = Record<string, unknown> & { id: BulkRowId; __displaySequence?: number };
+
+type RecordIdentityDisplayConfig = {
+  mode: 'technical' | 'compact' | 'sequence';
+  foreignKeyMode: 'technical' | 'compact';
+  prefix: string;
+  sequencePadding: number;
+  compactLength: number;
+};
+
+const DEFAULT_RECORD_ID_DISPLAY_CONFIG: RecordIdentityDisplayConfig = {
+  mode: 'compact',
+  foreignKeyMode: 'compact',
+  prefix: 'ID',
+  sequencePadding: 5,
+  compactLength: 8
+};
+
+const FOREIGN_KEY_PREFIX_OVERRIDES: Record<string, string> = {
+  employeeId: 'EMP',
+  customerId: 'CUS',
+  vendorId: 'VEN',
+  orderId: 'ORD',
+  payrollId: 'PAY',
+  productId: 'PRD',
+  assetId: 'AST',
+  projectId: 'PRJ',
+  departmentId: 'DEP',
+  positionId: 'POS',
+  approverId: 'APR',
+  requesterId: 'REQ',
+  managerId: 'MGR',
+  targetId: 'TGT',
+  ownerId: 'OWN',
+  createdBy: 'USR',
+  updatedBy: 'USR'
+};
+
+function toDisplayInteger(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const rounded = Math.trunc(parsed);
+  if (rounded < min) return min;
+  if (rounded > max) return max;
+  return rounded;
+}
+
+function normalizeRecordIdDisplayConfig(raw: unknown): RecordIdentityDisplayConfig {
+  if (!raw || typeof raw !== 'object') {
+    return DEFAULT_RECORD_ID_DISPLAY_CONFIG;
+  }
+
+  const source = raw as Record<string, unknown>;
+  const modeRaw = String(source.mode ?? DEFAULT_RECORD_ID_DISPLAY_CONFIG.mode).toLowerCase();
+  const foreignKeyModeRaw = String(source.foreignKeyMode ?? DEFAULT_RECORD_ID_DISPLAY_CONFIG.foreignKeyMode).toLowerCase();
+  const mode = modeRaw === 'technical' || modeRaw === 'compact' || modeRaw === 'sequence'
+    ? modeRaw
+    : DEFAULT_RECORD_ID_DISPLAY_CONFIG.mode;
+  const foreignKeyMode = foreignKeyModeRaw === 'technical' || foreignKeyModeRaw === 'compact'
+    ? foreignKeyModeRaw
+    : DEFAULT_RECORD_ID_DISPLAY_CONFIG.foreignKeyMode;
+
+  const normalizedPrefix = String(source.prefix ?? DEFAULT_RECORD_ID_DISPLAY_CONFIG.prefix)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '');
+
+  return {
+    mode,
+    foreignKeyMode,
+    prefix: normalizedPrefix || DEFAULT_RECORD_ID_DISPLAY_CONFIG.prefix,
+    sequencePadding: toDisplayInteger(
+      source.sequencePadding,
+      DEFAULT_RECORD_ID_DISPLAY_CONFIG.sequencePadding,
+      2,
+      10
+    ),
+    compactLength: toDisplayInteger(
+      source.compactLength,
+      DEFAULT_RECORD_ID_DISPLAY_CONFIG.compactLength,
+      4,
+      20
+    )
+  };
+}
+
+function sanitizeIdentifierToken(value: string) {
+  return value.replace(/[^A-Za-z0-9]/g, '');
+}
+
+function splitKeyTokens(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function resolveForeignKeyPrefix(key: string, fallbackPrefix: string) {
+  const keyLower = key.trim();
+  const overridden = FOREIGN_KEY_PREFIX_OVERRIDES[keyLower];
+  if (overridden) {
+    return overridden;
+  }
+
+  const trimmed = keyLower.replace(/Id$/i, '');
+  const tokens = splitKeyTokens(trimmed);
+  if (tokens.length >= 2) {
+    const acronym = tokens.map((token) => token[0]).join('').slice(0, 4).toUpperCase();
+    if (acronym.length >= 2) {
+      return acronym;
+    }
+  }
+
+  const cleaned = sanitizeIdentifierToken(trimmed).toUpperCase();
+  if (!cleaned) {
+    return fallbackPrefix;
+  }
+  return cleaned.length <= 4 ? cleaned : cleaned.slice(0, 4);
+}
+
+function formatCompactIdentifier(value: string, prefix: string, compactLength: number) {
+  const sanitized = sanitizeIdentifierToken(value);
+  if (!sanitized) {
+    return value;
+  }
+  const suffix = sanitized.slice(-Math.max(1, compactLength)).toUpperCase();
+  return prefix ? `${prefix}-${suffix}` : suffix;
+}
+
+function formatIdentifierValue(
+  key: string,
+  value: unknown,
+  row: TableRow,
+  config: RecordIdentityDisplayConfig
+) {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  const raw = String(value).trim();
+  if (!raw) {
+    return '-';
+  }
+
+  const isPrimaryId = key === 'id';
+  const isForeignId = !isPrimaryId && /Id$/i.test(key);
+  if (!isPrimaryId && !isForeignId) {
+    return formatCellValue(value);
+  }
+
+  if (isPrimaryId) {
+    if (config.mode === 'technical') {
+      return raw;
+    }
+    if (config.mode === 'sequence') {
+      const sequence = toDisplayInteger(row.__displaySequence, 0, 0, Number.MAX_SAFE_INTEGER);
+      if (sequence <= 0) {
+        return raw;
+      }
+      const seqLabel = String(sequence).padStart(config.sequencePadding, '0');
+      return config.prefix ? `${config.prefix}-${seqLabel}` : seqLabel;
+    }
+    return formatCompactIdentifier(raw, config.prefix, config.compactLength);
+  }
+
+  if (config.foreignKeyMode === 'technical') {
+    return raw;
+  }
+
+  const foreignPrefix = resolveForeignKeyPrefix(key, config.prefix);
+  return formatCompactIdentifier(raw, foreignPrefix, config.compactLength);
+}
 
 type PendingBulkActionContext = {
   action: FeatureAction;
@@ -214,6 +386,9 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   const { canAction } = useAccessPolicy();
   const tablePageSize = 25;
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [recordIdDisplayConfig, setRecordIdDisplayConfig] = useState<RecordIdentityDisplayConfig>(
+    DEFAULT_RECORD_ID_DISPLAY_CONFIG
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
@@ -303,6 +478,26 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   }, [feature.key]);
 
   useEffect(() => {
+    let active = true;
+    const loadRecordIdDisplayConfig = async () => {
+      try {
+        const payload = await apiRequest<{ data?: Record<string, unknown> }>('/settings/domains/finance_controls');
+        const financeData = payload?.data && typeof payload.data === 'object' ? payload.data : {};
+        const financeRecord = financeData as Record<string, unknown>;
+        if (!active) return;
+        setRecordIdDisplayConfig(normalizeRecordIdDisplayConfig(financeRecord.recordIdentity));
+      } catch {
+        if (!active) return;
+        setRecordIdDisplayConfig(DEFAULT_RECORD_ID_DISPLAY_CONFIG);
+      }
+    };
+    void loadRecordIdDisplayConfig();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (feature.autoLoad !== false) loadData();
   }, [feature.key, search, filterValues, tablePager.currentPage, tableSortBy, tableSortDir]);
 
@@ -340,7 +535,13 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
     canExecuteFeatureAction(action)
   );
 
-  const tableRows = rows as TableRow[];
+  const tableRows = useMemo(() => {
+    const pageOffset = Math.max(0, (tablePager.currentPage - 1) * tablePageSize);
+    return (rows as TableRow[]).map((row, index) => ({
+      ...row,
+      __displaySequence: pageOffset + index + 1
+    }));
+  }, [rows, tablePager.currentPage]);
 
   const columns: ColumnDefinition<TableRow>[] = useMemo(() => {
     const keys = feature.columns ?? (rows.length > 0 ? Object.keys(rows[0]).filter((key) => key !== 'tenant_Id').slice(0, 8) : []);
@@ -350,12 +551,12 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
       return {
         key,
         label: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1'),
-        render: (row) => formatCellValue(row[key]),
+        render: (row) => formatIdentifierValue(key, row[key], row, recordIdDisplayConfig),
         type: fieldDef?.type as any,
         options: fieldDef?.options
       };
     });
-  }, [feature.columns, rows, updateAction]);
+  }, [feature.columns, rows, updateAction, recordIdDisplayConfig]);
 
   const createAction = feature.actions.find((action) => action.method === 'POST' && !action.endpoint.includes(':id'));
   const rowActions = feature.actions.filter(
@@ -535,95 +736,6 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1.5rem', padding: 0, alignItems: 'flex-start' }}>
-        <div className="toolbar-left" style={{ display: 'grid', gap: '0.85rem', width: '100%' }}>
-           <div style={{ position: 'relative', width: '100%' }}>
-             <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-             <input 
-              placeholder="Tìm kiếm nhanh..." 
-              style={{ paddingLeft: '36px' }} 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-             />
-           </div>
-
-           {featureFilters.length > 0 && (
-             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.7rem', alignItems: 'center' }}>
-               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.76rem', color: 'var(--muted)' }}>
-                 <Filter size={14} /> Bộ lọc
-               </span>
-               {featureFilters.map((filter) => {
-                 const value = filterValues[filter.key];
-                 if (filter.type === 'select') {
-                   return (
-                     <select
-                       key={filter.key}
-                       style={{ width: 'auto', minWidth: '126px' }}
-                       value={String(value ?? '')}
-                       onChange={(event) =>
-                         setFilterValues((prev) => ({
-                           ...prev,
-                           [filter.key]: event.target.value
-                         }))
-                       }
-                     >
-                       <option value="">{filter.placeholder ?? filter.label}</option>
-                       {(filter.options ?? []).map((option) => (
-                         <option key={option.value} value={option.value}>
-                           {option.label}
-                         </option>
-                       ))}
-                     </select>
-                   );
-                 }
-
-                 if (filter.type === 'checkbox') {
-                   return (
-                     <label key={filter.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
-                       <input
-                         type="checkbox"
-                         checked={Boolean(value)}
-                         onChange={(event) =>
-                           setFilterValues((prev) => ({
-                             ...prev,
-                             [filter.key]: event.target.checked
-                           }))
-                         }
-                       />
-                       {filter.label}
-                     </label>
-                   );
-                 }
-
-                 return (
-                   <input
-                     key={filter.key}
-                     type={filter.type === 'number' ? 'number' : filter.type === 'date' ? 'date' : 'text'}
-                     value={String(value ?? '')}
-                     placeholder={filter.placeholder ?? filter.label}
-                     style={{ width: 'auto', minWidth: '126px' }}
-                     onChange={(event) =>
-                       setFilterValues((prev) => ({
-                         ...prev,
-                         [filter.key]: event.target.value
-                       }))
-                     }
-                   />
-                 );
-               })}
-             </div>
-           )}
-        </div>
-        <div className="toolbar-right">
-          {createAction && canExecuteFeatureAction(createAction) && (
-            <button className="btn btn-primary" onClick={() => setActiveAction(createAction)}>
-              <Plus size={16} /> {createAction.label}
-            </button>
-          )}
-        </div>
-      </div>
-
       {errorMessage && <div className="banner banner-error" style={{ marginBottom: '1rem' }}>{errorMessage}</div>}
       {resultMessage && <div className="banner banner-success" style={{ marginBottom: '1rem' }}>{resultMessage}</div>}
 
@@ -631,6 +743,96 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
         data={tableRows}
         columns={columns}
         isLoading={isLoading}
+        toolbarLeftContent={(
+          <>
+            <div className="field" style={{ width: '320px' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+                <input
+                  placeholder="Tìm kiếm nhanh..."
+                  style={{ paddingLeft: '36px' }}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+            </div>
+            {featureFilters.length > 0 ? (
+              <>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.76rem', color: 'var(--muted)' }}>
+                  <Filter size={14} /> Bộ lọc
+                </span>
+                {featureFilters.map((filter) => {
+                  const value = filterValues[filter.key];
+                  if (filter.type === 'select') {
+                    return (
+                      <select
+                        key={filter.key}
+                        style={{ width: 'auto', minWidth: '126px' }}
+                        value={String(value ?? '')}
+                        onChange={(event) =>
+                          setFilterValues((prev) => ({
+                            ...prev,
+                            [filter.key]: event.target.value
+                          }))
+                        }
+                      >
+                        <option value="">{filter.placeholder ?? filter.label}</option>
+                        {(filter.options ?? []).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  }
+
+                  if (filter.type === 'checkbox') {
+                    return (
+                      <label key={filter.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(value)}
+                          onChange={(event) =>
+                            setFilterValues((prev) => ({
+                              ...prev,
+                              [filter.key]: event.target.checked
+                            }))
+                          }
+                        />
+                        {filter.label}
+                      </label>
+                    );
+                  }
+
+                  return (
+                    <input
+                      key={filter.key}
+                      type={filter.type === 'number' ? 'number' : filter.type === 'date' ? 'date' : 'text'}
+                      value={String(value ?? '')}
+                      placeholder={filter.placeholder ?? filter.label}
+                      style={{ width: 'auto', minWidth: '126px' }}
+                      onChange={(event) =>
+                        setFilterValues((prev) => ({
+                          ...prev,
+                          [filter.key]: event.target.value
+                        }))
+                      }
+                    />
+                  );
+                })}
+              </>
+            ) : null}
+          </>
+        )}
+        toolbarRightContent={(
+          <>
+            {createAction && canExecuteFeatureAction(createAction) && (
+              <button className="btn btn-primary" onClick={() => setActiveAction(createAction)}>
+                <Plus size={16} /> {createAction.label}
+              </button>
+            )}
+          </>
+        )}
         onRowClick={(r) => setSelectedRow(r)}
         storageKey={`erp.workbench.${moduleKey}.${feature.key}`}
         pageInfo={
@@ -679,16 +881,20 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
                   <FileText size={20} />
                 </div>
                 <div>
-                   <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{String(selectedRow.id || 'Bản ghi') }</h3>
+                   <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>
+                     {formatIdentifierValue('id', selectedRow.id, selectedRow as TableRow, recordIdDisplayConfig)}
+                   </h3>
                    <p style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Module: {moduleKey.toUpperCase()} • Feature: {feature.key}</p>
                 </div>
              </div>
 
              <dl className="kv-grid" style={{ gridTemplateColumns: '1fr', gap: '0.75rem' }}>
-               {Object.entries(selectedRow).filter(([k]) => k !== 'tenant_Id').map(([k, v]) => (
+               {Object.entries(selectedRow).filter(([k]) => k !== 'tenant_Id' && !k.startsWith('__')).map(([k, v]) => (
                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem', borderBottom: '1px solid var(--line-soft)' }}>
                    <dt style={{ color: 'var(--muted)', fontSize: '0.8125rem' }}>{k}</dt>
-                   <dd style={{ fontWeight: 500, fontSize: '0.875rem' }}>{formatCellValue(v)}</dd>
+                   <dd style={{ fontWeight: 500, fontSize: '0.875rem' }}>
+                     {formatIdentifierValue(k, v, selectedRow as TableRow, recordIdDisplayConfig)}
+                   </dd>
                  </div>
                ))}
              </dl>

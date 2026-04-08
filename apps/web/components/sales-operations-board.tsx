@@ -612,8 +612,12 @@ export function SalesOperationsBoard() {
         </div>
       </div>
 
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
-        <div className="toolbar-left">
+      <StandardDataTable
+        data={orders}
+        columns={columns}
+        isLoading={isLoading}
+        storageKey={SALES_COLUMN_SETTINGS_KEY}
+        toolbarLeftContent={(
           <div className="field" style={{ width: '320px' }}>
             <div style={{ position: 'relative' }}>
               <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
@@ -625,27 +629,24 @@ export function SalesOperationsBoard() {
               />
             </div>
           </div>
-        </div>
-        <div className="toolbar-right">
-          <button className="btn btn-ghost" onClick={loadData}><RefreshCw size={16} /> Refresh</button>
-          {canCreate && (
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                setIsCreatePanelOpen(true);
-              }}
-            >
-              <Plus size={16} /> Tạo đơn hàng
+        )}
+        toolbarRightContent={(
+          <>
+            <button className="btn btn-ghost" onClick={loadData}>
+              <RefreshCw size={16} /> Refresh
             </button>
-          )}
-        </div>
-      </div>
-
-      <StandardDataTable
-        data={orders}
-        columns={columns}
-        isLoading={isLoading}
-        storageKey={SALES_COLUMN_SETTINGS_KEY}
+            {canCreate && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setIsCreatePanelOpen(true);
+                }}
+              >
+                <Plus size={16} /> Tạo đơn hàng
+              </button>
+            )}
+          </>
+        )}
         pageInfo={{
           currentPage: salesTablePager.currentPage,
           hasPrevPage: salesTablePager.hasPrevPage,

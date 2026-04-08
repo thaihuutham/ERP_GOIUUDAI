@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-08 20:44 +07
+- Time: 2026-04-08 21:55 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-08_2044_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_2155_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,103 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 21:24 (rollout gộp toolbar 1 dòng cho các trang còn lại)
+- User request:
+  - triển khai tiếp cho các trang còn lại: gộp toolbar nhiều dòng về 1 dòng để gọn và tăng diện tích hiển thị bảng.
+- Đã xử lý:
+  - rollout pattern toolbar mới cho:
+    - `apps/web/components/finance-operations-board.tsx`
+    - `apps/web/components/sales-operations-board.tsx`
+    - `apps/web/components/hr-operations-board.tsx`
+    - `apps/web/components/scm-operations-board.tsx`
+    - `apps/web/components/crm-vehicles-board.tsx`
+    - `apps/web/components/module-workbench.tsx`
+  - chi tiết pattern:
+    - bỏ `main-toolbar` riêng phía trên bảng.
+    - chuyển filter/search sang `toolbarLeftContent`.
+    - chuyển action thao tác sang `toolbarRightContent`.
+    - giữ cụm utility table mặc định (`Cấu hình cột`, `Xem dữ liệu đã xóa`, `Bulk Actions`) trong cùng một hàng.
+  - fix bổ sung:
+    - `apps/web/components/scm-operations-board.tsx` refactor placeholder/label theo biến chung để tránh TypeScript narrowing error.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+    - lần lint đầu fail do `.next/types` stale trước build, sau build lại lint pass.
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/scm-operations-board.spec.ts apps/web/e2e/tests/workflows-module.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`10 passed`)
+- Notes:
+  - không thay đổi schema/migration hoặc business logic ERP.
+  - không phát sinh ADR mới (batch là tối ưu layout UI).
+
+## Update 2026-04-08 21:55 (ID hiển thị có cấu hình trong Settings Center, giảm cảm giác ID ngẫu nhiên)
+- User request:
+  - phản ánh nhiều bảng dữ liệu đang hiển thị `id` kiểu random (cuid), muốn có cấu trúc hoặc dùng số thứ tự tăng dần.
+  - chốt phương án A: giữ `id` kỹ thuật, thêm cấu hình cách hiển thị trong Settings Center.
+- Đã xử lý:
+  - backend:
+    - `apps/api/src/modules/settings/settings-policy.types.ts`
+      - thêm `finance_controls.recordIdentity` vào default domain:
+        - `mode`, `foreignKeyMode`, `prefix`, `sequencePadding`, `compactLength`.
+    - `apps/api/src/modules/settings/settings-policy.service.ts`
+      - normalize/validate `recordIdentity` khi update/read domain `finance_controls`.
+    - `apps/api/src/common/settings/runtime-settings.service.ts`
+      - expose `recordIdentity` trong `getFinanceControlsRuntime()`.
+  - frontend Settings Center:
+    - `apps/web/components/settings-center.tsx`
+      - thêm UI field để cấu hình mode hiển thị ID (technical/compact/sequence), mode foreign key, prefix, sequence length, compact length.
+  - frontend bảng dữ liệu chuẩn:
+    - `apps/web/components/module-workbench.tsx`
+      - load `recordIdentity` từ `/settings/domains/finance_controls`.
+      - format hiển thị cột `id` và `...Id` theo cấu hình.
+      - bảo toàn id gốc trong data/action payload; chỉ đổi lớp hiển thị.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (sau khi build regenerate `.next/types`)
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅ (`19 passed`)
+  - `playwright` targeted:
+    - `settings-center-reports` (case managed list security/finance) ✅
+    - `workflows-module` (case create draft) ✅
+  - `playwright` batch `settings-center-reports + workflows-module` ⚠️ còn 2 fail + 1 flaky trong `settings-center-reports` do độ ổn định harness UI, không phải regression logic ID mới.
+- Notes:
+  - không phát sinh migration DB.
+  - không thay đổi business logic nghiệp vụ cũ.
+  - không cần ADR mới cho batch này.
+
+## Update 2026-04-08 21:08 (CRM customers: gộp toolbar nhiều dòng thành 1 dòng)
+- User request:
+  - gộp layout toolbar nhiều dòng ở trang CRM khách hàng (status + filter + action + table utilities) về một dòng để gọn và tăng không gian bảng.
+- Đã xử lý:
+  - `apps/web/components/ui/standard-data-table.tsx`
+    - thêm prop `toolbarRightContent` cho phép inject action custom phía phải toolbar bảng.
+  - `apps/web/app/styles/tables.css`
+    - thêm `.standard-table-toolbar-right-custom` để nhóm action custom đồng bộ với cụm nút chuẩn.
+  - `apps/web/components/crm-customers-board.tsx`
+    - bỏ `main-toolbar` riêng phía trên bảng.
+    - chuyển `status dropdown` + `Bộ lọc` sang `toolbarLeftContent`.
+    - chuyển `Export/Import/Quản lý xe/Khách hàng` sang `toolbarRightContent`.
+    - giữ nguyên `Cấu hình cột`, `Xem dữ liệu đã xóa`, `Bulk Actions` trong `StandardDataTable`.
+- Verify:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
+- Notes:
+  - không thay đổi schema/migration.
+  - không phát sinh ADR mới (batch là cải tiến layout UI).
 
 ## Update 2026-04-08 20:44 (Zalo messages: nhận diện KH + file attachment + mở hồ sơ bằng side panel)
 - User request:

@@ -2,15 +2,122 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-08 20:44 +07
+- Last updated: 2026-04-08 21:55 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-08 21:55 +07 (ID hiển thị có cấu hình trong Settings Center + bỏ hiển thị ID ngẫu nhiên ở bảng)
+- User request:
+  - phản hồi ID ở nhiều bảng dữ liệu đang ngẫu nhiên (cuid), cần có cấu trúc hoặc dùng số thứ tự tăng dần.
+  - chọn phương án A: giữ `id` kỹ thuật, thêm cấu hình hiển thị ID qua Settings Center.
+- Đã triển khai:
+  - backend settings schema/runtime:
+    - `apps/api/src/modules/settings/settings-policy.types.ts`
+      - thêm mặc định mới cho `finance_controls.recordIdentity`:
+        - `mode`: `compact|technical|sequence` (default `compact`)
+        - `foreignKeyMode`: `compact|technical` (default `compact`)
+        - `prefix`: `ID`
+        - `sequencePadding`: `5`
+        - `compactLength`: `8`
+    - `apps/api/src/modules/settings/settings-policy.service.ts`
+      - normalize + validate dữ liệu `recordIdentity` khi đọc/ghi domain `finance_controls`.
+    - `apps/api/src/common/settings/runtime-settings.service.ts`
+      - expose `recordIdentity` trong `getFinanceControlsRuntime()` để runtime nhất quán.
+  - settings center UI:
+    - `apps/web/components/settings-center.tsx`
+      - bổ sung nhóm field cấu hình hiển thị ID trong section `finance-numbering`:
+        - mode cột `id`,
+        - mode cột foreign key (`...Id`),
+        - prefix,
+        - độ dài sequence,
+        - độ dài compact suffix.
+  - module workbench UI:
+    - `apps/web/components/module-workbench.tsx`
+      - đọc config từ `/settings/domains/finance_controls`.
+      - format cột `id` theo mode:
+        - `technical`: giữ nguyên id thật,
+        - `compact`: `PREFIX-<suffix>`,
+        - `sequence`: `PREFIX-00001...`.
+      - format cột foreign key `...Id` theo mode:
+        - `technical` hoặc `compact` (có prefix theo ngữ cảnh như `EMP`, `CUS`, `ORD`...).
+      - chỉ thay đổi **hiển thị**, không thay đổi dữ liệu gốc / khóa chính / API payload.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+    - ghi nhận: có lần lint fail trước build do `.next/types` stale, sau build lại lint pass.
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅ (`19 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts --grep \"renders phase-2 managed list fields for security and finance domains\" --workers=1 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`1 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/workflows-module.spec.ts --grep \"starts a fresh draft when clicking create definition button\" --workers=1 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`1 passed`)
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/settings-center-reports.spec.ts apps/web/e2e/tests/workflows-module.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ⚠️ fail 2 test + 1 flaky thuộc `settings-center-reports.spec.ts` (flaky tương tác UI test harness), không liên quan trực tiếp logic ID mới.
+- Notes:
+  - không thay đổi schema/migration DB.
+  - không thay đổi business logic nghiệp vụ ERP; chỉ thêm cấu hình + lớp hiển thị UI cho ID.
+  - không phát sinh ADR mới (batch là cải tiến hiển thị + cấu hình vận hành).
 
 ## Open housekeeping
 - [x] Chuẩn hóa artifact build frontend:
   - đã ngừng track `apps/web/tsconfig.tsbuildinfo`.
   - đã cập nhật `.gitignore` với `*.tsbuildinfo`.
   - đã verify lint/build sạch sau housekeeping.
+
+## Session Update 2026-04-08 21:24 +07 (rollout gộp toolbar 1 dòng cho các trang còn lại)
+- User request:
+  - tiếp tục rollout cho các trang còn lại: gộp nhiều dòng toolbar về 1 dòng để tăng diện tích hiển thị bảng.
+- Đã triển khai:
+  - rollout layout mới (bỏ `main-toolbar` tách riêng, gom controls vào toolbar của `StandardDataTable`) cho:
+    - `apps/web/components/finance-operations-board.tsx`
+    - `apps/web/components/sales-operations-board.tsx`
+    - `apps/web/components/hr-operations-board.tsx`
+    - `apps/web/components/scm-operations-board.tsx`
+    - `apps/web/components/crm-vehicles-board.tsx`
+    - `apps/web/components/module-workbench.tsx`
+  - trong batch có fix type-safe cho SCM:
+    - `apps/web/components/scm-operations-board.tsx`
+    - tách placeholder/label theo biến chung để tránh lỗi narrowing theo nhánh tab.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+    - ghi nhận: có lần lint fail do `.next/types` stale trước build; sau build lại thì pass.
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/scm-operations-board.spec.ts apps/web/e2e/tests/workflows-module.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`10 passed`)
+- Notes:
+  - không thay đổi schema/migration/backend business logic.
+  - không tạo ADR mới (batch tối ưu bố cục UI).
+
+## Session Update 2026-04-08 21:08 +07 (CRM customers: gộp toolbar nhiều dòng thành 1 dòng)
+- User request:
+  - ở các trang có nhiều dòng toolbar/trạng thái như ảnh mẫu (CRM khách hàng), gộp lại thành 1 dòng để gọn và tăng diện tích hiển thị bảng.
+- Đã triển khai:
+  - `apps/web/components/ui/standard-data-table.tsx`
+    - thêm prop mới `toolbarRightContent` để cho phép module inject action tùy chỉnh vào cụm phải của toolbar bảng.
+  - `apps/web/app/styles/tables.css`
+    - thêm class `.standard-table-toolbar-right-custom` để nhóm action custom cùng layout với cụm tool mặc định (column config/archive/bulk).
+  - `apps/web/components/crm-customers-board.tsx`
+    - bỏ `main-toolbar` tách riêng phía trên bảng.
+    - chuyển dropdown `Tất cả trạng thái CSKH` + nút `Bộ lọc` vào `toolbarLeftContent` của `StandardDataTable`.
+    - chuyển `Export/Import/Quản lý xe/Khách hàng` vào `toolbarRightContent`.
+    - kết quả: toàn bộ điều khiển nằm cùng 1 hàng toolbar của bảng (tự wrap khi viewport hẹp).
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`3 passed`)
+- Notes:
+  - không thay đổi schema/migration hoặc business logic ERP.
+  - không tạo ADR mới (batch là tối ưu bố cục UI trên kiến trúc component hiện hữu).
 
 ## Session Update 2026-04-08 20:44 +07 (Zalo messages: customer identity + file attachment + right-side profile popup)
 - User request:

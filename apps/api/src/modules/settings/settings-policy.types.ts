@@ -174,6 +174,13 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       orderPrefix: 'SO',
       autoNumber: true
     },
+    recordIdentity: {
+      mode: 'compact',
+      foreignKeyMode: 'compact',
+      prefix: 'ID',
+      sequencePadding: 5,
+      compactLength: 8
+    },
     transactionCutoffHour: 23
   },
   sales_crm_policies: {

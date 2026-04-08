@@ -342,6 +342,17 @@ const PAYROLL_CYCLE_OPTIONS: FieldOption[] = [
   { value: 'weekly', label: 'Theo tuần' }
 ];
 
+const RECORD_ID_DISPLAY_MODE_OPTIONS: FieldOption[] = [
+  { value: 'technical', label: 'Giữ ID kỹ thuật' },
+  { value: 'compact', label: 'Mã rút gọn có cấu trúc' },
+  { value: 'sequence', label: 'Số thứ tự tăng dần' }
+];
+
+const FOREIGN_KEY_DISPLAY_MODE_OPTIONS: FieldOption[] = [
+  { value: 'technical', label: 'Giữ nguyên ID liên kết' },
+  { value: 'compact', label: 'Hiển thị mã rút gọn' }
+];
+
 const POSITION_STATUS_OPTIONS: FieldOption[] = [
   { value: 'ACTIVE', label: 'ACTIVE' },
   { value: 'INACTIVE', label: 'INACTIVE' },
@@ -724,7 +735,46 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         fields: [
           { id: 'finance-invoice-prefix', path: 'documentNumbering.invoicePrefix', label: 'Tiền tố hóa đơn', type: 'text', placeholder: 'INV' },
           { id: 'finance-order-prefix', path: 'documentNumbering.orderPrefix', label: 'Tiền tố đơn hàng', type: 'text', placeholder: 'SO' },
-          { id: 'finance-auto-number', path: 'documentNumbering.autoNumber', label: 'Tự động tăng số chứng từ', type: 'switch' }
+          { id: 'finance-auto-number', path: 'documentNumbering.autoNumber', label: 'Tự động tăng số chứng từ', type: 'switch' },
+          {
+            id: 'finance-record-id-mode',
+            path: 'recordIdentity.mode',
+            label: 'Hiển thị cột ID chính',
+            helper: 'Áp dụng cho cột Id ở các bảng dữ liệu chuẩn.',
+            type: 'select',
+            options: RECORD_ID_DISPLAY_MODE_OPTIONS
+          },
+          {
+            id: 'finance-record-id-foreign-mode',
+            path: 'recordIdentity.foreignKeyMode',
+            label: 'Hiển thị cột ID liên kết (employeeId, customerId...)',
+            type: 'select',
+            options: FOREIGN_KEY_DISPLAY_MODE_OPTIONS
+          },
+          {
+            id: 'finance-record-id-prefix',
+            path: 'recordIdentity.prefix',
+            label: 'Tiền tố mã hiển thị',
+            helper: 'Dùng cho mode rút gọn/số thứ tự (ví dụ: ID, REC, DOC).',
+            type: 'text',
+            placeholder: 'ID'
+          },
+          {
+            id: 'finance-record-id-seq-padding',
+            path: 'recordIdentity.sequencePadding',
+            label: 'Độ dài số thứ tự',
+            type: 'number',
+            min: 2,
+            max: 10
+          },
+          {
+            id: 'finance-record-id-compact-length',
+            path: 'recordIdentity.compactLength',
+            label: 'Số ký tự hậu tố khi rút gọn',
+            type: 'number',
+            min: 4,
+            max: 20
+          }
         ]
       }
     ]

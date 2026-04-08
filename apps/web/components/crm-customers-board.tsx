@@ -2182,46 +2182,6 @@ export function CrmCustomersBoard() {
         </div>
       )}
 
-      {/* Header Actions */}
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
-        <div className="toolbar-left">
-          <div className="field" style={{ width: '160px' }}>
-            <select 
-              value={status}
-              onChange={(e) => setStatus(e.target.value as CustomerStatusFilter)}
-            >
-              <option value="ALL">Tất cả trạng thái CSKH</option>
-              {CUSTOMER_STATUS_OPTIONS.map((value) => (
-                <option key={value} value={value}>
-                  {CUSTOMER_STATUS_LABELS[value]}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="toolbar-right">
-          <button className="btn btn-ghost">
-            <Download size={16} /> Export
-          </button>
-          <a className="btn btn-ghost" href="/modules/crm/customers/import">
-            <Upload size={16} /> Import
-          </a>
-          <a className="btn btn-ghost" href="/modules/crm/vehicles">
-            <Car size={16} /> Quản lý xe
-          </a>
-          {canCreate && (
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                setIsCreatePanelOpen(true);
-              }}
-            >
-              <Plus size={16} /> Khách hàng
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* Table Data */}
       <StandardDataTable
         data={customers}
@@ -2229,7 +2189,20 @@ export function CrmCustomersBoard() {
         storageKey={CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY}
         defaultVisibleColumnKeys={CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS}
         toolbarLeftContent={(
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+          <>
+            <div className="field" style={{ width: '180px' }}>
+              <select
+                value={status}
+                onChange={(event) => setStatus(event.target.value as CustomerStatusFilter)}
+              >
+                <option value="ALL">Tất cả trạng thái CSKH</option>
+                {CUSTOMER_STATUS_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {CUSTOMER_STATUS_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
               type="button"
               className={`btn ${appliedFilterLabel ? 'btn-primary' : 'btn-ghost'}`}
@@ -2256,7 +2229,30 @@ export function CrmCustomersBoard() {
                 </button>
               </>
             ) : null}
-          </div>
+          </>
+        )}
+        toolbarRightContent={(
+          <>
+            <button className="btn btn-ghost">
+              <Download size={16} /> Export
+            </button>
+            <a className="btn btn-ghost" href="/modules/crm/customers/import">
+              <Upload size={16} /> Import
+            </a>
+            <a className="btn btn-ghost" href="/modules/crm/vehicles">
+              <Car size={16} /> Quản lý xe
+            </a>
+            {canCreate && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setIsCreatePanelOpen(true);
+                }}
+              >
+                <Plus size={16} /> Khách hàng
+              </button>
+            )}
+          </>
         )}
         isLoading={isLoading}
         pageInfo={{

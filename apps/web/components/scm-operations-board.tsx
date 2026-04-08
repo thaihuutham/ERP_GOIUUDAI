@@ -260,6 +260,44 @@ export function ScmOperationsBoard() {
 
   if (!canView) return null;
 
+  const scmSearchPlaceholder =
+    activeTab === 'PO'
+      ? 'Tìm mã PO...'
+      : activeTab === 'VENDORS'
+        ? 'Tìm nhà cung cấp...'
+        : 'Tìm mã shipment, hãng vận chuyển...';
+  const scmCreateLabel =
+    activeTab === 'PO'
+      ? 'Tạo PO'
+      : activeTab === 'VENDORS'
+        ? 'Thêm nhà cung cấp'
+        : 'Tạo shipment';
+  const scmToolbarLeftContent = (
+    <div className="field" style={{ width: '300px' }}>
+      <div style={{ position: 'relative' }}>
+        <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+        <input
+          placeholder={scmSearchPlaceholder}
+          style={{ paddingLeft: '36px' }}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
+    </div>
+  );
+  const scmToolbarRightContent = (
+    <>
+      <button className="btn btn-ghost" onClick={() => loadData()}>
+        <RefreshCw size={16} /> Đồng bộ
+      </button>
+      {canCreate && (
+        <button className="btn btn-primary">
+          <Plus size={16} /> {scmCreateLabel}
+        </button>
+      )}
+    </>
+  );
+
   return (
     <div className="scm-board">
       {/* Metrics Section */}
@@ -304,43 +342,14 @@ export function ScmOperationsBoard() {
         </button>
       </div>
 
-      {/* Toolbar */}
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
-        <div className="toolbar-left">
-          <div className="field" style={{ width: '300px' }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-              <input
-                placeholder={
-                  activeTab === 'PO'
-                    ? 'Tìm mã PO...'
-                    : activeTab === 'VENDORS'
-                      ? 'Tìm nhà cung cấp...'
-                      : 'Tìm mã shipment, hãng vận chuyển...'
-                }
-                style={{ paddingLeft: '36px' }}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-        <div className="toolbar-right">
-          <button className="btn btn-ghost" onClick={() => loadData()}><RefreshCw size={16} /> Đồng bộ</button>
-          {canCreate && (
-            <button className="btn btn-primary">
-              <Plus size={16} /> {activeTab === 'PO' ? 'Tạo PO' : activeTab === 'VENDORS' ? 'Thêm nhà cung cấp' : 'Tạo shipment'}
-            </button>
-          )}
-        </div>
-      </div>
-
       {activeTab === 'PO' && (
         <StandardDataTable
           data={purchaseOrders}
           columns={poColumns}
           isLoading={isLoading}
           storageKey={SCM_PO_STORAGE_KEY}
+          toolbarLeftContent={scmToolbarLeftContent}
+          toolbarRightContent={scmToolbarRightContent}
           pageInfo={{
             currentPage: poTablePager.currentPage,
             hasPrevPage: poTablePager.hasPrevPage,
@@ -375,6 +384,8 @@ export function ScmOperationsBoard() {
           columns={shipmentColumns}
           isLoading={isLoading}
           storageKey={SCM_SHIPMENT_STORAGE_KEY}
+          toolbarLeftContent={scmToolbarLeftContent}
+          toolbarRightContent={scmToolbarRightContent}
           pageInfo={{
             currentPage: shipmentTablePager.currentPage,
             hasPrevPage: shipmentTablePager.hasPrevPage,
@@ -408,6 +419,8 @@ export function ScmOperationsBoard() {
           columns={vendorColumns}
           isLoading={isLoading}
           storageKey={SCM_VENDOR_STORAGE_KEY}
+          toolbarLeftContent={scmToolbarLeftContent}
+          toolbarRightContent={scmToolbarRightContent}
           pageInfo={{
             currentPage: vendorTablePager.currentPage,
             hasPrevPage: vendorTablePager.hasPrevPage,

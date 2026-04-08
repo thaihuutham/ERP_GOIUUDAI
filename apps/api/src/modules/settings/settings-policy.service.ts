@@ -1335,11 +1335,33 @@ export class SettingsPolicyService {
     if (domain === 'finance_controls') {
       const finance = this.ensureRecord(merged);
       const postingPeriods = this.ensureRecord(finance.postingPeriods);
+      const recordIdentity = this.ensureRecord(finance.recordIdentity);
+      const normalizeRecordIdentityMode = (value: unknown): 'technical' | 'compact' | 'sequence' => {
+        const mode = this.cleanString(value).toLowerCase();
+        if (mode === 'technical' || mode === 'compact' || mode === 'sequence') {
+          return mode;
+        }
+        return 'compact';
+      };
+      const normalizeForeignKeyMode = (value: unknown): 'technical' | 'compact' => {
+        const mode = this.cleanString(value).toLowerCase();
+        if (mode === 'technical' || mode === 'compact') {
+          return mode;
+        }
+        return 'compact';
+      };
       return {
         ...finance,
         postingPeriods: {
           ...postingPeriods,
           lockedPeriods: this.parseLockedPeriods(postingPeriods.lockedPeriods)
+        },
+        recordIdentity: {
+          mode: normalizeRecordIdentityMode(recordIdentity.mode),
+          foreignKeyMode: normalizeForeignKeyMode(recordIdentity.foreignKeyMode),
+          prefix: this.cleanString(recordIdentity.prefix).toUpperCase() || 'ID',
+          sequencePadding: this.toInt(recordIdentity.sequencePadding, 5, 2, 10),
+          compactLength: this.toInt(recordIdentity.compactLength, 8, 4, 20)
         },
         transactionCutoffHour: this.toInt(finance.transactionCutoffHour, 23, 0, 23)
       };

@@ -292,8 +292,12 @@ export function HrOperationsBoard() {
         </div>
       </div>
 
-      <div className="main-toolbar" style={{ borderBottom: 'none', marginBottom: '1rem', paddingBottom: '0' }}>
-        <div className="toolbar-left">
+      <StandardDataTable
+        data={employees}
+        columns={columns}
+        isLoading={isLoading}
+        storageKey={HR_COLUMN_SETTINGS_KEY}
+        toolbarLeftContent={(
           <div className="field" style={{ width: '300px' }}>
             <div style={{ position: 'relative' }}>
               <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
@@ -301,22 +305,21 @@ export function HrOperationsBoard() {
                 placeholder="Tìm nhân viên, phòng ban..."
                 style={{ paddingLeft: '36px' }}
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(event) => setSearch(event.target.value)}
               />
             </div>
           </div>
-        </div>
-        <div className="toolbar-right">
-          <button className="btn btn-ghost" onClick={() => loadEmployees()}><RefreshCw size={16} /> Refresh</button>
-          <button className="btn btn-primary"><Plus size={16} /> Tuyển dụng mới</button>
-        </div>
-      </div>
-
-      <StandardDataTable
-        data={employees}
-        columns={columns}
-        isLoading={isLoading}
-        storageKey={HR_COLUMN_SETTINGS_KEY}
+        )}
+        toolbarRightContent={(
+          <>
+            <button className="btn btn-ghost" onClick={() => loadEmployees()}>
+              <RefreshCw size={16} /> Refresh
+            </button>
+            <button className="btn btn-primary">
+              <Plus size={16} /> Tuyển dụng mới
+            </button>
+          </>
+        )}
         pageInfo={{
           currentPage: hrTablePager.currentPage,
           hasPrevPage: hrTablePager.hasPrevPage,
