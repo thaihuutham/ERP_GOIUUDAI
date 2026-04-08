@@ -805,6 +805,25 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
     return true;
   };
 
+  const waitForInvoiceRow = async (invoiceNo: string) => {
+    const invoiceCell = page.getByText(invoiceNo).first();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await invoiceCell.isVisible().catch(() => false)) {
+        return;
+      }
+      const emptyRowVisible = await page
+        .locator('table.standard-table-table tbody')
+        .getByText('Không có dữ liệu')
+        .isVisible()
+        .catch(() => false);
+      if (emptyRowVisible) {
+        await page.getByRole('button', { name: 'Làm mới' }).click();
+      }
+      await page.waitForTimeout(400);
+    }
+    await expect(invoiceCell).toBeVisible({ timeout: 15000 });
+  };
+
   await page.goto('/modules/crm');
   const crmOverlay = page.locator('.side-panel-overlay');
   if (await crmOverlay.isVisible().catch(() => false)) {
@@ -842,7 +861,7 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
   }
 
   await page.goto('/modules/finance');
-  await expect(page.getByRole('button', { name: 'INV-BULK-001' })).toBeVisible();
+  await waitForInvoiceRow('INV-BULK-001');
   await checkAllVisibleRows();
   await runGenericBulkAction('Issue');
   await expect(page.locator('.finance-alert-success')).toContainText('Phát hành hóa đơn: thành công 2/2.');

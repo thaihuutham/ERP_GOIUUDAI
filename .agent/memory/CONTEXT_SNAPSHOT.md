@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-08 06:27 +07
+- Time: 2026-04-08 09:30 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-08_0627_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_0930_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,88 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 09:30 (Phase 1.5 stabilization: e2e regression alignment sau StandardDataTable server-driven rollout)
+- User request:
+  - triển khai luôn Phase 1.5 sau roadmap, tập trung ổn định hóa sau Phase 1.
+- Đã xử lý:
+  - cập nhật regression tests cho hành vi UI mới (bulk modal + route guard redirect):
+    - `apps/web/e2e/tests/assistant-module.spec.ts`
+      - route guard từ assert heading cũ sang assert redirect `Tổng quan` + banner quyền.
+      - bulk flows `runs/knowledge/channels` chạy qua `Bulk Actions` modal.
+      - selector `Bulk Actions` chống strict-mode khi nhiều bảng cùng trang.
+    - `apps/web/e2e/tests/workflows-module.spec.ts`
+      - bulk approve inbox đi qua modal chuẩn.
+      - xác nhận action hàng loạt theo panel thực tế sau khi đóng modal để tránh click interception.
+    - `apps/web/e2e/tests/audit-module.spec.ts`
+      - heading đổi sang `Nhật ký hệ thống`.
+      - read-only bulk utilities assert trong modal (`Copy IDs`, `Export CSV`, `Clear selection`).
+    - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`
+      - thêm `waitForInvoiceRow(...)` để giảm flaky timing ở finance invoices table.
+- Verify:
+  - Docker/DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up).
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅.
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅.
+  - Build/lint:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+  - E2E stabilization gate:
+    - focused regressions (`assistant bulk + workflows bulk`) ✅
+    - full targeted suite:
+      - `assistant-module.spec.ts`
+      - `audit-module.spec.ts`
+      - `workflows-module.spec.ts`
+      - `crm-sales-finance-core-flow.spec.ts`
+      - chạy với `--workers=2` để giảm nhiễu tài nguyên local
+      - kết quả ✅ `19 passed`.
+- Notes:
+  - session này không thay đổi business logic backend/frontend runtime, chỉ ổn định hóa test theo behavior đã rollout.
+  - không có migration/schema mới.
+  - không phát sinh ADR mới.
+
+## Update 2026-04-08 08:30 (Phase 1 StandardDataTable: pagination + sorting server-driven)
+- User request:
+  - implement plan pagination + sorting server-driven cho toàn bộ màn `StandardDataTable` trong phase 1.
+- Đã xử lý:
+  - Assistant Runs board (`apps/web/components/assistant/assistant-runs-board.tsx`)
+    - hoàn tất wiring `cursor/sortBy/sortDir` khi list runs.
+    - table nhận `pageInfo/sortMeta/onPage*/onSortChange`.
+    - default limit chuẩn hóa về `25`, max options còn `25/50/100`.
+  - Audit module
+    - API mở rộng nhận sort query:
+      - `apps/api/src/modules/audit/audit.controller.ts`
+      - `apps/api/src/modules/audit/audit.service.ts`
+    - service thêm sort whitelist `createdAt`, hỗ trợ `asc/desc`, trả `sortMeta`.
+    - UI (`apps/web/components/audit-operations-board.tsx`) chuyển từ load-more append sang cursor pager history + sort controls server-driven.
+  - Module Workbench (`apps/web/components/module-workbench.tsx`)
+    - nâng sang dual-contract:
+      - endpoint mới: đọc `items/pageInfo/sortMeta` qua `normalizePagedListPayload`.
+      - endpoint cũ: fallback an toàn.
+    - gửi query `limit/cursor/sortBy/sortDir` khi phù hợp.
+    - table nhận `pageInfo/sortMeta` và callback paging/sort.
+  - `apps/web/components/ui/standard-data-table.tsx`
+    - fix hook-order safety (tránh hook sau early return loading).
+- Verify:
+  - Docker/DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up).
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅.
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅.
+  - Build/lint:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+  - Targeted API tests:
+    - `npm run test --workspace @erp/api -- --run test/audit.service.test.ts test/workflows.service.test.ts test/sales.service.test.ts test/finance.service.test.ts test/hr.service.test.ts test/scm.service.test.ts test/crm.service.test.ts` ✅ (48 tests pass).
+  - Targeted E2E:
+    - `assistant/audit/workflows/crm-sales-finance` suite: 15 passed, 4 failed.
+    - nhóm fail tập trung ở expectation UI cũ cho bulk/guard (không phải crash compile/runtime).
+- Notes:
+  - Không thêm migration/schema mới.
+  - Không phát sinh ADR mới trong session này.
 
 ## Update 2026-04-08 06:27 (CRM server-side filter full-dataset)
 - User request:

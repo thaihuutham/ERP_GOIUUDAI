@@ -577,7 +577,10 @@ test.describe('Assistant module', () => {
     await expect(page.getByRole('link', { name: 'Proxy dữ liệu' }).first()).toBeVisible();
 
     await page.goto('/modules/assistant/knowledge');
-    await expect(page.getByRole('heading', { name: 'Truy cập bị giới hạn' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Tổng quan' })).toBeVisible();
+    await expect(
+      page.getByText('Trang bạn mở không thuộc phạm vi quyền truy cập. Hệ thống đã chuyển về Tổng quan.')
+    ).toBeVisible();
 
     await page.locator('#web-role-select').selectOption('MANAGER');
     await page.goto('/modules/assistant/knowledge');
@@ -681,19 +684,28 @@ test.describe('Assistant module', () => {
   test('Bulk: runs + knowledge + channels xử lý select-all loaded theo từng bảng chính', async ({ page }) => {
     await mockAssistantApis(page);
 
+    const runBulkAction = async (actionLabel: string) => {
+      await page.locator('button:has-text("Bulk Actions"):not([disabled])').first().click();
+      const modal = page.locator('dialog.modal-dialog').last();
+      await expect(modal).toBeVisible();
+      await modal.getByRole('button', { name: actionLabel, exact: true }).click();
+      await modal.getByRole('button', { name: 'Đóng' }).click();
+      await expect(modal).toBeHidden();
+    };
+
     await page.goto('/modules/assistant/runs');
     await page.getByRole('checkbox', { name: 'Chọn tất cả dữ liệu đang tải' }).check();
-    await page.getByRole('button', { name: 'Phê duyệt' }).click();
+    await runBulkAction('Phê duyệt');
     await expect(page.getByText('Phê duyệt phiên chạy: thành công 1/1.')).toBeVisible();
 
     await page.goto('/modules/assistant/knowledge');
     await page.getByRole('checkbox', { name: 'Chọn tất cả dữ liệu đang tải' }).first().check();
-    await page.getByRole('button', { name: 'Đồng bộ đã chọn' }).click();
+    await runBulkAction('Đồng bộ đã chọn');
     await expect(page.locator('.banner.banner-success', { hasText: 'Đồng bộ nguồn: thành công 1/1.' })).toBeVisible();
 
     await page.goto('/modules/assistant/channels');
     await page.getByRole('checkbox', { name: 'Chọn tất cả dữ liệu đang tải' }).check();
-    await page.getByRole('button', { name: 'Kích hoạt', exact: true }).click();
+    await runBulkAction('Kích hoạt');
     await expect(page.locator('.banner.banner-success', { hasText: 'Kích hoạt kênh: thành công 1/1.' })).toBeVisible();
   });
 

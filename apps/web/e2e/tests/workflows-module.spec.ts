@@ -435,9 +435,14 @@ test.describe('Workflows module', () => {
     await page.getByRole('button', { name: 'Hộp duyệt' }).click();
 
     await page.getByRole('checkbox', { name: 'Chọn tất cả dữ liệu đang tải' }).check();
-    await page.getByRole('button', { name: 'Phê duyệt' }).click();
+    await page.getByRole('button', { name: 'Bulk Actions' }).click();
+    const bulkModal = page.locator('dialog.modal-dialog').last();
+    await expect(bulkModal).toBeVisible();
+    await bulkModal.getByRole('button', { name: 'Phê duyệt', exact: true }).click();
+    await bulkModal.getByRole('button', { name: 'Đóng' }).click();
+    await expect(bulkModal).toBeHidden();
 
-    await expect(page.getByText('Xử lý hàng loạt Phê duyệt (2)')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Xử lý hàng loạt Phê duyệt (2)' })).toBeVisible();
     await page.getByRole('button', { name: 'Xác nhận' }).click();
 
     await expect(page.locator('.standard-table-bulk-result')).toContainText('thành công 1/2, lỗi 1.');

@@ -119,7 +119,7 @@ test.describe('Audit module', () => {
     await expect(auditLink).toHaveAttribute('href', /\/modules\/audit\?entityType=Order&entityId=order_audit_1/);
 
     await auditLink.click();
-    await expect(page.getByRole('heading', { name: 'Module Audit' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nhật ký hệ thống' })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'APPROVE_ORDER' })).toBeVisible();
     await expect(page.getByText(/Phạm vi xem audit hiện tại:/)).toBeVisible();
     expect(objectHistoryRequestCount).toBeGreaterThan(0);
@@ -157,7 +157,7 @@ test.describe('Audit module', () => {
     });
 
     await page.goto('/modules/audit');
-    await expect(page.getByRole('heading', { name: 'Module Audit' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nhật ký hệ thống' })).toBeVisible();
     await expect(
       page.getByText('Bạn chưa được cấp quyền xem audit theo ma trận ủy quyền hiện tại. Vui lòng liên hệ Admin để được cấu hình nhóm quản lý.')
     ).toBeVisible();
@@ -235,15 +235,20 @@ test.describe('Audit module', () => {
     await expect(page.getByRole('cell', { name: 'APPROVE_ORDER' })).toBeVisible();
 
     await page.getByRole('checkbox', { name: 'Chọn tất cả dữ liệu đang tải' }).check();
-    await expect(page.getByText('Đã chọn 1 / 1 dòng đang tải')).toBeVisible();
+    await page.getByRole('button', { name: 'Bulk Actions' }).click();
+    const bulkModal = page.locator('dialog.modal-dialog').last();
+    await expect(bulkModal).toBeVisible();
+    await expect(bulkModal.getByText('Đã chọn 1 / 1 dòng đang tải')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Copy IDs' }).click();
+    await bulkModal.getByRole('button', { name: 'Copy IDs' }).click();
 
     const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Export CSV' }).click();
+    await bulkModal.getByRole('button', { name: 'Export CSV' }).click();
     await downloadPromise;
 
-    await page.getByRole('button', { name: 'Clear selection' }).click();
-    await expect(page.getByText('Đã chọn 0 / 1 dòng đang tải')).toBeVisible();
+    await bulkModal.getByRole('button', { name: 'Clear selection' }).click();
+    await expect(bulkModal.getByText('Đã chọn 0 / 1 dòng đang tải')).toBeVisible();
+    await bulkModal.getByRole('button', { name: 'Đóng' }).click();
+    await expect(bulkModal).toBeHidden();
   });
 });
