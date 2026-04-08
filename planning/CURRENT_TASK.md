@@ -2,7 +2,7 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-08 19:12 +07
+- Last updated: 2026-04-08 20:44 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
 
@@ -11,6 +11,33 @@
   - đã ngừng track `apps/web/tsconfig.tsbuildinfo`.
   - đã cập nhật `.gitignore` với `*.tsbuildinfo`.
   - đã verify lint/build sạch sau housekeeping.
+
+## Session Update 2026-04-08 20:44 +07 (Zalo messages: customer identity + file attachment + right-side profile popup)
+- User request:
+  - tại `/modules/zalo-automation/messages`:
+    - hiển thị tên + số điện thoại khi hệ thống đã nhận diện khách hàng.
+    - hỗ trợ nhận/hiển thị file đính kèm, cho phép tải về máy user (không lưu trên server app).
+    - bấm `Mở hồ sơ đầy đủ` trong Customer 360 phải mở popup bên phải như trang khách hàng.
+- Đã triển khai:
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - hiển thị tên/SĐT khách đã match ở danh sách hội thoại và header luồng tin nhắn.
+    - parse payload file từ `RICH content` + `attachmentsJson`, render file card thay JSON thô.
+    - thêm action `Tải file` (client-side fetch/blob download, fallback mở tab mới).
+    - thay Link điều hướng CRM bằng `SidePanel` bên phải hiển thị hồ sơ khách hàng.
+  - `apps/web/app/styles/modules/crm.css`
+    - thêm style cho phone badge trong thread list, file card trong message bubble, customer profile side panel.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+- Notes:
+  - không thay đổi schema/migration.
+  - không cần ADR mới (batch là thay đổi UI/render behavior theo kiến trúc hiện có).
 
 ## Session Update 2026-04-08 19:12 +07 (CRM taxonomy runtime alignment theo Settings Center Enterprise)
 - User request:

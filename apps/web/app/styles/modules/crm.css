@@ -232,12 +232,24 @@
 
 .zalo-chat-thread-title {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.36rem;
   min-width: 0;
 }
 
+.zalo-chat-thread-title-main {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
 .zalo-chat-thread-title strong {
+  line-height: 1.2;
+}
+
+.zalo-chat-thread-phone {
+  color: #35765d;
+  font-size: 0.72rem;
   line-height: 1.2;
 }
 
@@ -425,6 +437,11 @@
   margin: 0;
 }
 
+.zalo-chat-message-content {
+  display: grid;
+  gap: 0.3rem;
+}
+
 .zalo-chat-message-sticker {
   display: block;
   width: min(220px, 70vw);
@@ -453,6 +470,114 @@
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.zalo-chat-message-file-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.zalo-chat-message-file-card {
+  border: 1px solid #d6e6dd;
+  border-radius: var(--radius-md);
+  background: #f9fcfa;
+  padding: 0.42rem 0.48rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.42rem;
+}
+
+.zalo-chat-message-file-meta {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.zalo-chat-message-file-name {
+  font-size: 0.82rem;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.zalo-chat-message-file-desc {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.zalo-chat-message-file-download {
+  white-space: nowrap;
+  align-self: center;
+}
+
+.zalo-customer-profile-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.zalo-customer-profile-section {
+  border: 1px solid #dce9df;
+  border-radius: var(--radius-md);
+  padding: 0.55rem;
+  background: #fbfefc;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.zalo-customer-profile-section h3 {
+  font-size: 1.05rem;
+}
+
+.zalo-customer-profile-section h4 {
+  font-size: 0.88rem;
+}
+
+.zalo-customer-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.32rem;
+}
+
+.zalo-customer-profile-grid div {
+  border: 1px solid #dce9df;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 0.32rem 0.36rem;
+  display: grid;
+  gap: 0.08rem;
+}
+
+.zalo-customer-profile-grid span {
+  color: #4b6f5c;
+  font-size: 0.72rem;
+}
+
+.zalo-customer-profile-grid strong {
+  color: #1f4f36;
+  font-size: 0.82rem;
+}
+
+.zalo-customer-profile-list {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.zalo-customer-profile-list-item {
+  border: 1px solid #dce9df;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 0.35rem 0.4rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.zalo-customer-profile-list-item header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.38rem;
 }
 
 .zalo-chat-unread-badge {

@@ -8,6 +8,7 @@ import { getZaloAutomationSocket, resolveZaloAutomationOrgId } from '../lib/zalo
 import { useAccessPolicy } from './access-policy-context';
 import { Modal } from './ui/modal';
 import { Badge, statusToBadge } from './ui';
+import { SidePanel } from './ui/side-panel';
 
 type ConversationChannel = 'ZALO_PERSONAL' | 'ZALO_OA' | 'FACEBOOK' | 'OTHER';
 type ZaloPermissionLevel = 'READ' | 'CHAT' | 'ADMIN';
@@ -73,6 +74,14 @@ type CustomerPreview = {
 
 type Customer360Payload = {
   customer?: CustomerPreview & {
+    code?: string | null;
+    customerStage?: string | null;
+    source?: string | null;
+    segment?: string | null;
+    status?: string | null;
+    ownerStaffId?: string | null;
+    tags?: string[] | null;
+    updatedAt?: string | null;
     totalSpent?: number | string | null;
     totalOrders?: number | null;
     lastOrderAt?: string | null;
@@ -104,6 +113,33 @@ type Customer360Payload = {
     totalAmount?: number | string | null;
     createdAt?: string | null;
     status?: string | null;
+  }>;
+  recentContracts?: Array<{
+    id: string;
+    productType?: string | null;
+    status?: string | null;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    sourceRef?: string | null;
+    telecomLine?: {
+      packageName?: string | null;
+      servicePhone?: string | null;
+      currentExpiryAt?: string | null;
+    } | null;
+    autoInsuranceDetail?: {
+      soGCN?: string | null;
+      vehicleId?: string | null;
+    } | null;
+    motoInsuranceDetail?: {
+      soGCN?: string | null;
+      vehicleId?: string | null;
+    } | null;
+    digitalServiceDetail?: {
+      serviceName?: string | null;
+      planName?: string | null;
+      provider?: string | null;
+      serviceAccountRef?: string | null;
+    } | null;
   }>;
   recentInteractions?: Array<{
     id: string;
@@ -309,6 +345,13 @@ type ImageRenderData = {
   caption: string | null;
 };
 
+type FileRenderData = {
+  fileUrl: string;
+  fileName: string;
+  fileSizeBytes: number | null;
+  description: string | null;
+};
+
 const IMAGE_URL_HINT_KEYS = new Set([
   'thumb',
   'thumbnail',
@@ -323,6 +366,49 @@ const IMAGE_URL_HINT_KEYS = new Set([
   'url',
   'src',
   'link'
+]);
+
+const FILE_URL_HINT_KEYS = new Set([
+  'href',
+  'url',
+  'link',
+  'src',
+  'downloadurl',
+  'download_url',
+  'fileurl',
+  'file_url',
+  'file',
+  'attachment',
+  'attachments',
+  'resourceurl',
+  'resource_url'
+]);
+
+const FILE_NAME_HINT_KEYS = new Set([
+  'title',
+  'name',
+  'filename',
+  'fileName',
+  'file_name',
+  'displayName',
+  'display_name'
+]);
+
+const FILE_SIZE_HINT_KEYS = new Set([
+  'filesize',
+  'fileSize',
+  'size',
+  'sizebytes',
+  'sizeBytes',
+  'contentLength'
+]);
+
+const FILE_DESCRIPTION_HINT_KEYS = new Set([
+  'description',
+  'desc',
+  'text',
+  'caption',
+  'note'
 ]);
 
 function parseRichMessageObject(rawContent: string | null | undefined) {
@@ -347,6 +433,73 @@ function isLikelyImageUrl(value: string) {
     return true;
   }
   return normalized.includes('photo-') || normalized.includes('/img/') || normalized.includes('/image');
+}
+
+function looksLikeFileName(value: string) {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 255) {
+    return false;
+  }
+  return /\.[a-z0-9]{2,10}$/i.test(normalized);
+}
+
+function isLikelyFileUrl(value: string) {
+  const normalized = value.trim();
+  if (!/^https?:\/\//i.test(normalized)) {
+    return false;
+  }
+  if (isLikelyImageUrl(normalized)) {
+    return false;
+  }
+  if (/\.(pdf|docx?|xlsx?|pptx?|csv|txt|rtf|zip|rar|7z|tar|gz|json|xml|mp3|wav|mp4|mov|avi|mkv|heic|heif|apk|dmg|exe)(\?|#|$)/i.test(normalized)) {
+    return true;
+  }
+  return normalized.includes('/download') || normalized.includes('/file') || normalized.includes('/attachment');
+}
+
+function guessFileNameFromUrl(rawUrl: string) {
+  const value = String(rawUrl ?? '').trim();
+  if (!value) {
+    return '';
+  }
+  try {
+    const parsedUrl = new URL(value);
+    const pathnameSegment = parsedUrl.pathname.split('/').filter(Boolean).pop() ?? '';
+    const decoded = decodeURIComponent(pathnameSegment);
+    if (looksLikeFileName(decoded)) {
+      return decoded;
+    }
+  } catch {
+    // ignore invalid URL shape and fallback.
+  }
+  return '';
+}
+
+function normalizeDownloadFileName(rawFileName: string) {
+  const trimmed = rawFileName.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 180)
+    .trim();
+}
+
+function formatFileSize(fileSizeBytes: number | null) {
+  if (fileSizeBytes === null || !Number.isFinite(fileSizeBytes) || fileSizeBytes <= 0) {
+    return null;
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = fileSizeBytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const rounded = unitIndex === 0 ? String(Math.round(size)) : size.toFixed(size >= 10 ? 1 : 2);
+  return `${rounded} ${units[unitIndex]}`;
 }
 
 function resolveImageRenderData(message: MessageRow): ImageRenderData | null {
@@ -423,6 +576,132 @@ function resolveImageRenderData(message: MessageRow): ImageRenderData | null {
   };
 }
 
+function resolveFileRenderData(message: MessageRow): FileRenderData[] {
+  const normalizedContentType = String(message.contentType ?? '').trim().toUpperCase();
+  const contentRecord = parseRichMessageObject(message.content);
+  const attachmentsRecord = toSafeRecord(message.attachmentsJson);
+  const candidatesByUrl = new Map<string, FileRenderData & { score: number }>();
+
+  const registerCandidate = (candidate: FileRenderData & { score: number }) => {
+    if (!candidate.fileUrl || isLikelyImageUrl(candidate.fileUrl)) {
+      return;
+    }
+    const previous = candidatesByUrl.get(candidate.fileUrl);
+    if (!previous || candidate.score > previous.score) {
+      candidatesByUrl.set(candidate.fileUrl, candidate);
+    }
+  };
+
+  const collectFileCandidates = (value: unknown, keyHint: string, depth: number) => {
+    if (depth > 6 || candidatesByUrl.size > 30) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 20)) {
+        collectFileCandidates(item, keyHint, depth + 1);
+      }
+      return;
+    }
+
+    const record = toSafeRecord(value);
+    if (!record) {
+      if (typeof value === 'string') {
+        const maybeUrl = value.trim();
+        const keyScore = FILE_URL_HINT_KEYS.has(keyHint.toLowerCase()) ? 12 : 0;
+        if (!/^https?:\/\//i.test(maybeUrl)) {
+          return;
+        }
+        if (isLikelyFileUrl(maybeUrl)) {
+          registerCandidate({
+            fileUrl: maybeUrl,
+            fileName: normalizeDownloadFileName(guessFileNameFromUrl(maybeUrl)) || 'Tệp đính kèm',
+            description: null,
+            fileSizeBytes: null,
+            score: keyScore + 8
+          });
+        }
+      }
+      return;
+    }
+
+    let urlValue = '';
+    let urlScore = 0;
+    for (const [key, nestedValue] of Object.entries(record).slice(0, 40)) {
+      if (typeof nestedValue !== 'string') {
+        continue;
+      }
+      const normalizedKey = key.toLowerCase();
+      const trimmedValue = nestedValue.trim();
+      if (!/^https?:\/\//i.test(trimmedValue)) {
+        continue;
+      }
+      const score = FILE_URL_HINT_KEYS.has(normalizedKey) ? 18 : 6;
+      if (score > urlScore) {
+        urlValue = trimmedValue;
+        urlScore = score;
+      }
+    }
+
+    if (urlValue) {
+      const fileNameFromPayload = Object.entries(record)
+        .filter(([key, nestedValue]) => FILE_NAME_HINT_KEYS.has(key) && typeof nestedValue === 'string')
+        .map(([, nestedValue]) => String(nestedValue).trim())
+        .find((nestedValue) => nestedValue.length > 0) || '';
+      const guessedFileName = normalizeDownloadFileName(fileNameFromPayload)
+        || normalizeDownloadFileName(guessFileNameFromUrl(urlValue))
+        || 'Tệp đính kèm';
+
+      const description = Object.entries(record)
+        .filter(([key, nestedValue]) => FILE_DESCRIPTION_HINT_KEYS.has(key) && typeof nestedValue === 'string')
+        .map(([, nestedValue]) => String(nestedValue).trim())
+        .find((nestedValue) => nestedValue.length > 0 && nestedValue.length <= 240 && !/^https?:\/\//i.test(nestedValue))
+        || null;
+
+      const fileSizeBytes = Object.entries(record)
+        .filter(([key]) => FILE_SIZE_HINT_KEYS.has(key))
+        .map(([, nestedValue]) => toOptionalNumber(nestedValue))
+        .find((nestedValue) => nestedValue !== null) ?? null;
+
+      const keyHintScore = FILE_URL_HINT_KEYS.has(keyHint.toLowerCase()) ? 4 : 0;
+      const typeScore = normalizedContentType === 'FILE' || normalizedContentType === 'RICH' ? 4 : 0;
+      const fileNameScore = looksLikeFileName(guessedFileName) ? 10 : 0;
+      const extensionScore = isLikelyFileUrl(urlValue) ? 10 : 0;
+      if (extensionScore > 0 || fileNameScore > 0 || normalizedContentType === 'FILE') {
+        registerCandidate({
+          fileUrl: urlValue,
+          fileName: guessedFileName,
+          fileSizeBytes,
+          description,
+          score: urlScore + keyHintScore + typeScore + fileNameScore + extensionScore
+        });
+      }
+    }
+
+    for (const [key, nestedValue] of Object.entries(record).slice(0, 40)) {
+      collectFileCandidates(nestedValue, key, depth + 1);
+    }
+  };
+
+  collectFileCandidates(attachmentsRecord, '', 0);
+  collectFileCandidates(contentRecord, '', 0);
+
+  const rawContent = String(message.content ?? '').trim();
+  if (/^https?:\/\//i.test(rawContent) && isLikelyFileUrl(rawContent)) {
+    registerCandidate({
+      fileUrl: rawContent,
+      fileName: normalizeDownloadFileName(guessFileNameFromUrl(rawContent)) || 'Tệp đính kèm',
+      fileSizeBytes: null,
+      description: null,
+      score: 8
+    });
+  }
+
+  return [...candidatesByUrl.values()]
+    .sort((left, right) => right.score - left.score)
+    .map(({ score: _score, ...file }) => file);
+}
+
 export function ZaloAutomationMessagesWorkbench() {
   const { canModule, canAction } = useAccessPolicy();
   const canView = canModule('crm');
@@ -442,6 +721,8 @@ export function ZaloAutomationMessagesWorkbench() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [customer360, setCustomer360] = useState<Customer360Payload | null>(null);
   const [isLoadingCustomer360, setIsLoadingCustomer360] = useState(false);
+  const [isCustomerProfilePanelOpen, setIsCustomerProfilePanelOpen] = useState(false);
+  const [downloadingAttachmentKey, setDownloadingAttachmentKey] = useState<string | null>(null);
   const [needsSummaryDraft, setNeedsSummaryDraft] = useState('');
   const [isSavingNeedsSummary, setIsSavingNeedsSummary] = useState(false);
   const [linkCustomerPhoneInput, setLinkCustomerPhoneInput] = useState('');
@@ -491,10 +772,38 @@ export function ZaloAutomationMessagesWorkbench() {
     () => (Array.isArray(selectedThread?.tags) ? selectedThread.tags.filter(Boolean) : []),
     [selectedThread]
   );
+  const selectedThreadHasResolvedCustomer = useMemo(
+    () => selectedThreadMatchStatus === 'matched' || Boolean(resolvedCustomerId),
+    [resolvedCustomerId, selectedThreadMatchStatus]
+  );
+  const selectedThreadCustomerName = useMemo(
+    () =>
+      String(
+        customer360?.customer?.fullName
+        ?? selectedThread?.customer?.fullName
+        ?? selectedThread?.customerDisplayName
+        ?? ''
+      ).trim(),
+    [customer360?.customer?.fullName, selectedThread?.customer?.fullName, selectedThread?.customerDisplayName]
+  );
+  const selectedThreadCustomerPhone = useMemo(
+    () =>
+      String(
+        customer360?.customer?.phone
+        ?? selectedThread?.customer?.phone
+        ?? selectedThread?.suggestedCustomer?.phone
+        ?? ''
+      ).trim(),
+    [customer360?.customer?.phone, selectedThread?.customer?.phone, selectedThread?.suggestedCustomer?.phone]
+  );
 
   useEffect(() => {
     setSelectedThreadTagsInput(selectedThreadTags.join(', '));
   }, [selectedThreadId, selectedThreadTags]);
+
+  useEffect(() => {
+    setIsCustomerProfilePanelOpen(false);
+  }, [selectedThreadId]);
 
   useEffect(() => {
     if (selectedThread?.suggestedCustomer?.id) {
@@ -1109,6 +1418,56 @@ export function ZaloAutomationMessagesWorkbench() {
     }
   };
 
+  const onOpenCustomerProfilePanel = async () => {
+    clearNotice();
+    const customerId = String(customer360?.customer?.id ?? resolvedCustomerId ?? '').trim();
+    if (!customerId) {
+      setErrorMessage('Không tìm thấy khách hàng để mở hồ sơ đầy đủ.');
+      return;
+    }
+    setIsCustomerProfilePanelOpen(true);
+    if (!customer360?.customer || customer360.customer.id !== customerId) {
+      await loadCustomer360(customerId);
+    }
+  };
+
+  const onDownloadAttachment = async (attachment: FileRenderData) => {
+    const fileUrl = String(attachment.fileUrl ?? '').trim();
+    if (!fileUrl) {
+      setErrorMessage('Không tìm thấy liên kết file để tải.');
+      return;
+    }
+
+    const fallbackFileName = normalizeDownloadFileName(attachment.fileName)
+      || normalizeDownloadFileName(guessFileNameFromUrl(fileUrl))
+      || 'zalo-attachment';
+    const downloadKey = `${fileUrl}::${fallbackFileName}`;
+    setDownloadingAttachmentKey(downloadKey);
+
+    try {
+      const response = await fetch(fileUrl, { method: 'GET' });
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fallbackFileName;
+      anchor.rel = 'noopener noreferrer';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      window.open(fileUrl, '_blank', 'noopener,noreferrer');
+      setResultMessage('Đã mở file ở tab mới. Trình duyệt có thể chặn tải trực tiếp từ nguồn ngoài.');
+    } finally {
+      setDownloadingAttachmentKey((current) => (current === downloadKey ? null : current));
+    }
+  };
+
   const onSendMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     clearNotice();
@@ -1284,6 +1643,15 @@ export function ZaloAutomationMessagesWorkbench() {
               {threads.map((thread) => {
                 const active = thread.id === selectedThreadId;
                 const unreadCount = Math.max(0, Number(thread.unreadCount ?? 0) || 0);
+                const threadMatch = toThreadMatchStatus(thread.matchStatus);
+                const hasIdentifiedCustomer = threadMatch === 'matched' || Boolean(thread.customerId || thread.customer?.id);
+                const threadDisplayName = String(
+                  thread.customer?.fullName
+                  || thread.customerDisplayName
+                  || thread.externalThreadId
+                  || 'Khách hàng'
+                ).trim();
+                const threadDisplayPhone = String(thread.customer?.phone || thread.suggestedCustomer?.phone || '').trim();
                 return (
                   <button
                     type="button"
@@ -1294,7 +1662,12 @@ export function ZaloAutomationMessagesWorkbench() {
                     <div className="zalo-chat-thread-item-head">
                       <div className="zalo-chat-thread-title">
                         {unreadCount > 0 ? <span className="zalo-chat-unread-badge">{unreadCount}</span> : null}
-                        <strong>{thread.customerDisplayName || thread.customer?.fullName || 'Khách hàng'}</strong>
+                        <div className="zalo-chat-thread-title-main">
+                          <strong>{threadDisplayName}</strong>
+                          {hasIdentifiedCustomer && threadDisplayPhone ? (
+                            <span className="zalo-chat-thread-phone">{threadDisplayPhone}</span>
+                          ) : null}
+                        </div>
                       </div>
                       <span>{toDateTime(thread.lastMessageAt)}</span>
                     </div>
@@ -1305,8 +1678,8 @@ export function ZaloAutomationMessagesWorkbench() {
                       <span>{thread.channelAccount?.displayName || thread.channelAccountId || '--'}</span>
                     </div>
                     <div className="zalo-chat-thread-item-meta">
-                      <Badge variant={threadMatchBadge(toThreadMatchStatus(thread.matchStatus))}>
-                        {threadMatchStatusLabel(toThreadMatchStatus(thread.matchStatus))}
+                      <Badge variant={threadMatchBadge(threadMatch)}>
+                        {threadMatchStatusLabel(threadMatch)}
                       </Badge>
                     </div>
                     {Array.isArray(thread.tags) && thread.tags.length > 0 ? (
@@ -1344,8 +1717,14 @@ export function ZaloAutomationMessagesWorkbench() {
           </div>
 
           <p className="muted">
-            Hội thoại: {selectedThread?.customerDisplayName || selectedThread?.externalThreadId || '--'}
+            Hội thoại: {selectedThreadCustomerName || selectedThread?.externalThreadId || '--'}
           </p>
+          {selectedThreadHasResolvedCustomer ? (
+            <p className="muted">
+              Khách hàng nhận diện: {selectedThreadCustomerName || '--'}
+              {selectedThreadCustomerPhone ? ` • ${selectedThreadCustomerPhone}` : ''}
+            </p>
+          ) : null}
           <p className="muted">
             Tài khoản: {selectedThread?.channelAccount?.displayName || selectedThread?.channelAccountId || '--'}
           </p>
@@ -1405,6 +1784,7 @@ export function ZaloAutomationMessagesWorkbench() {
                 const senderLabel = String(message.senderName ?? '').trim() || message.senderType || '--';
                 const stickerRender = resolveStickerRenderData(message);
                 const imageRender = resolveImageRenderData(message);
+                const fileRender = resolveFileRenderData(message);
 
                 return (
                   <article
@@ -1416,7 +1796,7 @@ export function ZaloAutomationMessagesWorkbench() {
                       <strong>{senderLabel}</strong>
                       <span>{toDateTime(message.sentAt)}</span>
                     </header>
-                    <p className={message.isDeleted ? 'muted' : ''}>
+                    <div className={`zalo-chat-message-content ${message.isDeleted ? 'muted' : ''}`}>
                       {message.isDeleted ? 'Tin nhắn đã bị thu hồi.' : null}
                       {!message.isDeleted && stickerRender?.previewUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -1427,25 +1807,56 @@ export function ZaloAutomationMessagesWorkbench() {
                           loading="lazy"
                         />
                       ) : null}
-                      {!message.isDeleted && !stickerRender?.previewUrl ? (
-                        !imageRender?.previewUrl ? (
-                          stickerRender?.fallbackText || message.content || '--'
-                        ) : (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={imageRender.previewUrl}
-                              alt={imageRender.alt}
-                              className="zalo-chat-message-image"
-                              loading="lazy"
-                            />
-                            {imageRender.caption ? (
-                              <span className="zalo-chat-message-image-caption">{imageRender.caption}</span>
-                            ) : null}
-                          </>
-                        )
+                      {!message.isDeleted && !stickerRender?.previewUrl && imageRender?.previewUrl ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={imageRender.previewUrl}
+                            alt={imageRender.alt}
+                            className="zalo-chat-message-image"
+                            loading="lazy"
+                          />
+                          {imageRender.caption ? (
+                            <span className="zalo-chat-message-image-caption">{imageRender.caption}</span>
+                          ) : null}
+                        </>
                       ) : null}
-                    </p>
+                      {!message.isDeleted && !stickerRender?.previewUrl && !imageRender?.previewUrl && fileRender.length > 0 ? (
+                        <div className="zalo-chat-message-file-list">
+                          {fileRender.map((attachment) => {
+                            const normalizedFileName = normalizeDownloadFileName(attachment.fileName) || 'Tệp đính kèm';
+                            const fileSizeLabel = formatFileSize(attachment.fileSizeBytes);
+                            const downloadKey = `${attachment.fileUrl}::${normalizedFileName}`;
+                            return (
+                              <article key={`${message.id}-${attachment.fileUrl}`} className="zalo-chat-message-file-card">
+                                <div className="zalo-chat-message-file-meta">
+                                  <strong className="zalo-chat-message-file-name">{normalizedFileName}</strong>
+                                  <span className="zalo-chat-message-file-desc">
+                                    {fileSizeLabel || 'Tệp đính kèm'}
+                                    {attachment.description ? ` • ${attachment.description}` : ''}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm zalo-chat-message-file-download"
+                                  onClick={() => void onDownloadAttachment({
+                                    ...attachment,
+                                    fileName: normalizedFileName
+                                  })}
+                                  disabled={downloadingAttachmentKey === downloadKey}
+                                >
+                                  {downloadingAttachmentKey === downloadKey ? 'Đang tải...' : 'Tải file'}
+                                </button>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {!message.isDeleted
+                      && !stickerRender?.previewUrl
+                      && !imageRender?.previewUrl
+                      && fileRender.length === 0 ? (stickerRender?.fallbackText || message.content || '--') : null}
+                    </div>
                   </article>
                 );
               })}
@@ -1564,9 +1975,13 @@ export function ZaloAutomationMessagesWorkbench() {
                   <strong>{customer360.customer.fullName}</strong>
                   <p className="muted">{customer360.customer.phone || '--'} • {customer360.customer.email || '--'}</p>
                 </div>
-                <Link className="btn btn-ghost" href={`/modules/crm?customerId=${customer360.customer.id}`}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void onOpenCustomerProfilePanel()}
+                >
                   Mở hồ sơ đầy đủ
-                </Link>
+                </button>
               </div>
 
               <div className="zalo-c360-kpi-grid">
@@ -1694,6 +2109,114 @@ export function ZaloAutomationMessagesWorkbench() {
           ) : null}
         </section>
       </section>
+
+      <SidePanel
+        isOpen={isCustomerProfilePanelOpen}
+        onClose={() => setIsCustomerProfilePanelOpen(false)}
+        title="Hồ sơ khách hàng"
+      >
+        {!resolvedCustomerId ? (
+          <p className="muted">Chưa có khách hàng được nhận diện.</p>
+        ) : null}
+        {resolvedCustomerId && isLoadingCustomer360 && !customer360?.customer ? (
+          <p className="muted">Đang tải hồ sơ khách hàng...</p>
+        ) : null}
+        {resolvedCustomerId && !isLoadingCustomer360 && !customer360?.customer ? (
+          <p className="muted">Không tải được hồ sơ khách hàng.</p>
+        ) : null}
+        {resolvedCustomerId && customer360?.customer ? (
+          <div className="zalo-customer-profile-panel">
+            <section className="zalo-customer-profile-section">
+              <h3>{customer360.customer.fullName || '--'}</h3>
+              <p className="muted">
+                {customer360.customer.phone || '--'} • {customer360.customer.email || '--'}
+              </p>
+              <p className="muted">Customer ID: {customer360.customer.id}</p>
+            </section>
+
+            <section className="zalo-customer-profile-section">
+              <h4>Thông tin tổng quan</h4>
+              <div className="zalo-customer-profile-grid">
+                <div><span>Mã khách</span><strong>{customer360.customer.code || '--'}</strong></div>
+                <div><span>Giai đoạn</span><strong>{customer360.customer.customerStage || '--'}</strong></div>
+                <div><span>Nguồn</span><strong>{customer360.customer.source || '--'}</strong></div>
+                <div><span>Nhóm</span><strong>{customer360.customer.segment || '--'}</strong></div>
+                <div><span>Trạng thái</span><strong>{customer360.customer.status || '--'}</strong></div>
+                <div><span>Owner</span><strong>{customer360.customer.ownerStaffId || '--'}</strong></div>
+              </div>
+              {Array.isArray(customer360.customer.tags) && customer360.customer.tags.length > 0 ? (
+                <div className="zalo-chat-tag-list" style={{ marginTop: '0.5rem' }}>
+                  {customer360.customer.tags.map((tag) => (
+                    <span key={`profile-tag-${tag}`} className="zalo-chat-tag-chip">#{tag}</span>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+
+            <section className="zalo-customer-profile-section">
+              <h4>Tóm tắt nhu cầu</h4>
+              <p>{customer360.customer.needsSummary || 'Chưa có tóm tắt nhu cầu.'}</p>
+            </section>
+
+            <section className="zalo-customer-profile-section">
+              <h4>Hợp đồng gần đây</h4>
+              {Array.isArray(customer360.recentContracts) && customer360.recentContracts.length > 0 ? (
+                <div className="zalo-customer-profile-list">
+                  {customer360.recentContracts.slice(0, 6).map((contract) => (
+                    <article key={contract.id} className="zalo-customer-profile-list-item">
+                      <header>
+                        <strong>{contract.productType || 'CONTRACT'}</strong>
+                        <span>{contract.status || '--'}</span>
+                      </header>
+                      <p className="muted">Hiệu lực: {toDateTime(contract.startsAt)} → {toDateTime(contract.endsAt)}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Chưa có hợp đồng.</p>
+              )}
+            </section>
+
+            <section className="zalo-customer-profile-section">
+              <h4>Xe/Tài sản</h4>
+              {Array.isArray(customer360.vehicles) && customer360.vehicles.length > 0 ? (
+                <div className="zalo-customer-profile-list">
+                  {customer360.vehicles.slice(0, 8).map((vehicle) => (
+                    <article key={vehicle.id} className="zalo-customer-profile-list-item">
+                      <header>
+                        <strong>{vehicle.plateNumber || '--'}</strong>
+                        <span>{vehicle.status || '--'}</span>
+                      </header>
+                      <p className="muted">{vehicle.vehicleKind || '--'}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Chưa có dữ liệu xe/tài sản.</p>
+              )}
+            </section>
+
+            <section className="zalo-customer-profile-section">
+              <h4>Lịch sử chăm sóc</h4>
+              {Array.isArray(customer360.recentInteractions) && customer360.recentInteractions.length > 0 ? (
+                <div className="zalo-customer-profile-list">
+                  {customer360.recentInteractions.slice(0, 8).map((interaction) => (
+                    <article key={`profile-interaction-${interaction.id}`} className="zalo-customer-profile-list-item">
+                      <header>
+                        <strong>{interaction.interactionType || '--'} • {interaction.channel || '--'}</strong>
+                        <span>{toDateTime(interaction.interactionAt)}</span>
+                      </header>
+                      <p>{interaction.content || '--'}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Chưa có lịch sử chăm sóc.</p>
+              )}
+            </section>
+          </div>
+        ) : null}
+      </SidePanel>
 
       <Modal open={isQuickCreateOpen} onClose={() => setIsQuickCreateOpen(false)} title="Tạo khách hàng nhanh từ hội thoại">
         <form className="form-grid" onSubmit={onQuickCreateCustomer}>

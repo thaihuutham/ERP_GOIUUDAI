@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-08 19:12 +07
+- Time: 2026-04-08 20:44 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-08_1912_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_2044_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,42 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 20:44 (Zalo messages: nhận diện KH + file attachment + mở hồ sơ bằng side panel)
+- User request:
+  - tại `/modules/zalo-automation/messages`:
+    - bổ sung hiển thị tên + số điện thoại khi đã nhận diện khách hàng.
+    - bổ sung xử lý tin nhắn file để user tải file về máy cá nhân (không lưu trên server).
+    - nút `Mở hồ sơ đầy đủ` trong Customer 360 phải mở popup bên phải giống trang khách hàng.
+- Đã xử lý:
+  - `apps/web/components/zalo-automation-messages-workbench.tsx`
+    - thêm hiển thị tên/SĐT khách hàng đã nhận diện:
+      - tại danh sách hội thoại (left panel) hiển thị SĐT dưới tên khi thread đã matched.
+      - tại header luồng tin nhắn (middle panel) hiển thị dòng `Khách hàng nhận diện`.
+    - thêm parser file attachment từ `content` (JSON `RICH`) và `attachmentsJson`.
+    - render thẻ file trong bubble message (tên file, size, mô tả) thay cho JSON thô.
+    - thêm nút `Tải file`:
+      - ưu tiên download trực tiếp bằng `fetch -> Blob -> object URL` ở client.
+      - fallback mở tab mới khi nguồn ngoài chặn download trực tiếp (không lưu file về server app).
+    - thay `Mở hồ sơ đầy đủ` từ điều hướng `Link` sang mở `SidePanel` bên phải.
+    - side panel hiển thị snapshot hồ sơ khách hàng (thông tin tổng quan, tags, nhu cầu, hợp đồng gần đây, xe/tài sản, lịch sử chăm sóc).
+  - `apps/web/app/styles/modules/crm.css`
+    - thêm style cho:
+      - hiển thị phone trong thread item.
+      - message content/file cards + nút tải file.
+      - customer profile side panel.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/conversations-inbox.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`4 passed`)
+- Notes:
+  - không thay đổi backend schema/migration.
+  - không phát sinh ADR mới (batch là UI/UX + parsing/render behavior ở module Zalo messages).
 
 ## Update 2026-04-08 19:12 (CRM taxonomy hardcode audit + runtime alignment)
 - User request:
