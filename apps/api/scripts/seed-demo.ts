@@ -1,4 +1,5 @@
 import {
+  CustomerCareStatus,
   EmploymentType,
   GenericStatus,
   PayrollComponentType,
@@ -154,6 +155,7 @@ async function resetTenantData(tenantId: string) {
   await prisma.orderItem.deleteMany({ where });
   await prisma.order.deleteMany({ where });
   await prisma.approval.deleteMany({ where });
+  await prisma.workflowActionLog.deleteMany({ where });
   await prisma.workflowInstance.deleteMany({ where });
   await prisma.workflowDefinition.deleteMany({ where });
   await prisma.timeEntry.deleteMany({ where });
@@ -200,6 +202,17 @@ async function seed() {
   const departments = ['Kinh doanh', 'Marketing', 'Kho vận', 'Kế toán', 'Nhân sự', 'Vận hành'];
   const positions = ['Nhân viên', 'Trưởng nhóm', 'Chuyên viên', 'Giám sát'];
   const customerStages = ['MOI', 'DA_TU_VAN', 'QUAN_TAM', 'DA_MUA', 'KHONG_TIEP_TUC'];
+  const customerCareStatuses = [
+    CustomerCareStatus.MOI_CHUA_TU_VAN,
+    CustomerCareStatus.DANG_SUY_NGHI,
+    CustomerCareStatus.DONG_Y_CHUYEN_THANH_KH,
+    CustomerCareStatus.KH_TU_CHOI,
+    CustomerCareStatus.KH_DA_MUA_BEN_KHAC,
+    CustomerCareStatus.NGUOI_NHA_LAM_THUE_BAO,
+    CustomerCareStatus.KHONG_NGHE_MAY_LAN_1,
+    CustomerCareStatus.KHONG_NGHE_MAY_LAN_2,
+    CustomerCareStatus.SAI_SO_KHONG_TON_TAI_BO_QUA_XOA
+  ];
   const customerSources = ['Zalo', 'Facebook', 'Giới thiệu', 'Cửa hàng', 'Website'];
   const customerSegments = ['Mới', 'Thân thiết', 'VIP', 'Doanh nghiệp'];
   const productTypes = ['PRODUCT', 'SERVICE'];
@@ -452,7 +465,7 @@ async function seed() {
       source: pick(customerSources),
       totalOrders: 0,
       totalSpent: decimal(0),
-      status: i % 31 === 0 ? GenericStatus.INACTIVE : GenericStatus.ACTIVE,
+      status: pick(customerCareStatuses),
       createdAt: randomPastDate(420),
       updatedAt: new Date()
     };

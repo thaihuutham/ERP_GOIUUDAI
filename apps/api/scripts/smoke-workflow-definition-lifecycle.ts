@@ -58,10 +58,51 @@ function asRecord(value: unknown) {
   return value as Record<string, unknown>;
 }
 
+function readWorkflowStatus(value: unknown) {
+  const record = asRecord(value);
+  const direct = String(record.status ?? '').trim();
+  if (direct) {
+    return direct.toUpperCase();
+  }
+  const base = asRecord(record.base);
+  return String(base.status ?? '').trim().toUpperCase();
+}
+
 async function main() {
   const baseUrl = cleanBaseUrl(String(process.env.WORKFLOW_SMOKE_BASE_URL ?? 'http://127.0.0.1:3001/api/v1').trim());
   const tenantId = String(process.env.WORKFLOW_SMOKE_TENANT_ID ?? process.env.DEFAULT_TENANT_ID ?? 'GOIUUDAI').trim();
   const token = String(process.env.WORKFLOW_SMOKE_AUTH_TOKEN ?? '').trim() || null;
+  const devRole = String(process.env.WORKFLOW_SMOKE_DEV_ROLE ?? '').trim().toUpperCase();
+  const devUserId = String(process.env.WORKFLOW_SMOKE_DEV_USER_ID ?? '').trim();
+  const devEmail = String(process.env.WORKFLOW_SMOKE_DEV_EMAIL ?? '').trim();
+  const devEmployeeId = String(process.env.WORKFLOW_SMOKE_DEV_EMPLOYEE_ID ?? '').trim();
+  const devPositionId = String(process.env.WORKFLOW_SMOKE_DEV_POSITION_ID ?? '').trim();
+
+  const devHeaders: Record<string, string> = {};
+  if (devRole) {
+    devHeaders['x-erp-dev-role'] = devRole;
+  }
+  if (devUserId) {
+    devHeaders['x-erp-dev-user-id'] = devUserId;
+  }
+  if (devEmail) {
+    devHeaders['x-erp-dev-email'] = devEmail;
+  }
+  if (devEmployeeId) {
+    devHeaders['x-erp-dev-employee-id'] = devEmployeeId;
+  }
+  if (devPositionId) {
+    devHeaders['x-erp-dev-position-id'] = devPositionId;
+  }
+
+  const callApi = (path: string, options: ApiCallOptions = {}) =>
+    apiCall(baseUrl, path, tenantId, token, {
+      ...options,
+      headers: {
+        ...devHeaders,
+        ...(options.headers ?? {})
+      }
+    });
 
   const uniqueCode = `WF_SMOKE_${Date.now()}`;
   const startedAt = new Date().toISOString();
@@ -94,7 +135,7 @@ async function main() {
   };
 
   const created = asRecord(
-    await apiCall(baseUrl, '/workflows/definitions', tenantId, token, {
+    await callApi('/workflows/definitions', {
       method: 'POST',
       body: createPayload
     })
@@ -107,7 +148,7 @@ async function main() {
   steps.push({ step: 'create', passed: true, details: `id=${definitionId}` });
 
   const validated = asRecord(
-    await apiCall(baseUrl, `/workflows/definitions/${definitionId}/validate`, tenantId, token, {
+    await callApi(`/workflows/definitions/${definitionId}/validate`, {
       method: 'POST'
     })
   );
@@ -117,7 +158,7 @@ async function main() {
   steps.push({ step: 'validate', passed: true, details: 'valid=true' });
 
   const simulated = asRecord(
-    await apiCall(baseUrl, `/workflows/definitions/${definitionId}/simulate`, tenantId, token, {
+    await callApi(`/workflows/definitions/${definitionId}/simulate`, {
       method: 'POST',
       body: {
         actions: ['APPROVE'],
@@ -131,22 +172,24 @@ async function main() {
   steps.push({ step: 'simulate', passed: true, details: 'success=true' });
 
   const published = asRecord(
-    await apiCall(baseUrl, `/workflows/definitions/${definitionId}/publish`, tenantId, token, {
+    await callApi(`/workflows/definitions/${definitionId}/publish`, {
       method: 'POST'
     })
   );
-  if (String(published.status ?? '').toUpperCase() !== 'ACTIVE') {
-    throw new Error(`Publish trả về status không hợp lệ: ${String(published.status ?? 'unknown')}`);
+  const publishedStatus = readWorkflowStatus(published);
+  if (publishedStatus !== 'ACTIVE') {
+    throw new Error(`Publish trả về status không hợp lệ: ${publishedStatus || 'unknown'}`);
   }
   steps.push({ step: 'publish', passed: true, details: 'status=ACTIVE' });
 
   const archived = asRecord(
-    await apiCall(baseUrl, `/workflows/definitions/${definitionId}/archive`, tenantId, token, {
+    await callApi(`/workflows/definitions/${definitionId}/archive`, {
       method: 'POST'
     })
   );
-  if (String(archived.status ?? '').toUpperCase() !== 'ARCHIVED') {
-    throw new Error(`Archive trả về status không hợp lệ: ${String(archived.status ?? 'unknown')}`);
+  const archivedStatus = readWorkflowStatus(archived);
+  if (archivedStatus !== 'ARCHIVED') {
+    throw new Error(`Archive trả về status không hợp lệ: ${archivedStatus || 'unknown'}`);
   }
   steps.push({ step: 'archive', passed: true, details: 'status=ARCHIVED' });
 

@@ -2,14 +2,90 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-08 10:20 +07
+- Last updated: 2026-04-08 11:15 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
 
 ## Open housekeeping
-- [ ] Chuẩn hóa artifact build frontend:
-  - `apps/web/tsconfig.tsbuildinfo` là cache TypeScript (không mang business logic).
-  - Kế hoạch: tách một `chore` riêng để quyết định policy (ngừng track + cập nhật `.gitignore` + verify clean build) nhằm tránh noise diff/commit.
+- [x] Chuẩn hóa artifact build frontend:
+  - đã ngừng track `apps/web/tsconfig.tsbuildinfo`.
+  - đã cập nhật `.gitignore` với `*.tsbuildinfo`.
+  - đã verify lint/build sạch sau housekeeping.
+
+## Session Update 2026-04-08 11:15 +07 (Housekeeping tsbuildinfo + UAT production-like + deploy readiness)
+- User request:
+  - housekeeping `apps/web/tsconfig.tsbuildinfo`.
+  - UAT nghiệp vụ trên dữ liệu production-like.
+  - trigger deploy + xác nhận UAT staging/prod.
+- Đã triển khai:
+  - Housekeeping:
+    - cập nhật `.gitignore` thêm `*.tsbuildinfo`.
+    - `git rm --cached apps/web/tsconfig.tsbuildinfo` (giữ file local, bỏ khỏi git index).
+  - Sửa tooling phục vụ UAT:
+    - `apps/api/scripts/seed-demo.ts`:
+      - fix thứ tự cleanup: xóa `workflowActionLog` trước `workflowInstance`.
+      - đổi seed `customer.status` sang enum `CustomerCareStatus` theo schema hiện tại.
+    - `apps/api/scripts/smoke-workflow-definition-lifecycle.ts`:
+      - hỗ trợ `WORKFLOW_SMOKE_DEV_*` headers để chạy được trong `AUTH_ENABLED=false`.
+      - đọc `status` từ cả `status` và `base.status` (payload bọc bởi custom-fields).
+  - Runtime UAT config:
+    - bật `assistantAccessPolicy.enabled=true` qua endpoint settings domain để chạy assistant smoke.
+- Verification:
+  - System gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`).
+  - Production-like seed:
+    - `set -a; source .env; set +a; npm run seed:demo --workspace @erp/api` ✅ (120 records cho các domain chính theo summary).
+  - Smoke:
+    - `set -a; source .env; set +a; WORKFLOW_SMOKE_DEV_ROLE=ADMIN npm run smoke:workflows:lifecycle --workspace @erp/api` ✅
+    - `set -a; source .env; set +a; SMOKE_API_BASE_URL='http://127.0.0.1:3001/api/v1' scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+    - `set -a; source .env; set +a; SMOKE_API_BASE_URL='http://127.0.0.1:3001/api/v1' SMOKE_SKIP_AI_QUALITY=true SMOKE_SKIP_OA_OUTBOUND=true scripts/deploy/smoke-crm-conversations.sh` ✅
+  - E2E business UAT bundle:
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/assistant-module.spec.ts apps/web/e2e/tests/audit-module.spec.ts apps/web/e2e/tests/workflows-module.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/hr-attendance-board.spec.ts apps/web/e2e/tests/scm-operations-board.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`22 passed`).
+  - Quality gate:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+- Notes:
+  - Không thêm migration/schema mới.
+  - Không phát sinh ADR mới.
+
+## Session Update 2026-04-08 10:52 +07 (Hoàn tất Phase 5.6/5.7 frontend nghiệp vụ trọng yếu)
+- User request:
+  - dùng các kỹ năng cần thiết để thực hiện các phần chưa xong.
+- Đã triển khai:
+  - Hoàn thiện `SCM Operations Board`:
+    - `apps/web/components/scm-operations-board.tsx`
+      - bật đầy đủ tab `SHIPMENTS` (trước đó chỉ có tab nhưng chưa render dữ liệu).
+      - chuẩn hóa tab `SHIPMENTS` theo contract server-driven `cursor + sortBy/sortDir + pageInfo/sortMeta` tương tự PO/Vendor.
+      - bổ sung pagination/sort state riêng cho shipments (`useCursorTableState`), wiring callback `onPage*/onSortChange`.
+      - đồng bộ toolbar placeholder và CTA label theo tab đang active (`PO`, `VENDORS`, `SHIPMENTS`).
+  - Bổ sung E2E flow cho module trọng yếu còn thiếu (`scm`):
+    - thêm file mới `apps/web/e2e/tests/scm-operations-board.spec.ts`.
+    - cover flow:
+      - tabs `PO/VENDORS/SHIPMENTS`,
+      - sort server-driven,
+      - cursor pagination (`Sau` + cursor),
+      - mở side panel chi tiết PO + receipts.
+  - Chốt checklist phase 5:
+    - `docs/specs/PHASE5_FRONTEND_EXECUTION_CHECKLIST.md`
+      - đánh dấu DONE cho `F5.6`, `F5.7`, `F5-007`.
+      - cập nhật DoD item 2/3 sang DONE.
+- Verification:
+  - System gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` và stack chính đều `Up`).
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅.
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`).
+  - Frontend quality:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - E2E targeted:
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/scm-operations-board.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/hr-attendance-board.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`6 passed`).
+- Notes:
+  - Không thêm migration/schema.
+  - Không phát sinh ADR mới (không có quyết định kiến trúc mới, chỉ hoàn thiện implementation + test theo roadmap đã duyệt).
 
 ## Session Update 2026-04-08 10:20 +07 (Phase tiếp theo: rollout pagination/sorting server-driven cho nhóm module còn lại)
 - User request:

@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-08 10:20 +07
+- Time: 2026-04-08 11:15 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-08_1020_codex.md`
+- Session Log: `.agent/sessions/2026-04-08_1115_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,76 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-08 11:15 (Housekeeping + UAT production-like + deploy readiness)
+- User request:
+  - housekeeping `apps/web/tsconfig.tsbuildinfo`.
+  - UAT nghiệp vụ trên dữ liệu production-like.
+  - trigger deploy + xác nhận UAT staging/prod.
+- Đã xử lý:
+  - housekeeping artifact build:
+    - thêm `*.tsbuildinfo` vào `.gitignore`,
+    - untrack `apps/web/tsconfig.tsbuildinfo` khỏi git index.
+  - fix script để UAT chạy ổn định với schema/runtime hiện tại:
+    - `apps/api/scripts/seed-demo.ts`:
+      - xóa `workflowActionLog` trước `workflowInstance`,
+      - đổi `customer.status` sang `CustomerCareStatus`.
+    - `apps/api/scripts/smoke-workflow-definition-lifecycle.ts`:
+      - hỗ trợ `WORKFLOW_SMOKE_DEV_*` headers,
+      - đọc status từ `status` hoặc `base.status`.
+  - bật `assistantAccessPolicy.enabled=true` trong domain `access_security` để chạy assistant smoke.
+- Verify:
+  - gate hạ tầng:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - seed production-like:
+    - `npm run seed:demo --workspace @erp/api` ✅
+  - smoke:
+    - `WORKFLOW_SMOKE_DEV_ROLE=ADMIN npm run smoke:workflows:lifecycle --workspace @erp/api` ✅
+    - `scripts/deploy/smoke-assistant-access-boundary.sh` ✅
+    - `SMOKE_SKIP_AI_QUALITY=true SMOKE_SKIP_OA_OUTBOUND=true scripts/deploy/smoke-crm-conversations.sh` ✅
+  - e2e business:
+    - assistant + audit + workflows + crm-sales-finance + hr-attendance + scm suite ✅ (`22 passed`).
+  - quality:
+    - `npm run lint/build --workspace @erp/api` ✅
+    - `npm run lint/build --workspace @erp/web` ✅
+- Notes:
+  - Không thêm migration/schema.
+  - Không phát sinh ADR.
+
+## Update 2026-04-08 10:52 (Hoàn tất phần còn mở của Phase 5 frontend)
+- User request:
+  - sử dụng kỹ năng cần thiết để thực hiện các phần chưa xong.
+- Đã xử lý:
+  - hoàn thiện `scm` board:
+    - `apps/web/components/scm-operations-board.tsx`:
+      - bổ sung render thật cho tab `SHIPMENTS` (trước đó mới có tab nhưng chưa có content),
+      - áp dụng server-driven list contract (`cursor/sortBy/sortDir/pageInfo/sortMeta`) cho shipments,
+      - thêm pagination/sort state riêng cho shipments,
+      - chuẩn hóa toolbar text/CTA theo tab active.
+  - bổ sung E2E mới cho SCM:
+    - `apps/web/e2e/tests/scm-operations-board.spec.ts`
+    - bao phủ tabs + server sort + cursor pagination + PO detail side panel.
+  - chốt checklist phase 5:
+    - `docs/specs/PHASE5_FRONTEND_EXECUTION_CHECKLIST.md`
+      - `F5.6` ✅
+      - `F5.7` ✅
+      - `F5-007` ✅
+      - DoD item 2/3 chuyển DONE.
+- Verify:
+  - Docker/DB gate:
+    - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Frontend quality:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - E2E targeted:
+    - `CI=1 PLAYWRIGHT_PORT=4310 NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS=1000 npx playwright test apps/web/e2e/tests/scm-operations-board.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/hr-attendance-board.spec.ts --workers=2 --config=apps/web/e2e/playwright.config.ts --reporter=line` ✅ (`6 passed`).
+- Notes:
+  - Không thêm migration/schema.
+  - Không phát sinh ADR mới.
 
 ## Update 2026-04-08 10:20 (Phase tiếp theo: pagination/sorting server-driven cho module còn lại)
 - User request:

@@ -70,11 +70,13 @@ type Shipment = {
   shipmentNo?: string | null;
   carrier?: string | null;
   lifecycleStatus?: string | null;
+  status?: string | null;
   expectedDeliveryAt?: string | null;
 };
 
 const SCM_VENDOR_STORAGE_KEY = 'erp-retail.scm.vendor-table-settings.v2';
 const SCM_PO_STORAGE_KEY = 'erp-retail.scm.po-table-settings.v2';
+const SCM_SHIPMENT_STORAGE_KEY = 'erp-retail.scm.shipment-table-settings.v2';
 const SCM_TABLE_PAGE_SIZE = 25;
 
 function toCurrency(value: any) {
@@ -106,6 +108,9 @@ export function ScmOperationsBoard() {
   const [vendorSortBy, setVendorSortBy] = useState('createdAt');
   const [vendorSortDir, setVendorSortDir] = useState<'asc' | 'desc'>('desc');
   const [vendorSortMeta, setVendorSortMeta] = useState<ApiListSortMeta | null>(null);
+  const [shipmentSortBy, setShipmentSortBy] = useState('createdAt');
+  const [shipmentSortDir, setShipmentSortDir] = useState<'asc' | 'desc'>('desc');
+  const [shipmentSortMeta, setShipmentSortMeta] = useState<ApiListSortMeta | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [selectedPo, setSelectedPo] = useState<PurchaseOrder | null>(null);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
@@ -130,8 +135,19 @@ export function ScmOperationsBoard() {
       }),
     [search, vendorSortBy, vendorSortDir]
   );
+  const shipmentTableFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        q: search.trim(),
+        sortBy: shipmentSortBy,
+        sortDir: shipmentSortDir,
+        limit: SCM_TABLE_PAGE_SIZE
+      }),
+    [search, shipmentSortBy, shipmentSortDir]
+  );
   const poTablePager = useCursorTableState(poTableFingerprint);
   const vendorTablePager = useCursorTableState(vendorTableFingerprint);
+  const shipmentTablePager = useCursorTableState(shipmentTableFingerprint);
 
   const loadData = async () => {
     if (!canView) return;
@@ -156,17 +172,28 @@ export function ScmOperationsBoard() {
             sortDir: vendorSortDir
           }
         }),
-        apiRequest<any>('/scm/shipments', { query: { q: search, limit: 100 } }),
+        apiRequest<any>('/scm/shipments', {
+          query: {
+            q: search,
+            limit: SCM_TABLE_PAGE_SIZE,
+            cursor: shipmentTablePager.cursor ?? undefined,
+            sortBy: shipmentSortBy,
+            sortDir: shipmentSortDir
+          }
+        }),
       ]);
       const normalizedPos = normalizePagedListPayload<PurchaseOrder>(poData);
       const normalizedVendors = normalizePagedListPayload<Vendor>(vendorData);
+      const normalizedShipments = normalizePagedListPayload<Shipment>(shipData);
       setPurchaseOrders(normalizedPos.items);
       poTablePager.syncFromPageInfo(normalizedPos.pageInfo);
       setPoSortMeta(normalizedPos.sortMeta);
       setVendors(normalizedVendors.items);
       vendorTablePager.syncFromPageInfo(normalizedVendors.pageInfo);
       setVendorSortMeta(normalizedVendors.sortMeta);
-      setShipments(normalizeListPayload(shipData) as Shipment[]);
+      setShipments(normalizedShipments.items);
+      shipmentTablePager.syncFromPageInfo(normalizedShipments.pageInfo);
+      setShipmentSortMeta(normalizedShipments.sortMeta);
     } catch (e) {
     } finally {
       setIsLoading(false);
@@ -194,7 +221,10 @@ export function ScmOperationsBoard() {
     search,
     vendorSortBy,
     vendorSortDir,
-    vendorTablePager.currentPage
+    vendorTablePager.currentPage,
+    shipmentSortBy,
+    shipmentSortDir,
+    shipmentTablePager.currentPage
   ]);
 
   useEffect(() => {
@@ -217,6 +247,15 @@ export function ScmOperationsBoard() {
     { key: 'phone', label: 'Điện thoại', sortKey: 'phone' },
     { key: 'email', label: 'Email', sortKey: 'email' },
     { key: 'status', label: 'Trạng thái', sortKey: 'status', render: (v) => <Badge variant={statusToBadge(v.status)}>{v.status}</Badge> },
+  ];
+
+  const shipmentColumns: ColumnDefinition<Shipment>[] = [
+    { key: 'shipmentNo', label: 'Mã shipment', sortKey: 'shipmentNo', isLink: true, render: (shipment) => shipment.shipmentNo || shipment.id.slice(-8) },
+    { key: 'orderRef', label: 'Ref đơn hàng', sortKey: 'orderRef' },
+    { key: 'carrier', label: 'Đơn vị vận chuyển', sortKey: 'carrier' },
+    { key: 'lifecycleStatus', label: 'Vòng đời', sortKey: 'lifecycleStatus', render: (shipment) => <Badge variant={statusToBadge(shipment.lifecycleStatus)}>{shipment.lifecycleStatus}</Badge> },
+    { key: 'status', label: 'Trạng thái', sortKey: 'status', render: (shipment) => <Badge variant={statusToBadge(shipment.status)}>{shipment.status}</Badge> },
+    { key: 'expectedDeliveryAt', label: 'Ngày giao dự kiến', sortKey: 'expectedDeliveryAt', render: (shipment) => toDateTime(shipment.expectedDeliveryAt) },
   ];
 
   if (!canView) return null;
@@ -272,7 +311,13 @@ export function ScmOperationsBoard() {
             <div style={{ position: 'relative' }}>
               <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
               <input
-                placeholder={activeTab === 'PO' ? "Tìm mã PO..." : "Tìm nhà cung cấp..."}
+                placeholder={
+                  activeTab === 'PO'
+                    ? 'Tìm mã PO...'
+                    : activeTab === 'VENDORS'
+                      ? 'Tìm nhà cung cấp...'
+                      : 'Tìm mã shipment, hãng vận chuyển...'
+                }
                 style={{ paddingLeft: '36px' }}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -284,7 +329,7 @@ export function ScmOperationsBoard() {
           <button className="btn btn-ghost" onClick={() => loadData()}><RefreshCw size={16} /> Đồng bộ</button>
           {canCreate && (
             <button className="btn btn-primary">
-              <Plus size={16} /> {activeTab === 'PO' ? 'Tạo PO' : 'Thêm nhà cung cấp'}
+              <Plus size={16} /> {activeTab === 'PO' ? 'Tạo PO' : activeTab === 'VENDORS' ? 'Thêm nhà cung cấp' : 'Tạo shipment'}
             </button>
           )}
         </div>
@@ -317,6 +362,39 @@ export function ScmOperationsBoard() {
             setPoSortDir(sortDir);
           }}
           onRowClick={(p) => setSelectedPo(p)}
+          enableRowSelection
+          selectedRowIds={selectedRowIds}
+          onSelectedRowIdsChange={setSelectedRowIds}
+          showDefaultBulkUtilities
+        />
+      )}
+
+      {activeTab === 'SHIPMENTS' && (
+        <StandardDataTable
+          data={shipments}
+          columns={shipmentColumns}
+          isLoading={isLoading}
+          storageKey={SCM_SHIPMENT_STORAGE_KEY}
+          pageInfo={{
+            currentPage: shipmentTablePager.currentPage,
+            hasPrevPage: shipmentTablePager.hasPrevPage,
+            hasNextPage: shipmentTablePager.hasNextPage,
+            visitedPages: shipmentTablePager.visitedPages
+          }}
+          sortMeta={
+            shipmentSortMeta ?? {
+              sortBy: shipmentSortBy,
+              sortDir: shipmentSortDir,
+              sortableFields: []
+            }
+          }
+          onPageNext={shipmentTablePager.goNextPage}
+          onPagePrev={shipmentTablePager.goPrevPage}
+          onJumpVisitedPage={shipmentTablePager.jumpVisitedPage}
+          onSortChange={(sortBy, sortDir) => {
+            setShipmentSortBy(sortBy);
+            setShipmentSortDir(sortDir);
+          }}
           enableRowSelection
           selectedRowIds={selectedRowIds}
           onSelectedRowIdsChange={setSelectedRowIds}
