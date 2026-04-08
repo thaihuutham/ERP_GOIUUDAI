@@ -51,6 +51,11 @@
 - Notes:
   - Không thêm migration/schema mới.
   - Không phát sinh ADR mới.
+  - Deploy trigger:
+    - `git push origin main` ✅ (`3108b9c..70b6074`).
+    - workflow `deploy-vm` run `#29` (id `24117418619`) đã được tạo tự động:
+      - `https://github.com/thaihuutham/ERP_GOIUUDAI/actions/runs/24117418619`
+    - trạng thái cuối phiên: `queued` (self-hosted runner `vm-prod` chưa pick job trong cửa sổ theo dõi).
 
 ## Session Update 2026-04-08 10:52 +07 (Hoàn tất Phase 5.6/5.7 frontend nghiệp vụ trọng yếu)
 - User request:

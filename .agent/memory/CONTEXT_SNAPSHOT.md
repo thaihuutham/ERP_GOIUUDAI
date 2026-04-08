@@ -60,6 +60,9 @@
 - Notes:
   - Không thêm migration/schema.
   - Không phát sinh ADR.
+  - `git push origin main` đã trigger workflow `deploy-vm` run id `24117418619`:
+    - `https://github.com/thaihuutham/ERP_GOIUUDAI/actions/runs/24117418619`
+    - trạng thái tại thời điểm chốt phiên: `queued` (runner `vm-prod` chưa nhận job).
 
 ## Update 2026-04-08 10:52 (Hoàn tất phần còn mở của Phase 5 frontend)
 - User request:
