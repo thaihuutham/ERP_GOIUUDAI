@@ -22,6 +22,7 @@ export type SectionLike<TField extends FieldLike = FieldLike> = {
 const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
   org_profile: [
     { key: 'org-general', label: 'Cấu hình chung', sectionIds: ['org-base', 'org-branding'] },
+    { key: 'org-appearance', label: 'Appearance', sectionIds: ['org-appearance'] },
     { key: 'org-structure', label: 'Sơ đồ tổ chức', sectionIds: [], showOrgStructure: true }
   ],
   locale_calendar: [

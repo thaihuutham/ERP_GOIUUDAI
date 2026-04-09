@@ -2668,9 +2668,15 @@ model ReportRun {
   tenant_Id   String
   reportId    String
   outputFormat String
+  runStatus   String   @default("queued")
+  outputMimeType String?
+  outputSizeBytes Int?
   outputPath  String?
   summaryJson Json?
   status      GenericStatus @default(PENDING)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  errorMessage String?
   generatedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

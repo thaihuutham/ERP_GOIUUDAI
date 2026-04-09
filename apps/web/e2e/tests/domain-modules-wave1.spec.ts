@@ -274,10 +274,10 @@ test.describe('Wave 1 domain modules board', () => {
     await page.getByRole('button', { name: 'Xóa bộ lọc' }).click();
     await expect(page.getByRole('button', { name: 'Xóa bộ lọc' })).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Tạo sản phẩm' }).click();
+    await page.getByRole('button', { name: 'Thêm dữ liệu' }).click();
     await page.locator('.field').filter({ hasText: 'Tên sản phẩm' }).locator('input').fill('Macbook Air M4');
     await page.locator('.field').filter({ hasText: 'Đơn giá' }).locator('input').fill('28000000');
-    await page.getByRole('button', { name: 'Xác nhận' }).click();
+    await page.getByRole('button', { name: 'Lưu dữ liệu' }).click();
 
     await expect(page.getByText('Tạo sản phẩm thành công.')).toBeVisible();
 
@@ -290,9 +290,9 @@ test.describe('Wave 1 domain modules board', () => {
     await page.goto('/modules/assets');
     await expect(page.locator('article.module-workbench > header.module-header h1', { hasText: 'Tài sản' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Tạo tài sản' }).click();
+    await page.getByRole('button', { name: 'Thêm dữ liệu' }).click();
     await page.locator('.field').filter({ hasText: 'Tên tài sản' }).locator('input').fill('May scan hoa don');
-    await page.getByRole('button', { name: 'Xác nhận' }).click();
+    await page.getByRole('button', { name: 'Lưu dữ liệu' }).click();
 
     await expect(page.getByText('Tạo tài sản thành công.')).toBeVisible();
 
@@ -305,37 +305,34 @@ test.describe('Wave 1 domain modules board', () => {
     await page.goto('/modules/projects');
     await expect(page.locator('article.module-workbench > header.module-header h1', { hasText: 'Dự án' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Tạo dự án' }).click();
+    await page.getByRole('button', { name: 'Thêm dữ liệu' }).click();
     await page.locator('.field').filter({ hasText: 'Tên dự án' }).locator('input').fill('Du an Wave 1');
-    await page.getByRole('button', { name: 'Xác nhận' }).click();
+    await page.getByRole('button', { name: 'Lưu dữ liệu' }).click();
 
     await expect(page.getByText('Tạo dự án thành công.')).toBeVisible();
   });
 
-  test('reports board supports create definition and run-now bulk action', async ({ page }) => {
+  test('reports board supports create definition and run-now action', async ({ page }) => {
     await page.goto('/modules/reports');
-    await expect(page.locator('article.module-workbench > header.module-header h1', { hasText: 'Báo cáo' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Reporting Center' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Mẫu báo cáo' }).click();
+    await page.getByRole('button', { name: 'Thêm dữ liệu' }).click();
+    await page.locator('#report-definition-name').fill('Bao cao ngay');
     await page.getByRole('button', { name: 'Lưu mẫu báo cáo' }).click();
-    await page.locator('.field').filter({ hasText: 'Tên báo cáo' }).locator('input').fill('Bao cao ngay');
-    await page.getByRole('button', { name: 'Xác nhận' }).click();
+    await expect(page.getByText('Đã tạo mẫu báo cáo "Bao cao ngay".')).toBeVisible();
 
-    await expect(page.getByText('Lưu mẫu báo cáo thành công.')).toBeVisible();
-
-    await page.locator('tbody input[type="checkbox"]').first().check();
-    await page.getByRole('button', { name: 'Bulk Actions' }).click();
-    await expect(page.getByRole('button', { name: 'Chạy báo cáo ngay' })).toBeVisible();
+    await page.locator('article.reports-definition-card').first().getByRole('button', { name: 'Export' }).click();
+    await expect(page.getByText(/Đã chạy báo cáo ".*" thành công\./)).toBeVisible();
   });
 
   test('notifications board supports create flow and mark-read bulk action', async ({ page }) => {
     await page.goto('/modules/notifications');
     await expect(page.locator('article.module-workbench > header.module-header h1', { hasText: 'Thông báo' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Tạo thông báo' }).click();
+    await page.getByRole('button', { name: 'Thêm dữ liệu' }).click();
     await page.locator('.field').filter({ hasText: 'Tiêu đề' }).locator('input').fill('Thong bao wave 1');
     await page.locator('.field').filter({ hasText: 'Nội dung' }).locator('textarea').fill('Noi dung thong bao');
-    await page.getByRole('button', { name: 'Xác nhận' }).click();
+    await page.getByRole('button', { name: 'Lưu dữ liệu' }).click();
 
     await expect(page.getByText('Tạo thông báo thành công.')).toBeVisible();
 

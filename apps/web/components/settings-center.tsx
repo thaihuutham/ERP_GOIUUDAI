@@ -48,23 +48,48 @@ type DomainKey = (typeof DOMAIN_ORDER)[number];
 const DOMAIN_GROUPS = [
   {
     id: 'general',
-    label: 'Hệ thống chung',
+    label: 'General',
     domains: ['org_profile', 'locale_calendar'] as const
   },
   {
-    id: 'modules',
-    label: 'Quy định Phân hệ',
-    domains: ['sales_crm_policies', 'catalog_scm_policies', 'hr_policies'] as const
+    id: 'appearance',
+    label: 'Appearance',
+    domains: ['org_profile'] as const
   },
   {
-    id: 'management',
-    label: 'Quản trị & Kiểm soát',
-    domains: ['access_security', 'approval_matrix', 'finance_controls', 'data_governance_backup'] as const
+    id: 'security-access',
+    label: 'Security & Access',
+    domains: ['access_security', 'approval_matrix'] as const
   },
   {
-    id: 'integration',
-    label: 'Tích hợp & Cấu hình IT',
-    domains: ['integrations', 'notifications_templates', 'search_performance'] as const
+    id: 'sales-crm',
+    label: 'Sales & CRM',
+    domains: ['sales_crm_policies'] as const
+  },
+  {
+    id: 'finance',
+    label: 'Finance',
+    domains: ['finance_controls'] as const
+  },
+  {
+    id: 'scm',
+    label: 'SCM / Inventory / Purchasing',
+    domains: ['catalog_scm_policies'] as const
+  },
+  {
+    id: 'hr',
+    label: 'HR',
+    domains: ['hr_policies'] as const
+  },
+  {
+    id: 'integrations',
+    label: 'Integrations',
+    domains: ['integrations', 'notifications_templates'] as const
+  },
+  {
+    id: 'search-governance',
+    label: 'Search & Data Governance',
+    domains: ['search_performance', 'data_governance_backup'] as const
   }
 ];
 
@@ -341,6 +366,11 @@ const INVOICE_TEMPLATE_OPTIONS: FieldOption[] = [
   { value: 'retail', label: 'Mẫu bán lẻ' }
 ];
 
+const DENSITY_OPTIONS: FieldOption[] = [
+  { value: 'comfortable', label: 'Comfortable' },
+  { value: 'compact', label: 'Compact' }
+];
+
 const SECRET_REF_OPTIONS: FieldOption[] = [
   { value: '', label: 'Chưa cấu hình' },
   { value: 'BHTOT_API_KEY', label: 'BHTOT_API_KEY' },
@@ -583,6 +613,39 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'org-primary-color', path: 'branding.primaryColor', label: 'Màu thương hiệu chính', type: 'color', placeholder: '#0a5f38' },
           { id: 'org-invoice-template', path: 'documentLayout.invoiceTemplate', label: 'Mẫu hóa đơn', type: 'select', options: INVOICE_TEMPLATE_OPTIONS },
           { id: 'org-seal', path: 'documentLayout.showCompanySeal', label: 'Hiển thị dấu công ty trên chứng từ', type: 'switch' }
+        ]
+      },
+      {
+        id: 'org-appearance',
+        title: 'Appearance runtime',
+        description: 'Tùy biến giao diện theo token. Mặc định hệ thống giữ tone xanh thương hiệu.',
+        fields: [
+          { id: 'appearance-primary', path: 'branding.appearance.primary', label: 'primary', type: 'color', placeholder: '#167746' },
+          { id: 'appearance-primary-hover', path: 'branding.appearance.primaryHover', label: 'primaryHover', type: 'color', placeholder: '#115f38' },
+          { id: 'appearance-primary-soft', path: 'branding.appearance.primarySoft', label: 'primarySoft', type: 'color', placeholder: '#e8f4ed' },
+          { id: 'appearance-topbar-bg', path: 'branding.appearance.topbarBg', label: 'topbarBg', type: 'color', placeholder: '#f8faf8' },
+          { id: 'appearance-sidebar-bg', path: 'branding.appearance.sidebarBg', label: 'sidebarBg', type: 'color', placeholder: '#f8faf8' },
+          { id: 'appearance-sidebar-text', path: 'branding.appearance.sidebarText', label: 'sidebarText', type: 'color', placeholder: '#3c4a41' },
+          { id: 'appearance-surface', path: 'branding.appearance.surface', label: 'surface', type: 'color', placeholder: '#ffffff' },
+          { id: 'appearance-surface-muted', path: 'branding.appearance.surfaceMuted', label: 'surfaceMuted', type: 'color', placeholder: '#f2f7f3' },
+          { id: 'appearance-border', path: 'branding.appearance.border', label: 'border', type: 'color', placeholder: '#dfe5e0' },
+          { id: 'appearance-success', path: 'branding.appearance.success', label: 'success', type: 'color', placeholder: '#059669' },
+          { id: 'appearance-warning', path: 'branding.appearance.warning', label: 'warning', type: 'color', placeholder: '#d97706' },
+          { id: 'appearance-danger', path: 'branding.appearance.danger', label: 'danger', type: 'color', placeholder: '#dc2626' },
+          { id: 'appearance-info', path: 'branding.appearance.info', label: 'info', type: 'color', placeholder: '#2563eb' },
+          { id: 'appearance-chart-1', path: 'branding.appearance.chart1', label: 'chart1', type: 'color', placeholder: '#10b981' },
+          { id: 'appearance-chart-2', path: 'branding.appearance.chart2', label: 'chart2', type: 'color', placeholder: '#3b82f6' },
+          { id: 'appearance-chart-3', path: 'branding.appearance.chart3', label: 'chart3', type: 'color', placeholder: '#f59e0b' },
+          { id: 'appearance-chart-4', path: 'branding.appearance.chart4', label: 'chart4', type: 'color', placeholder: '#ef4444' },
+          { id: 'appearance-chart-5', path: 'branding.appearance.chart5', label: 'chart5', type: 'color', placeholder: '#8b5cf6' },
+          { id: 'appearance-chart-6', path: 'branding.appearance.chart6', label: 'chart6', type: 'color', placeholder: '#14b8a6' },
+          { id: 'appearance-radius-sm', path: 'branding.appearance.radiusSm', label: 'radiusSm', type: 'number', min: 0, max: 24 },
+          { id: 'appearance-radius-md', path: 'branding.appearance.radiusMd', label: 'radiusMd', type: 'number', min: 0, max: 24 },
+          { id: 'appearance-radius-lg', path: 'branding.appearance.radiusLg', label: 'radiusLg', type: 'number', min: 0, max: 32 },
+          { id: 'appearance-shadow-sm', path: 'branding.appearance.shadowSm', label: 'shadowSm', type: 'text', placeholder: '0 1px 2px rgb(0 0 0 / 0.05)' },
+          { id: 'appearance-shadow-md', path: 'branding.appearance.shadowMd', label: 'shadowMd', type: 'text', placeholder: '0 10px 30px rgb(15 30 20 / 0.08)' },
+          { id: 'appearance-density', path: 'branding.appearance.density', label: 'density', type: 'select', options: DENSITY_OPTIONS },
+          { id: 'appearance-font-scale', path: 'branding.appearance.fontScale', label: 'fontScale', type: 'number', min: 0.85, max: 1.3, step: 0.05 }
         ]
       }
     ]
@@ -1983,6 +2046,7 @@ export function SettingsCenter() {
   const { canAction } = useAccessPolicy();
   const [center, setCenter] = useState<CenterPayload | null>(null);
   const [selectedDomain, setSelectedDomain] = useState<DomainKey>('org_profile');
+  const [settingsSearch, setSettingsSearch] = useState('');
   const [advancedMode, setAdvancedMode] = useState<boolean>(resolveDefaultAdvancedMode(role));
   const [advancedTouchedByUser, setAdvancedTouchedByUser] = useState(false);
   const [settingsLayout, setSettingsLayout] = useState<SettingsLayoutPayload | null>(null);
@@ -3118,6 +3182,8 @@ export function SettingsCenter() {
           selectedDomain={selectedDomain}
           onSelectDomain={setSelectedDomain}
           domainStates={center?.domainStates}
+          searchValue={settingsSearch}
+          onSearchChange={setSettingsSearch}
         />
 
         <main className="settings-center-main">

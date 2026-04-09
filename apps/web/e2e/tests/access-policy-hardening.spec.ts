@@ -221,20 +221,14 @@ test.describe('access policy hardening', () => {
     const roleSelect = page.getByLabel('Vai trò');
 
     await roleSelect.selectOption('USER');
-    for (const path of ['/modules/settings']) {
-      await page.goto(path);
-      await expect(page).toHaveURL('/');
-      await expect(
-        page.getByText('Trang bạn mở không thuộc phạm vi quyền truy cập. Hệ thống đã chuyển về Tổng quan.')
-      ).toBeVisible();
-    }
-
-    await roleSelect.selectOption('USER');
     await page.goto('/modules/settings');
     await expect(page).toHaveURL('/');
+    await expect(
+      page.getByText('Trang bạn mở không thuộc phạm vi quyền truy cập. Hệ thống đã chuyển về Tổng quan.')
+    ).toBeVisible();
 
     await page.goto('/modules/finance');
-    await expect(page).toHaveURL(/\/modules\/finance$/);
+    await expect(page).toHaveURL(/\/modules\/finance(?:\?.*)?$/);
   });
 
   test('hides CRM create/update/delete actions by role policy', async ({ page }) => {
@@ -245,7 +239,7 @@ test.describe('access policy hardening', () => {
 
     await roleSelect.selectOption('USER');
     await page.goto('/modules/crm');
-    await expect(page.getByRole('button', { name: 'Khách hàng' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thêm dữ liệu' })).toBeVisible();
     await page.getByRole('cell', { name: 'Khách test quyền' }).click();
     await expect(page.getByRole('heading', { name: 'Chi tiết khách hàng' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Chỉnh sửa hồ sơ' })).toBeVisible();
@@ -253,7 +247,7 @@ test.describe('access policy hardening', () => {
 
     await roleSelect.selectOption('ADMIN');
     await page.goto('/modules/crm');
-    await expect(page.getByRole('button', { name: 'Khách hàng' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thêm dữ liệu' })).toBeVisible();
     await page.getByRole('cell', { name: 'Khách test quyền' }).click();
     await expect(page.getByRole('heading', { name: 'Chi tiết khách hàng' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Chỉnh sửa hồ sơ' })).toBeVisible();

@@ -10,9 +10,18 @@ type ModalProps = {
   children: ReactNode;
   footer?: ReactNode;
   maxWidth?: string;
+  variant?: 'default' | 'fullscreen';
 };
 
-export function Modal({ open, onClose, title, children, footer, maxWidth = '560px' }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  maxWidth = '560px',
+  variant = 'default'
+}: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -40,7 +49,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = '560p
   return (
     <dialog
       ref={dialogRef}
-      className="modal-dialog"
+      className={`modal-dialog ${variant === 'fullscreen' ? 'modal-dialog-fullscreen' : ''}`}
       style={{ maxWidth }}
       onClick={(e) => {
         if (e.target === dialogRef.current) onClose();

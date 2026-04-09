@@ -6,8 +6,13 @@ apps/web/.next-dev-*/
 coverage/
 *.log
 .DS_Store
+.cache/
+.turbo/
+.idea/
+.vscode/
 .env
 .env.*
+!.env.example
 !config/.env.example
 .deploy.env
 apps/**/.env
@@ -15,3 +20,5 @@ apps/**/.env.*
 legacy/**/node_modules/
 playwright-report/
 apps/web/e2e/test-results/
+test-results/
+.agent/

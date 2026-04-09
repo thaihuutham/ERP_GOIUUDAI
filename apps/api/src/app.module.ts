@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ClsModule } from 'nestjs-cls';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
+import { validateEnvironment } from './common/config/environment.validation';
 import { TENANT_CONTEXT_KEY } from './common/tenant/tenant.constants';
 import { resolveTenantIdFromRequest } from './common/tenant/tenant-context.util';
 import { REQUEST_ID_CONTEXT_KEY } from './common/request/request.constants';
@@ -42,6 +43,7 @@ import { IamModule } from './modules/iam/iam.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validateEnvironment,
       // Keep both root-level and workspace-level paths so local runs work
       // regardless of whether command is executed from repo root or apps/api.
       envFilePath: [

@@ -26,7 +26,7 @@ function makeContext(path: string, options?: { token?: string; method?: string; 
   } as any;
 }
 
-function makeGuard(options?: { authEnabled?: boolean; requiredRoles?: UserRole[] }) {
+function makeGuard(options?: { authEnabled?: boolean; devAuthBypassEnabled?: boolean; requiredRoles?: UserRole[] }) {
   const reflector = {
     getAllAndOverride: vi.fn((key: string) => {
       if (key === 'roles') {
@@ -39,7 +39,9 @@ function makeGuard(options?: { authEnabled?: boolean; requiredRoles?: UserRole[]
   const config = {
     get: vi.fn((key: string, fallback?: string) => {
       if (key === 'AUTH_ENABLED') return options?.authEnabled === false ? 'false' : 'true';
+      if (key === 'DEV_AUTH_BYPASS_ENABLED') return options?.devAuthBypassEnabled === true ? 'true' : 'false';
       if (key === 'JWT_SECRET') return 'guard-test-secret';
+      if (key === 'NODE_ENV') return 'test';
       return fallback;
     })
   };
@@ -92,7 +94,7 @@ describe('JwtAuthGuard', () => {
     process.env.TENANCY_MODE = 'single';
     process.env.DEFAULT_TENANT_ID = 'GOIUUDAI';
 
-    const guard = makeGuard({ authEnabled: false });
+    const guard = makeGuard({ authEnabled: false, devAuthBypassEnabled: true });
     await expect(
       guard.canActivate(
         makeContext('/api/v1/assistant/access/me', {
@@ -106,11 +108,25 @@ describe('JwtAuthGuard', () => {
     ).resolves.toBe(true);
   });
 
+  it('rejects auth disabled mode when dev bypass flag is not enabled', async () => {
+    process.env.TENANCY_MODE = 'single';
+    process.env.DEFAULT_TENANT_ID = 'GOIUUDAI';
+
+    const guard = makeGuard({ authEnabled: false, devAuthBypassEnabled: false });
+    await expect(guard.canActivate(makeContext('/api/v1/crm/customers'))).rejects.toBeInstanceOf(
+      UnauthorizedException
+    );
+  });
+
   it('enforces @Roles in auth disabled mode from dev role header', async () => {
     process.env.TENANCY_MODE = 'single';
     process.env.DEFAULT_TENANT_ID = 'GOIUUDAI';
 
-    const guard = makeGuard({ authEnabled: false, requiredRoles: [UserRole.ADMIN] });
+    const guard = makeGuard({
+      authEnabled: false,
+      devAuthBypassEnabled: true,
+      requiredRoles: [UserRole.ADMIN]
+    });
     await expect(
       guard.canActivate(
         makeContext('/api/v1/assistant/channels', {

@@ -13,6 +13,8 @@ export { EmptyState } from './empty-state';
 export { Skeleton, SkeletonTable } from './skeleton';
 
 export { Modal } from './modal';
+export { EntityFormModal } from './entity-form-modal';
+export { CreateEntityDialog } from './create-entity-dialog';
 
 export { StatCard } from './stat-card';
 

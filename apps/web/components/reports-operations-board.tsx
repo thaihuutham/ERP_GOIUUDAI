@@ -1,7 +1,7 @@
 'use client';
 
-import { DomainModuleBoard } from './domain-module-board';
+import { ReportsCenter } from './reports-center';
 
 export function ReportsOperationsBoard() {
-  return <DomainModuleBoard moduleKey="reports" />;
+  return <ReportsCenter />;
 }

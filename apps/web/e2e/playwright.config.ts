@@ -26,7 +26,7 @@ export default defineConfig({
   },
   webServer: {
     cwd: repoRoot,
-    command: `NEXT_DEV_INSTANCE=e2e PORT=${testPort} npm run dev --workspace @erp/web`,
+    command: `NEXT_DEV_INSTANCE=e2e NEXT_PUBLIC_AUTH_ENABLED=false NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=true AUTH_ENABLED=false DEV_AUTH_BYPASS_ENABLED=true PORT=${testPort} npm run dev --workspace @erp/web`,
     url: testBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000

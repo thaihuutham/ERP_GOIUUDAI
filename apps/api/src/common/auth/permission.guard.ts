@@ -6,7 +6,6 @@ import { ClsService } from 'nestjs-cls';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AUTH_USER_CONTEXT_KEY, IAM_SCOPE_CONTEXT_KEY } from '../request/request.constants';
 import { TENANT_CONTEXT_KEY } from '../tenant/tenant.constants';
-import { resolveTenantRuntimeConfig } from '../tenant/tenant-context.util';
 import { IS_PUBLIC_KEY } from './auth.constants';
 import { AuthUser } from './auth-user.type';
 import { resolveModuleKeyFromPath, resolvePermissionActionFromRequest } from './permission.util';
@@ -60,7 +59,9 @@ export class PermissionGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const runtime = resolveTenantRuntimeConfig();
+    const authEnabled = this.toBool(this.config.get<string>('AUTH_ENABLED'), true);
+    const devAuthBypassEnabled = this.toBool(this.config.get<string>('DEV_AUTH_BYPASS_ENABLED'), false);
+    const isProduction = this.cleanString(this.config.get<string>('NODE_ENV')).toLowerCase() === 'production';
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass()
@@ -70,9 +71,17 @@ export class PermissionGuard implements CanActivate {
       return true;
     }
 
-    const defaultAuthEnabled = runtime.singleTenantMode ? 'false' : 'true';
-    const authEnabled = this.config.get<string>('AUTH_ENABLED', defaultAuthEnabled).toLowerCase() === 'true';
     if (!authEnabled) {
+      if (isProduction) {
+        this.setIamScopeContext(null);
+        throw new ForbiddenException('AUTH_ENABLED=false is not allowed in production.');
+      }
+      if (!devAuthBypassEnabled) {
+        this.setIamScopeContext(null);
+        throw new ForbiddenException(
+          'AUTH_ENABLED=false requires DEV_AUTH_BYPASS_ENABLED=true for explicit dev-only bypass.'
+        );
+      }
       this.setIamScopeContext(null);
       return true;
     }

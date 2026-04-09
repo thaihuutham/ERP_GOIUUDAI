@@ -37,6 +37,7 @@ export type SettingsLayoutMetadata = {
 const DOMAIN_TAB_MAP: Record<SettingsDomain, SettingsLayoutTabHint[]> = {
   org_profile: [
     { key: 'org-general', label: 'Cấu hình chung', sectionIds: ['org-base', 'org-branding'] },
+    { key: 'org-appearance', label: 'Appearance', sectionIds: ['org-appearance'] },
     { key: 'org-structure', label: 'Sơ đồ tổ chức', sectionIds: [], showOrgStructure: true }
   ],
   locale_calendar: [
@@ -110,23 +111,48 @@ const DOMAIN_TAB_MAP: Record<SettingsDomain, SettingsLayoutTabHint[]> = {
 const SIDEBAR_GROUPS: SettingsLayoutGroup[] = [
   {
     id: 'general',
-    label: 'Hệ thống chung',
+    label: 'General',
     domains: ['org_profile', 'locale_calendar'] as SettingsDomain[]
   },
   {
-    id: 'modules',
-    label: 'Quy định Phân hệ',
-    domains: ['sales_crm_policies', 'catalog_scm_policies', 'hr_policies'] as SettingsDomain[]
+    id: 'appearance',
+    label: 'Appearance',
+    domains: ['org_profile'] as SettingsDomain[]
   },
   {
-    id: 'management',
-    label: 'Quản trị & Kiểm soát',
-    domains: ['access_security', 'approval_matrix', 'finance_controls', 'data_governance_backup'] as SettingsDomain[]
+    id: 'security-access',
+    label: 'Security & Access',
+    domains: ['access_security', 'approval_matrix'] as SettingsDomain[]
   },
   {
-    id: 'integration',
-    label: 'Tích hợp & Cấu hình IT',
-    domains: ['integrations', 'notifications_templates', 'search_performance'] as SettingsDomain[]
+    id: 'sales-crm',
+    label: 'Sales & CRM',
+    domains: ['sales_crm_policies'] as SettingsDomain[]
+  },
+  {
+    id: 'finance',
+    label: 'Finance',
+    domains: ['finance_controls'] as SettingsDomain[]
+  },
+  {
+    id: 'scm',
+    label: 'SCM / Inventory / Purchasing',
+    domains: ['catalog_scm_policies'] as SettingsDomain[]
+  },
+  {
+    id: 'hr',
+    label: 'HR',
+    domains: ['hr_policies'] as SettingsDomain[]
+  },
+  {
+    id: 'integrations',
+    label: 'Integrations',
+    domains: ['integrations', 'notifications_templates'] as SettingsDomain[]
+  },
+  {
+    id: 'search-governance',
+    label: 'Search & Data Governance',
+    domains: ['search_performance', 'data_governance_backup'] as SettingsDomain[]
   }
 ];
 

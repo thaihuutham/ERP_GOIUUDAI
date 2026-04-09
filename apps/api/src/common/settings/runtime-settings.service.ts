@@ -179,7 +179,24 @@ export class RuntimeSettingsService {
 
     const enabledModules = this.normalizeEnabledModules(org.enabledModules, { includeAuditFallback: true });
     const branding = this.toRecord(org.branding);
+    const appearance = this.toRecord(branding.appearance);
     const documentLayout = this.toRecord(org.documentLayout);
+    const primary = this.readString(appearance.primary, this.readString(branding.primaryColor, '#167746'));
+    const normalizedDensity = this.readString(appearance.density, 'comfortable').toLowerCase() === 'compact'
+      ? 'compact'
+      : 'comfortable';
+    const normalizeRadius = (value: unknown, fallback: number) => this.toInt(value, fallback, 0, 40);
+    const normalizeScale = (value: unknown) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return 1;
+      }
+      return Math.min(1.3, Math.max(0.85, Number(parsed.toFixed(2))));
+    };
+    const normalizeShadow = (value: unknown, fallback: string) => {
+      const normalized = this.readString(value, fallback);
+      return normalized.length > 200 ? fallback : normalized;
+    };
 
     return {
       organization: {
@@ -192,7 +209,35 @@ export class RuntimeSettingsService {
       },
       branding: {
         logoUrl: this.readString(branding.logoUrl),
-        primaryColor: this.readString(branding.primaryColor, '#3f8f50')
+        primaryColor: primary,
+        appearance: {
+          primary,
+          primaryHover: this.readString(appearance.primaryHover, '#115f38'),
+          primarySoft: this.readString(appearance.primarySoft, '#e8f4ed'),
+          topbarBg: this.readString(appearance.topbarBg, '#f8faf8'),
+          sidebarBg: this.readString(appearance.sidebarBg, '#f8faf8'),
+          sidebarText: this.readString(appearance.sidebarText, '#3c4a41'),
+          surface: this.readString(appearance.surface, '#ffffff'),
+          surfaceMuted: this.readString(appearance.surfaceMuted, '#f2f7f3'),
+          border: this.readString(appearance.border, '#dfe5e0'),
+          success: this.readString(appearance.success, '#059669'),
+          warning: this.readString(appearance.warning, '#d97706'),
+          danger: this.readString(appearance.danger, '#dc2626'),
+          info: this.readString(appearance.info, '#2563eb'),
+          chart1: this.readString(appearance.chart1, '#10b981'),
+          chart2: this.readString(appearance.chart2, '#3b82f6'),
+          chart3: this.readString(appearance.chart3, '#f59e0b'),
+          chart4: this.readString(appearance.chart4, '#ef4444'),
+          chart5: this.readString(appearance.chart5, '#8b5cf6'),
+          chart6: this.readString(appearance.chart6, '#14b8a6'),
+          radiusSm: normalizeRadius(appearance.radiusSm, 6),
+          radiusMd: normalizeRadius(appearance.radiusMd, 8),
+          radiusLg: normalizeRadius(appearance.radiusLg, 10),
+          shadowSm: normalizeShadow(appearance.shadowSm, '0 1px 2px rgb(0 0 0 / 0.05)'),
+          shadowMd: normalizeShadow(appearance.shadowMd, '0 10px 30px rgb(15 30 20 / 0.08)'),
+          density: normalizedDensity,
+          fontScale: normalizeScale(appearance.fontScale)
+        }
       },
       documentLayout: {
         invoiceTemplate: this.readString(documentLayout.invoiceTemplate, 'standard'),

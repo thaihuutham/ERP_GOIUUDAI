@@ -14,7 +14,6 @@ import {
   LayoutDashboard,
   Menu,
   Package,
-  Search,
   Settings,
   ShoppingCart,
   Truck,
@@ -38,6 +37,7 @@ import { SIDEBAR_GROUPS, type SidebarNavItemConfig } from '../lib/sidebar-config
 import { setRuntimeLocale } from '../lib/runtime-format';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { useAccessPolicy } from './access-policy-context';
+import { GlobalSearchCommand } from './global-search-command';
 import { Breadcrumb } from './ui/breadcrumb';
 import { useUserRole } from './user-role-context';
 
@@ -140,6 +140,34 @@ type RuntimeSettingsPayload = {
   branding?: {
     logoUrl?: string;
     primaryColor?: string;
+    appearance?: {
+      primary?: string;
+      primaryHover?: string;
+      primarySoft?: string;
+      topbarBg?: string;
+      sidebarBg?: string;
+      sidebarText?: string;
+      surface?: string;
+      surfaceMuted?: string;
+      border?: string;
+      success?: string;
+      warning?: string;
+      danger?: string;
+      info?: string;
+      chart1?: string;
+      chart2?: string;
+      chart3?: string;
+      chart4?: string;
+      chart5?: string;
+      chart6?: string;
+      radiusSm?: number;
+      radiusMd?: number;
+      radiusLg?: number;
+      shadowSm?: string;
+      shadowMd?: string;
+      density?: 'comfortable' | 'compact';
+      fontScale?: number;
+    };
   };
   locale?: {
     timezone?: string;
@@ -158,7 +186,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [menuCollapsed, setMenuCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [assistantExpanded, setAssistantExpanded] = useState(false);
-  const [globalSearch, setGlobalSearch] = useState('');
   const {
     role,
     setRole,
@@ -378,8 +405,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    setGlobalSearch(new URLSearchParams(window.location.search).get('q') ?? '');
-
     const notice = window.sessionStorage.getItem(ACCESS_REDIRECT_NOTICE_KEY);
     if (notice) {
       setAccessRedirectNotice(notice);
@@ -388,20 +413,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       setAccessRedirectNotice(null);
     }
   }, [pathname]);
-
-  const handleGlobalSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const query = globalSearch.trim();
-    const next = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
-    if (query) {
-      next.set('q', query);
-    } else {
-      next.delete('q');
-    }
-
-    const nextUrl = next.toString() ? `/modules/crm?${next.toString()}` : '/modules/crm';
-    router.push(nextUrl);
-  };
 
   const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -479,10 +490,46 @@ export function AppShell({ children }: { children: ReactNode }) {
         }
 
         if (typeof document !== 'undefined') {
-          const primaryColor = String(payload.branding?.primaryColor ?? '').trim();
+          const root = document.documentElement;
+          const appearance = payload.branding?.appearance;
+          const primaryColor = String(appearance?.primary ?? payload.branding?.primaryColor ?? '').trim();
+
           if (primaryColor) {
-            document.documentElement.style.setProperty('--primary', primaryColor);
+            root.style.setProperty('--primary', primaryColor);
           }
+          if (appearance?.primaryHover) root.style.setProperty('--primary-hover', appearance.primaryHover);
+          if (appearance?.primarySoft) root.style.setProperty('--primary-soft', appearance.primarySoft);
+          if (appearance?.topbarBg) root.style.setProperty('--topbar-bg', appearance.topbarBg);
+          if (appearance?.sidebarBg) root.style.setProperty('--sidebar-bg', appearance.sidebarBg);
+          if (appearance?.sidebarText) root.style.setProperty('--sidebar-text', appearance.sidebarText);
+          if (appearance?.surface) {
+            root.style.setProperty('--surface', appearance.surface);
+            root.style.setProperty('--bg-card', appearance.surface);
+          }
+          if (appearance?.surfaceMuted) root.style.setProperty('--surface-muted', appearance.surfaceMuted);
+          if (appearance?.border) {
+            root.style.setProperty('--border', appearance.border);
+            root.style.setProperty('--line', appearance.border);
+          }
+          if (appearance?.success) root.style.setProperty('--success', appearance.success);
+          if (appearance?.warning) root.style.setProperty('--warning', appearance.warning);
+          if (appearance?.danger) root.style.setProperty('--danger', appearance.danger);
+          if (appearance?.info) root.style.setProperty('--info', appearance.info);
+          if (appearance?.chart1) root.style.setProperty('--chart1', appearance.chart1);
+          if (appearance?.chart2) root.style.setProperty('--chart2', appearance.chart2);
+          if (appearance?.chart3) root.style.setProperty('--chart3', appearance.chart3);
+          if (appearance?.chart4) root.style.setProperty('--chart4', appearance.chart4);
+          if (appearance?.chart5) root.style.setProperty('--chart5', appearance.chart5);
+          if (appearance?.chart6) root.style.setProperty('--chart6', appearance.chart6);
+          if (typeof appearance?.radiusSm === 'number') root.style.setProperty('--radius-sm', `${appearance.radiusSm}px`);
+          if (typeof appearance?.radiusMd === 'number') root.style.setProperty('--radius-md', `${appearance.radiusMd}px`);
+          if (typeof appearance?.radiusLg === 'number') root.style.setProperty('--radius-lg', `${appearance.radiusLg}px`);
+          if (appearance?.shadowSm) root.style.setProperty('--shadow-sm', appearance.shadowSm);
+          if (appearance?.shadowMd) root.style.setProperty('--shadow-md', appearance.shadowMd);
+          if (typeof appearance?.fontScale === 'number' && Number.isFinite(appearance.fontScale)) {
+            root.style.setProperty('--font-scale', String(appearance.fontScale));
+          }
+          root.setAttribute('data-density', appearance?.density === 'compact' ? 'compact' : 'comfortable');
         }
       } catch {
         // Keep default runtime formatting when settings runtime is unavailable.
@@ -708,16 +755,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div className="toolbar-right">
-            <form className="global-search-form" onSubmit={handleGlobalSearchSubmit}>
-              <Search size={14} />
-              <input
-                type="search"
-                value={globalSearch}
-                onChange={(event) => setGlobalSearch(event.target.value)}
-                className="global-search-input"
-                placeholder="Tìm kiếm khách hàng..."
-              />
-            </form>
+            <GlobalSearchCommand />
             {!authEnabled ? (
               <label className="role-switcher" htmlFor="web-role-select">
                 <span>Vai trò</span>

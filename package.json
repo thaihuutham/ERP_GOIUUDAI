@@ -19,6 +19,7 @@
     "phase3:stabilization": "scripts/quality/run-phase3-stabilization.sh",
     "phase4:smoke:prod-readiness": "scripts/deploy/smoke-production-readiness.sh",
     "phase4:release-gate": "scripts/quality/run-phase4-release-gate.sh",
+    "release:export:safe": "scripts/release/export-safe-bundle.sh",
     "test:e2e:web": "playwright test --config=apps/web/e2e/playwright.config.ts",
     "test:e2e:web:ui": "playwright test --config=apps/web/e2e/playwright.config.ts --ui",
     "prisma:generate": "npm run prisma:generate --workspace @erp/api",

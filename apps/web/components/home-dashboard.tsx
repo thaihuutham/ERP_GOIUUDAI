@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { 
   TrendingUp, 
   Users, 
@@ -26,22 +26,22 @@ import { StatCard, SimpleAreaChart, SimplePieChart, Badge, Skeleton } from './ui
 import { useSmartPolling } from '../lib/use-smart-polling';
 
 type Overview = {
+  range?: {
+    key?: string;
+    label?: string;
+    from?: string;
+    to?: string;
+  };
   totalRevenue?: number;
   totalEmployees?: number;
   pendingInvoices?: number;
   activePurchaseOrders?: number;
-};
-
-type SalesRow = {
-  id?: string;
-  createdAt?: string;
-  status?: string;
-  totalAmount?: number | string;
-};
-
-type SalesWidgetData = {
-  revenueSeries: Array<{ name: string; value: number }>;
-  orderStatusSeries: Array<{ name: string; value: number }>;
+  totalOrders?: number;
+  revenueDeltaPercent?: number | null;
+  charts?: {
+    revenueSeries?: Array<{ bucket?: string; label?: string; value?: number; orders?: number }>;
+    orderStatusSeries?: Array<{ status?: string; label?: string; value?: number }>;
+  };
 };
 
 type WorkflowInboxTask = {
@@ -69,27 +69,17 @@ type WidgetState<T> = {
 
 const POLL_INTERVALS = {
   overview: 120_000,
-  sales: 120_000,
   tasks: 60_000,
   activity: 45_000
 } as const;
 
-const DEFAULT_REVENUE_DATA = [
-  { name: 'T1', value: 12000000 },
-  { name: 'T2', value: 15500000 },
-  { name: 'T3', value: 14200000 },
-  { name: 'T4', value: 18000000 },
-  { name: 'T5', value: 19500000 },
-  { name: 'T6', value: 24000000 },
-  { name: 'T7', value: 28000000 },
-];
-
-const DEFAULT_ORDER_STATUS_DATA = [
-  { name: 'Hoàn thành', value: 65 },
-  { name: 'Đang xử lý', value: 20 },
-  { name: 'Đang giao', value: 10 },
-  { name: 'Hủy', value: 5 },
-];
+const DASHBOARD_RANGES = [
+  { key: 'YESTERDAY', label: 'Hôm qua' },
+  { key: 'THIS_WEEK', label: 'Tuần này' },
+  { key: 'LAST_WEEK', label: 'Tuần trước' },
+  { key: 'LAST_MONTH', label: 'Tháng trước' }
+] as const;
+type DashboardRangeKey = (typeof DASHBOARD_RANGES)[number]['key'];
 
 const REPORTS_DISABLED_NOTICE =
   "Phân hệ 'reports' đang tắt. Vui lòng bật lại tại Cấu hình hệ thống > Hồ sơ tổ chức > Phân hệ đang bật.";
@@ -166,56 +156,8 @@ function toFiniteNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function normalizeOrderStatusLabel(status: string) {
-  const upper = status.toUpperCase();
-  if (upper === 'APPROVED') return 'Hoàn thành';
-  if (upper === 'PENDING') return 'Đang xử lý';
-  if (upper === 'DRAFT') return 'Nháp';
-  if (upper === 'REJECTED') return 'Từ chối';
-  return upper;
-}
-
-function buildSalesWidgetData(rows: SalesRow[]): SalesWidgetData {
-  if (rows.length === 0) {
-    return {
-      revenueSeries: DEFAULT_REVENUE_DATA,
-      orderStatusSeries: DEFAULT_ORDER_STATUS_DATA
-    };
-  }
-
-  const monthBuckets = new Map<string, { name: string; value: number }>();
-  const now = new Date();
-  for (let offset = 6; offset >= 0; offset -= 1) {
-    const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
-    const key = `${date.getFullYear()}-${date.getMonth()}`;
-    monthBuckets.set(key, { name: `T${date.getMonth() + 1}`, value: 0 });
-  }
-
-  const statusCounters = new Map<string, number>();
-  rows.forEach((row) => {
-    const createdAt = row.createdAt ? new Date(row.createdAt) : null;
-    if (createdAt && Number.isFinite(createdAt.getTime())) {
-      const key = `${createdAt.getFullYear()}-${createdAt.getMonth()}`;
-      const bucket = monthBuckets.get(key);
-      if (bucket) {
-        bucket.value += Math.round(toFiniteNumber(row.totalAmount));
-      }
-    }
-
-    const statusKey = normalizeOrderStatusLabel(String(row.status ?? 'Khác'));
-    statusCounters.set(statusKey, (statusCounters.get(statusKey) ?? 0) + 1);
-  });
-
-  const revenueSeries = Array.from(monthBuckets.values());
-  const orderStatusSeries = Array.from(statusCounters.entries())
-    .map(([name, value]) => ({ name, value }))
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 5);
-
-  return {
-    revenueSeries: revenueSeries.some((item) => item.value > 0) ? revenueSeries : DEFAULT_REVENUE_DATA,
-    orderStatusSeries: orderStatusSeries.length > 0 ? orderStatusSeries : DEFAULT_ORDER_STATUS_DATA
-  };
+function hasPositiveSeriesValue(series: Array<{ value?: number }> | undefined) {
+  return Array.isArray(series) && series.some((item) => toFiniteNumber(item.value) > 0);
 }
 
 function toShortModuleLabel(value: string | undefined) {
@@ -327,9 +269,7 @@ export function HomeDashboard() {
   const [overviewState, setOverviewState] = useState<WidgetState<Overview | null>>(() =>
     createWidgetState<Overview | null>(null)
   );
-  const [salesState, setSalesState] = useState<WidgetState<SalesWidgetData | null>>(() =>
-    createWidgetState<SalesWidgetData | null>(null)
-  );
+  const [selectedRange, setSelectedRange] = useState<DashboardRangeKey>('THIS_WEEK');
   const [tasksState, setTasksState] = useState<WidgetState<WorkflowInboxTask[]>>(() =>
     createWidgetState<WorkflowInboxTask[]>([])
   );
@@ -369,15 +309,11 @@ export function HomeDashboard() {
   }, []);
 
   const loadOverviewWidget = useCallback(async () => {
-    setOverviewState((prev) =>
-      prev.status === 'idle'
-        ? {
-            ...prev,
-            status: 'loading',
-            error: null
-          }
-        : prev
-    );
+    setOverviewState((prev) => ({
+      ...prev,
+      status: prev.data ? 'stale' : 'loading',
+      error: null
+    }));
 
     if (!canViewReports) {
       setOverviewState((prev) => ({
@@ -401,7 +337,11 @@ export function HomeDashboard() {
     }
 
     try {
-      const payload = await apiRequest<Overview>('/reports/overview');
+      const payload = await apiRequest<Overview>('/reports/overview', {
+        query: {
+          range: selectedRange
+        }
+      });
       setOverviewState({
         status: 'ready',
         data: payload,
@@ -421,73 +361,7 @@ export function HomeDashboard() {
         };
       });
     }
-  }, [canViewReports, fetchReportsEnabled]);
-
-  const loadSalesWidget = useCallback(async () => {
-    setSalesState((prev) =>
-      prev.status === 'idle'
-        ? {
-            ...prev,
-            status: 'loading',
-            error: null
-          }
-        : prev
-    );
-
-    if (!canViewReports) {
-      setSalesState((prev) => ({
-        ...prev,
-        status: 'disabled',
-        data: null,
-        error: null
-      }));
-      return;
-    }
-
-    if (overviewState.status === 'disabled') {
-      setSalesState((prev) => ({
-        ...prev,
-        status: 'disabled',
-        data: null,
-        error: REPORTS_DISABLED_NOTICE
-      }));
-      return;
-    }
-
-    const reportsEnabled = await fetchReportsEnabled();
-    if (!reportsEnabled) {
-      setSalesState((prev) => ({
-        ...prev,
-        status: 'disabled',
-        data: null,
-        error: REPORTS_DISABLED_NOTICE
-      }));
-      return;
-    }
-
-    try {
-      const payload = await apiRequest('/reports/module', {
-        query: { name: 'sales', limit: 120 }
-      });
-      const rows = normalizeListPayload(payload) as SalesRow[];
-      setSalesState({
-        status: 'ready',
-        data: buildSalesWidgetData(rows),
-        error: null,
-        lastUpdatedAt: new Date().toISOString()
-      });
-    } catch (error) {
-      const message = normalizeWidgetError(error);
-      setSalesState((prev) => {
-        const stale = hasWidgetData(prev.data);
-        return {
-          ...prev,
-          status: stale ? 'stale' : 'error',
-          error: message
-        };
-      });
-    }
-  }, [canViewReports, fetchReportsEnabled, overviewState.status]);
+  }, [canViewReports, fetchReportsEnabled, selectedRange]);
 
   const loadTasksWidget = useCallback(async () => {
     setTasksState((prev) =>
@@ -576,16 +450,29 @@ export function HomeDashboard() {
   }, [canViewAudit]);
 
   useSmartPolling(loadOverviewWidget, POLL_INTERVALS.overview);
-  useSmartPolling(loadSalesWidget, POLL_INTERVALS.sales);
   useSmartPolling(loadTasksWidget, POLL_INTERVALS.tasks);
   useSmartPolling(loadActivitiesWidget, POLL_INTERVALS.activity);
 
-  const overviewData = overviewState.data;
-  const salesData = salesState.data;
+  useEffect(() => {
+    void loadOverviewWidget();
+  }, [selectedRange, loadOverviewWidget]);
 
-  const salesStatusLabel = getWidgetStatusLabel(salesState.status);
+  const overviewData = overviewState.data;
+  const revenueSeries = (overviewData?.charts?.revenueSeries ?? []).map((item) => ({
+    name: String(item.label ?? item.bucket ?? ''),
+    value: toFiniteNumber(item.value)
+  }));
+  const orderStatusSeries = (overviewData?.charts?.orderStatusSeries ?? []).map((item) => ({
+    name: String(item.label ?? item.status ?? 'Khác'),
+    value: toFiniteNumber(item.value)
+  }));
+  const hasRevenueData = hasPositiveSeriesValue(revenueSeries);
+  const hasOrderStatusData = hasPositiveSeriesValue(orderStatusSeries);
+
+  const overviewStatusLabel = getWidgetStatusLabel(overviewState.status);
   const tasksStatusLabel = getWidgetStatusLabel(tasksState.status);
   const activitiesStatusLabel = getWidgetStatusLabel(activitiesState.status);
+  const selectedRangeLabel = DASHBOARD_RANGES.find((item) => item.key === selectedRange)?.label ?? selectedRange;
 
   return (
     <div className="dashboard-root">
@@ -611,86 +498,124 @@ export function HomeDashboard() {
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Vai trò hiện tại: <strong>{role}</strong>
           </div>
+          <div style={{ display: 'inline-flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '0.35rem' }}>
+            {DASHBOARD_RANGES.map((range) => (
+              <button
+                key={range.key}
+                type="button"
+                className={`btn btn-sm ${selectedRange === range.key ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setSelectedRange(range.key)}
+                aria-pressed={selectedRange === range.key}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
       {/* KPIs Grid */}
       <section className="metrics-grid">
-        <StatCard 
-          label="Phát sinh doanh thu" 
-          value={formatMetricValue(overviewData?.totalRevenue, (value) => formatRuntimeCurrency(value))} 
-          icon={<TrendingUp size={18} />} 
-          color="var(--primary)" 
-          trend={12.5} 
-        />
-        <StatCard 
-          label="Nhân sự vận hành" 
-          value={formatMetricValue(overviewData?.totalEmployees)} 
-          icon={<Users size={18} />} 
-          color="var(--success)" 
-          trend={3.2} 
-        />
-        <StatCard 
-          label="Hóa đơn chờ xử lý" 
-          value={formatMetricValue(overviewData?.pendingInvoices)} 
-          icon={<FileText size={18} />} 
-          color="var(--warning)" 
-        />
-        <StatCard 
-          label="Đơn mua hàng (PO)" 
-          value={formatMetricValue(overviewData?.activePurchaseOrders)} 
-          icon={<ShoppingCart size={18} />} 
-          color="var(--danger)" 
-          trend={-2.1} 
-        />
+        <Link href={`/modules/sales?range=${selectedRange}`} style={{ textDecoration: 'none' }}>
+          <StatCard
+            label="Phát sinh doanh thu"
+            value={formatMetricValue(overviewData?.totalRevenue, (value) => formatRuntimeCurrency(value))}
+            icon={<TrendingUp size={18} />}
+            color="var(--primary)"
+            trend={typeof overviewData?.revenueDeltaPercent === 'number' ? overviewData.revenueDeltaPercent : undefined}
+          />
+        </Link>
+        <Link href={`/modules/hr?range=${selectedRange}`} style={{ textDecoration: 'none' }}>
+          <StatCard
+            label="Nhân sự vận hành"
+            value={formatMetricValue(overviewData?.totalEmployees)}
+            icon={<Users size={18} />}
+            color="var(--success)"
+          />
+        </Link>
+        <Link href={`/modules/finance?q=PENDING&range=${selectedRange}`} style={{ textDecoration: 'none' }}>
+          <StatCard
+            label="Hóa đơn chờ xử lý"
+            value={formatMetricValue(overviewData?.pendingInvoices)}
+            icon={<FileText size={18} />}
+            color="var(--warning)"
+          />
+        </Link>
+        <Link href={`/modules/scm?q=PENDING&range=${selectedRange}`} style={{ textDecoration: 'none' }}>
+          <StatCard
+            label="Đơn mua hàng (PO)"
+            value={formatMetricValue(overviewData?.activePurchaseOrders)}
+            icon={<ShoppingCart size={18} />}
+            color="var(--danger)"
+          />
+        </Link>
       </section>
+      {overviewData?.range?.from && overviewData?.range?.to && (
+        <div className="dashboard-refresh-meta">
+          Phạm vi dữ liệu: {selectedRangeLabel} ({new Date(overviewData.range.from).toLocaleDateString('vi-VN')} - {new Date(overviewData.range.to).toLocaleDateString('vi-VN')}) • Tổng đơn: {formatMetricValue(overviewData.totalOrders)}
+        </div>
+      )}
 
       {/* Visualizations & Data Row */}
       <section className="dashboard-charts-row">
         {/* Main Chart */}
-        <div className="dashboard-chart-card">
+        <Link
+          href={`/modules/reports?name=sales&range=${selectedRange}`}
+          className="dashboard-chart-card"
+          style={{ textDecoration: 'none' }}
+        >
           <div className="dashboard-widget-header">
-            <h3><TrendingUp size={16} color="var(--primary)" /> Tăng trưởng doanh thu 7 tháng gần nhất</h3>
-            {salesStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(salesState.status)}`}>{salesStatusLabel}</span>}
+            <h3><TrendingUp size={16} color="var(--primary)" /> Doanh thu theo ngày ({selectedRangeLabel})</h3>
+            {overviewStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(overviewState.status)}`}>{overviewStatusLabel}</span>}
           </div>
-          {salesState.status === 'loading' && !salesData ? (
+          {overviewState.status === 'loading' && !overviewData ? (
             <div className="dashboard-widget-placeholder">
               <Skeleton height="230px" />
             </div>
-          ) : salesData ? (
+          ) : hasRevenueData ? (
             <div style={{ padding: '0.5rem 0 0 0' }}>
-              <SimpleAreaChart 
-                data={salesData.revenueSeries} 
-                xKey="name" 
-                yKey="value" 
+              <SimpleAreaChart
+                data={revenueSeries}
+                xKey="name"
+                yKey="value"
                 height={260}
                 formatY={(val) => `${(val / 1000000).toFixed(0)}Tr`}
               />
             </div>
+          ) : overviewState.status === 'ready' ? (
+            <p className="dashboard-widget-note">Chưa có giao dịch doanh thu trong khoảng thời gian đã chọn. Hãy tạo đơn bán hàng để bắt đầu theo dõi xu hướng.</p>
           ) : (
             <p className="dashboard-widget-note is-error">Không thể tải dữ liệu doanh thu.</p>
           )}
-          {salesState.status === 'stale' && salesState.error && (
-            <p className="dashboard-widget-note is-stale">{salesState.error}</p>
+          {overviewState.status === 'stale' && overviewState.error && (
+            <p className="dashboard-widget-note is-stale">{overviewState.error}</p>
           )}
-        </div>
+        </Link>
 
         {/* Secondary Info (Pie Chart + Tasks) */}
         <div style={{ display: 'grid', gap: '0.75rem' }}>
-          <div className="dashboard-chart-card" style={{ paddingBottom: '0.5rem' }}>
+          <Link
+            href={`/modules/sales?range=${selectedRange}`}
+            className="dashboard-chart-card"
+            style={{ paddingBottom: '0.5rem', textDecoration: 'none' }}
+          >
             <h3><ShoppingCart size={16} /> Trạng thái đơn hàng</h3>
-            {salesState.status === 'loading' && !salesData ? (
+            {overviewState.status === 'loading' && !overviewData ? (
               <Skeleton height="150px" />
-            ) : (
+            ) : hasOrderStatusData ? (
               <div style={{ padding: '0.5rem 0' }}>
-                <SimplePieChart 
-                  data={salesData?.orderStatusSeries ?? DEFAULT_ORDER_STATUS_DATA} 
-                  height={160} 
+                <SimplePieChart
+                  data={orderStatusSeries}
+                  height={160}
                   innerRadius={30}
                 />
               </div>
+            ) : overviewState.status === 'ready' ? (
+              <p className="dashboard-widget-note">Chưa có trạng thái đơn hàng trong khoảng thời gian đã chọn.</p>
+            ) : (
+              <p className="dashboard-widget-note is-error">Không thể tải dữ liệu trạng thái đơn hàng.</p>
             )}
-          </div>
+          </Link>
           
           {canViewWorkflows ? (
             <div className="quick-tasks-panel">

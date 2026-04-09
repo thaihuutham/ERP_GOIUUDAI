@@ -458,8 +458,8 @@ test.describe('Settings Center reports alignment', () => {
     await page.goto('/modules/settings');
 
     await expect(page.getByRole('heading', { name: 'Trung tâm cấu hình hệ thống' })).toBeVisible();
-    await expect(page.getByText('Hệ thống chung')).toBeVisible();
-    await expect(page.getByText('Quản trị & Kiểm soát')).toBeVisible();
+    await expect(page.getByText('General')).toBeVisible();
+    await expect(page.getByText('Security & Access')).toBeVisible();
     await expect(page.getByText('Áp mẫu nhanh:')).toHaveCount(0);
 
     const reportsCheckbox = page.locator('label.checkbox-wrap:has-text("Báo cáo") input[type="checkbox"]').first();
@@ -578,9 +578,9 @@ test.describe('Settings Center reports alignment', () => {
     expect(resetRequests.sort()).toEqual(['user_1', 'user_2']);
   });
 
-  test('advanced mode defaults to OFF for manager and reveals technical fields on demand', async ({ page }) => {
+  test('advanced mode defaults to ON for admin and can hide/reveal technical fields on demand', async ({ page }) => {
     await page.addInitScript(() => {
-      window.localStorage.setItem('erp_web_role', 'USER');
+      window.localStorage.setItem('erp_web_role', 'ADMIN');
     });
 
     await page.route('**/api/v1/**', async (route) => {
@@ -648,9 +648,12 @@ test.describe('Settings Center reports alignment', () => {
 
     const advancedToggle = page.getByLabel('Chế độ Chuyên gia / IT');
     await expect(advancedToggle).toBeVisible();
-    await expect(advancedToggle).not.toBeChecked();
+    await expect(advancedToggle).toBeChecked();
 
-    await page.getByRole('button', { name: 'Tích hợp hệ thống' }).click();
+    await clickRoleControl(page, 'button', 'Tích hợp hệ thống');
+    await expect(page.getByLabel('BHTOT Base URL')).toBeVisible();
+
+    await advancedToggle.uncheck();
     await expect(page.getByLabel('BHTOT Base URL')).toHaveCount(0);
 
     await advancedToggle.check();

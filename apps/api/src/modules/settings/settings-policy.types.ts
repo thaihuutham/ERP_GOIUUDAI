@@ -73,7 +73,35 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     enabledModules: [...RUNTIME_TOGGLABLE_ERP_MODULES],
     branding: {
       logoUrl: '',
-      primaryColor: '#3f8f50'
+      primaryColor: '#167746',
+      appearance: {
+        primary: '#167746',
+        primaryHover: '#115f38',
+        primarySoft: '#e8f4ed',
+        topbarBg: '#f8faf8',
+        sidebarBg: '#f8faf8',
+        sidebarText: '#3c4a41',
+        surface: '#ffffff',
+        surfaceMuted: '#f2f7f3',
+        border: '#dfe5e0',
+        success: '#059669',
+        warning: '#d97706',
+        danger: '#dc2626',
+        info: '#2563eb',
+        chart1: '#10b981',
+        chart2: '#3b82f6',
+        chart3: '#f59e0b',
+        chart4: '#ef4444',
+        chart5: '#8b5cf6',
+        chart6: '#14b8a6',
+        radiusSm: 6,
+        radiusMd: 8,
+        radiusLg: 10,
+        shadowSm: '0 1px 2px rgb(0 0 0 / 0.05)',
+        shadowMd: '0 10px 30px rgb(15 30 20 / 0.08)',
+        density: 'comfortable',
+        fontScale: 1
+      }
     },
     documentLayout: {
       invoiceTemplate: 'standard',

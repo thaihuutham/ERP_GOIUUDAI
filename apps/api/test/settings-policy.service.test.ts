@@ -144,12 +144,27 @@ describe('SettingsPolicyService', () => {
 
     expect(metadata.version).toBe(1);
     expect(metadata.rolloutPhase).toBe('phase_2');
-    expect(metadata.groupedSidebar).toHaveLength(4);
+    expect(metadata.groupedSidebar).toHaveLength(9);
+    expect(metadata.groupedSidebar.map((group) => group.id)).toEqual([
+      'general',
+      'appearance',
+      'security-access',
+      'sales-crm',
+      'finance',
+      'scm',
+      'hr',
+      'integrations',
+      'search-governance'
+    ]);
     expect(metadata.advancedMode.defaultByRole).toEqual({
       ADMIN: true,
       USER: false
     });
-    expect(metadata.domainTabs.org_profile.map((tab) => tab.key)).toEqual(['org-general', 'org-structure']);
+    expect(metadata.domainTabs.org_profile.map((tab) => tab.key)).toEqual([
+      'org-general',
+      'org-appearance',
+      'org-structure'
+    ]);
     expect(metadata.domainTabs.integrations.map((tab) => tab.key)).toEqual([
       'integration-bhtot',
       'integration-zalo',

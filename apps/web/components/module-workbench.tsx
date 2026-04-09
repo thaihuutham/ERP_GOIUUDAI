@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Plus, Search, RefreshCw, Filter, FileText, LayoutDashboard, ChevronRight, Database, Edit2, Trash2, CheckCircle2, ShieldAlert } from 'lucide-react';
 import {
   apiRequest,
@@ -28,6 +29,7 @@ import type {
   SelectOption
 } from '../lib/module-ui';
 import { useAccessPolicy } from './access-policy-context';
+import { CreateEntityDialog } from './ui';
 import {
   StandardDataTable,
   ColumnDefinition,
@@ -390,53 +392,157 @@ function formatCellValue(value: unknown): string {
   return String(value);
 }
 
+function isMissingRequiredValue(value: FormValue | undefined, fieldType: FormField['type']) {
+  if (fieldType === 'checkbox') {
+    return value !== true;
+  }
+  if (value === undefined || value === null) {
+    return true;
+  }
+  return String(value).trim() === '';
+}
+
 // Sub-component for individual Feature Action Forms in SidePanel
 function ActionForm({
   action,
   onSubmit,
+  onSubmitAndAddAnother,
   onCancel,
   initialValues,
   hiddenFieldNames = [],
   isSubmitting = false,
-  fieldOptionsByName = {}
+  fieldOptionsByName = {},
+  submitLabel,
+  showSaveAndAddAnother = false
 }: {
-  action: FeatureAction, 
-  onSubmit: (values: FormValues) => void,
-  onCancel: () => void,
-  initialValues?: FormValues,
-  hiddenFieldNames?: string[],
-  isSubmitting?: boolean,
-  fieldOptionsByName?: Record<string, SelectOption[]>
+  action: FeatureAction;
+  onSubmit: (values: FormValues) => Promise<boolean | void> | boolean | void;
+  onSubmitAndAddAnother?: (values: FormValues) => Promise<boolean | void> | boolean | void;
+  onCancel: () => void;
+  initialValues?: FormValues;
+  hiddenFieldNames?: string[];
+  isSubmitting?: boolean;
+  fieldOptionsByName?: Record<string, SelectOption[]>;
+  submitLabel?: string;
+  showSaveAndAddAnother?: boolean;
 }) {
   const [values, setValues] = useState<FormValues>(initialValues ?? createDefaultFormValues(action));
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [localMessage, setLocalMessage] = useState<string | null>(null);
+  const [isRunningSubmit, setIsRunningSubmit] = useState(false);
   const hiddenSet = useMemo(() => new Set(hiddenFieldNames), [hiddenFieldNames]);
   const visibleFields = useMemo(
     () => action.fields.filter((field) => !hiddenSet.has(field.name)),
     [action.fields, hiddenSet]
   );
+  const isBusy = isSubmitting || isRunningSubmit;
 
   useEffect(() => {
     setValues(initialValues ?? createDefaultFormValues(action));
+    setFieldErrors({});
+    setLocalMessage(null);
   }, [action, initialValues]);
 
   const updateValue = (name: string, val: FormValue) => setValues(prev => ({ ...prev, [name]: val }));
 
+  const validateValues = useCallback((currentValues: FormValues) => {
+    const nextErrors: Record<string, string> = {};
+    for (const field of visibleFields) {
+      if (!field.required) {
+        continue;
+      }
+      if (isMissingRequiredValue(currentValues[field.name], field.type)) {
+        nextErrors[field.name] = 'Trường này là bắt buộc.';
+      }
+    }
+    return nextErrors;
+  }, [visibleFields]);
+
+  const submitInternal = useCallback(
+    async (mode: 'submit' | 'submit-add-another') => {
+      const nextErrors = validateValues(values);
+      setFieldErrors(nextErrors);
+      if (Object.keys(nextErrors).length > 0) {
+        setLocalMessage('Vui lòng hoàn thành các trường bắt buộc trước khi lưu.');
+        return;
+      }
+
+      setLocalMessage(null);
+      setIsRunningSubmit(true);
+      try {
+        const handler = mode === 'submit-add-another' && onSubmitAndAddAnother ? onSubmitAndAddAnother : onSubmit;
+        const outcome = await handler(values);
+        if (mode === 'submit-add-another' && outcome !== false) {
+          setValues(createDefaultFormValues(action));
+          setFieldErrors({});
+          setLocalMessage('Đã lưu thành công. Bạn có thể thêm bản ghi tiếp theo.');
+        }
+      } catch (error) {
+        setLocalMessage(error instanceof Error ? error.message : 'Không thể lưu dữ liệu.');
+      } finally {
+        setIsRunningSubmit(false);
+      }
+    },
+    [action, onSubmit, onSubmitAndAddAnother, validateValues, values]
+  );
+
   return (
-    <form className="form-grid" onSubmit={(e) => { e.preventDefault(); onSubmit(values); }}>
+    <form
+      className="form-grid"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submitInternal('submit');
+      }}
+    >
       <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1.5rem', color: 'var(--primary)' }}>{action.label}</h3>
+      {localMessage ? (
+        <div
+          className={Object.keys(fieldErrors).length > 0 ? 'banner banner-warning' : 'banner banner-success'}
+          style={{ marginBottom: '0.25rem' }}
+        >
+          {localMessage}
+        </div>
+      ) : null}
       {visibleFields.map((field) => {
         const resolvedOptions = dedupeSelectOptions([
           ...(field.options ?? []),
           ...(fieldOptionsByName[field.name] ?? [])
         ]);
+        const fieldError = fieldErrors[field.name];
 
         return (
           <div className="field" key={field.name}>
             <label>{field.label}</label>
             {field.type === 'textarea' ? (
-              <textarea value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)} />
+              <textarea
+                value={String(values[field.name] ?? '')}
+                required={field.required}
+                onChange={(event) => {
+                  updateValue(field.name, event.target.value);
+                  if (fieldError) {
+                    setFieldErrors((prev) => {
+                      const next = { ...prev };
+                      delete next[field.name];
+                      return next;
+                    });
+                  }
+                }}
+              />
             ) : field.type === 'select' ? (
-              <select value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)}>
+              <select
+                value={String(values[field.name] ?? '')}
+                required={field.required}
+                onChange={(event) => {
+                  updateValue(field.name, event.target.value);
+                  if (fieldError) {
+                    setFieldErrors((prev) => {
+                      const next = { ...prev };
+                      delete next[field.name];
+                      return next;
+                    });
+                  }
+                }}
+              >
                 {!field.required && <option value="">-- chọn --</option>}
                 {resolvedOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -450,7 +556,16 @@ function ActionForm({
                   list={`autocomplete-${action.key}-${field.name}`}
                   value={String(values[field.name] ?? '')}
                   required={field.required}
-                  onChange={(e) => updateValue(field.name, e.target.value)}
+                  onChange={(event) => {
+                    updateValue(field.name, event.target.value);
+                    if (fieldError) {
+                      setFieldErrors((prev) => {
+                        const next = { ...prev };
+                        delete next[field.name];
+                        return next;
+                      });
+                    }
+                  }}
                 />
                 <datalist id={`autocomplete-${action.key}-${field.name}`}>
                   {resolvedOptions.map((option) => (
@@ -462,12 +577,42 @@ function ActionForm({
               </>
             ) : field.type === 'checkbox' ? (
               <div className="checkbox-wrap">
-                <input type="checkbox" checked={Boolean(values[field.name])} onChange={(e) => updateValue(field.name, e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={Boolean(values[field.name])}
+                  onChange={(event) => {
+                    updateValue(field.name, event.target.checked);
+                    if (fieldError) {
+                      setFieldErrors((prev) => {
+                        const next = { ...prev };
+                        delete next[field.name];
+                        return next;
+                      });
+                    }
+                  }}
+                />
                 <span>Bật</span>
               </div>
             ) : (
-              <input type={field.type ?? 'text'} value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)} />
+              <input
+                type={field.type ?? 'text'}
+                value={String(values[field.name] ?? '')}
+                required={field.required}
+                onChange={(event) => {
+                  updateValue(field.name, event.target.value);
+                  if (fieldError) {
+                    setFieldErrors((prev) => {
+                      const next = { ...prev };
+                      delete next[field.name];
+                      return next;
+                    });
+                  }
+                }}
+              />
             )}
+            {fieldError ? (
+              <p style={{ margin: '0.24rem 0 0', fontSize: '0.74rem', color: 'var(--danger)' }}>{fieldError}</p>
+            ) : null}
           </div>
         );
       })}
@@ -477,10 +622,21 @@ function ActionForm({
         </p>
       )}
       <div className="action-buttons" style={{ marginTop: '2rem' }}>
-        <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={isSubmitting}>
-          {isSubmitting ? 'Đang xử lý...' : 'Xác nhận'}
+        <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={isBusy}>
+          {isBusy ? 'Đang xử lý...' : submitLabel ?? action.submitLabel ?? 'Xác nhận'}
         </button>
-        <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel} disabled={isSubmitting}>
+        {showSaveAndAddAnother ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ flex: 1 }}
+            onClick={() => void submitInternal('submit-add-another')}
+            disabled={isBusy}
+          >
+            Lưu & thêm mới
+          </button>
+        ) : null}
+        <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel} disabled={isBusy}>
           Hủy
         </button>
       </div>
@@ -489,6 +645,7 @@ function ActionForm({
 }
 
 function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKey: string }) {
+  const searchParams = useSearchParams();
   const { canAction } = useAccessPolicy();
   const tablePageSize = 25;
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -515,6 +672,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   const [isHydratingOptions, setIsHydratingOptions] = useState(false);
   const [optionLoadWarnings, setOptionLoadWarnings] = useState<string[]>([]);
   const featureFilters = feature.filters ?? [];
+  const searchParamsKey = searchParams.toString();
   const activeFilterCount = useMemo(
     () => countActiveFilters(featureFilters, filterValues, search),
     [featureFilters, filterValues, search]
@@ -614,6 +772,26 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
       return null;
     });
   }, [feature.key]);
+
+  useEffect(() => {
+    const nextSearch = searchParams.get('q') ?? '';
+    const nextFilterValues = createDefaultFilterValues(featureFilters);
+    for (const filter of featureFilters) {
+      const queryKey = filter.queryParam ?? filter.key;
+      const raw = searchParams.get(queryKey);
+      if (raw === null || raw.trim() === '') {
+        continue;
+      }
+      if (filter.type === 'checkbox') {
+        const normalized = raw.trim().toLowerCase();
+        nextFilterValues[filter.key] = normalized === 'true' || normalized === '1' || normalized === 'yes';
+        continue;
+      }
+      nextFilterValues[filter.key] = raw;
+    }
+    setSearch(nextSearch);
+    setFilterValues(nextFilterValues);
+  }, [feature.key, featureFilters, searchParams, searchParamsKey]);
 
   useEffect(() => {
     let active = true;
@@ -724,7 +902,11 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
     };
   }, [pendingBulkAction]);
 
-  const handleAction = async (action: FeatureAction, formValues: FormValues) => {
+  const handleAction = async (
+    action: FeatureAction,
+    formValues: FormValues,
+    options: { keepDialogOpen?: boolean } = {}
+  ) => {
     setErrorMessage(null);
     setResultMessage(null);
     try {
@@ -735,11 +917,15 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
         body: (action.method === 'GET' || action.method === 'DELETE') ? undefined : resolved.body
       });
       setResultMessage(`${action.label} thành công.`);
-      setActiveAction(null);
+      if (!options.keepDialogOpen) {
+        setActiveAction(null);
+      }
       setSelectedRow(null);
-      loadData();
+      await loadData();
+      return true;
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : 'Thao tác thất bại');
+      return false;
     }
   };
 
@@ -1094,7 +1280,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
           <>
             {createAction && (
               <button className="btn btn-primary" onClick={() => setActiveAction(createAction)}>
-                <Plus size={16} /> {createAction.label}
+                <Plus size={16} /> Thêm dữ liệu
               </button>
             )}
             {!createAction && createActionCandidate && (
@@ -1132,7 +1318,13 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
           setTableSortDir(sortDir);
         }}
         editableKeys={updateAction ? updateAction.fields.map(f => f.name) : []}
-        onSaveRow={updateAction ? (id, values) => handleAction(updateAction, { ...values, id } as FormValues) : undefined}
+        onSaveRow={
+          updateAction
+            ? async (id, values) => {
+                await handleAction(updateAction, { ...values, id } as FormValues);
+              }
+            : undefined
+        }
         enableRowSelection
         selectedRowIds={selectedRowIds}
         onSelectedRowIdsChange={setSelectedRowIds}
@@ -1216,21 +1408,47 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
         )}
       </SidePanel>
 
-      {/* Action Form SidePanel */}
+      {/* Create Action Dialog (standardized Add Data flow) */}
+      <CreateEntityDialog
+        open={Boolean(activeAction && createAction && activeAction.key === createAction.key)}
+        onClose={() => setActiveAction(null)}
+        entityLabel={feature.title}
+        helperText="Mọi thao tác thêm mới đều được chuẩn hóa qua dialog này. Với biểu mẫu dài, hệ thống tự chuyển sang chế độ wizard toàn màn hình."
+        fieldCount={activeAction?.fields.length ?? 0}
+      >
+        {activeAction && createAction && activeAction.key === createAction.key ? (
+          <ActionForm
+            action={activeAction}
+            initialValues={createDefaultFormValues(activeAction)}
+            fieldOptionsByName={actionFieldOptionMap[activeAction.key]}
+            onCancel={() => setActiveAction(null)}
+            onSubmit={(values) => handleAction(activeAction, values)}
+            onSubmitAndAddAnother={(values) =>
+              handleAction(activeAction, values, {
+                keepDialogOpen: true
+              })
+            }
+            submitLabel="Lưu dữ liệu"
+            showSaveAndAddAnother
+          />
+        ) : null}
+      </CreateEntityDialog>
+
+      {/* Non-create actions keep side panel for contextual editing */}
       <SidePanel
-        isOpen={!!activeAction}
+        isOpen={Boolean(activeAction && (!createAction || activeAction.key !== createAction.key))}
         onClose={() => setActiveAction(null)}
         title={activeAction?.label ?? 'Thao tác'}
       >
-        {activeAction && (
-          <ActionForm 
-            action={activeAction} 
-            initialValues={selectedRow ? { ...createDefaultFormValues(activeAction), ...selectedRow } as FormValues : undefined}
+        {activeAction && (!createAction || activeAction.key !== createAction.key) ? (
+          <ActionForm
+            action={activeAction}
+            initialValues={selectedRow ? ({ ...createDefaultFormValues(activeAction), ...selectedRow } as FormValues) : undefined}
             fieldOptionsByName={actionFieldOptionMap[activeAction.key]}
             onCancel={() => setActiveAction(null)}
-            onSubmit={(vals) => handleAction(activeAction, vals)}
+            onSubmit={(values) => handleAction(activeAction, values)}
           />
-        )}
+        ) : null}
       </SidePanel>
     </div>
   );

@@ -24,7 +24,7 @@ type UserRoleContextValue = {
 };
 
 const STORAGE_KEY = 'erp_web_role';
-const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'true').trim().toLowerCase() === 'true';
 
 const UserRoleContext = createContext<UserRoleContextValue | undefined>(undefined);
 

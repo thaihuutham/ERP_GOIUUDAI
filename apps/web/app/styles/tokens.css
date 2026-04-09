@@ -21,6 +21,9 @@
   --primary-hover:  #115f38;
   --primary-soft:   #e8f4ed;
   --primary-strong: #0f5c34;
+  --topbar-bg:      #f8faf8;
+  --sidebar-bg:     #f8faf8;
+  --sidebar-text:   #3c4a41;
 
   /* ── Neutral Palette ─────────────────────────────── */
   --gray-25:  #fcfcfd;
@@ -67,10 +70,12 @@
   --bg-active:      var(--primary-soft);
 
   --surface:        #ffffff;
+  --surface-muted:  #f2f7f3;
   --surface-border: #e3e8e3;
   --surface-hover:  #f2f7f3;
 
   /* ── Borders ─────────────────────────────────────── */
+  --border:         #dfe5e0;
   --line:           #dfe5e0;
   --border-default: #e3e8e3;
   --border-light:   #edf2ee;
@@ -141,9 +146,23 @@
   /* ── Chart Colors ────────────────────────────────── */
   --chart-grid:   var(--gray-100);
   --chart-text:   var(--gray-500);
+  --chart1:       #10b981;
+  --chart2:       #3b82f6;
+  --chart3:       #f59e0b;
+  --chart4:       #ef4444;
+  --chart5:       #8b5cf6;
+  --chart6:       #14b8a6;
   --chart-green:  #10b981;
   --chart-blue:   #3b82f6;
   --chart-amber:  #f59e0b;
   --chart-red:    #ef4444;
   --chart-violet: #8b5cf6;
+
+  /* ── Runtime UX Density ─────────────────────────── */
+  --font-scale:         1;
+  --density-multiplier: 1;
+}
+
+:root[data-density='compact'] {
+  --density-multiplier: 0.88;
 }

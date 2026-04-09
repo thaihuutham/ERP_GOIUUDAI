@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/auth/auth.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -6,11 +6,16 @@ import {
   CreateReportDefinitionDto,
   GenerateReportRunDto,
   ModuleDataQueryDto,
+  ReportsOverviewQueryDto,
   ReportsListQueryDto,
   RunDueSchedulesDto,
   UpdateReportDefinitionDto
 } from './dto/reports.dto';
 import { ReportsService } from './reports.service';
+
+type HeaderWritableResponse = {
+  setHeader: (name: string, value: string) => void;
+};
 
 @Controller('reports')
 export class ReportsController {
@@ -18,8 +23,8 @@ export class ReportsController {
 
   @Get('overview')
   @Roles(UserRole.USER, UserRole.ADMIN)
-  overview() {
-    return this.reportsService.overview();
+  overview(@Query() query: ReportsOverviewQueryDto) {
+    return this.reportsService.overview(query);
   }
 
   @Get('module')
@@ -44,6 +49,19 @@ export class ReportsController {
   @Roles(UserRole.USER, UserRole.ADMIN)
   runDueSchedules(@Body() body: RunDueSchedulesDto) {
     return this.reportsService.runDueSchedules(body);
+  }
+
+  @Get('runs/:runId/download')
+  @Roles(UserRole.USER, UserRole.ADMIN)
+  async downloadRun(
+    @Param('runId') runId: string,
+    @Res({ passthrough: true }) response: HeaderWritableResponse
+  ) {
+    const file = await this.reportsService.downloadRun(runId);
+    response.setHeader('Content-Type', file.mimeType);
+    response.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+    response.setHeader('Content-Length', String(file.size));
+    return new StreamableFile(file.stream);
   }
 
   @Get(':id/runs')

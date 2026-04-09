@@ -3824,7 +3824,7 @@ export class HrService {
   }
 
   private isGoalAuthEnabled() {
-    const env = String(this.config?.get<string>('AUTH_ENABLED', 'false') ?? 'false')
+    const env = String(this.config?.get<string>('AUTH_ENABLED', 'true') ?? 'true')
       .trim()
       .toLowerCase();
     return env === 'true';

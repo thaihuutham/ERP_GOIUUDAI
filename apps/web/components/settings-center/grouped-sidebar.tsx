@@ -18,6 +18,8 @@ type GroupedSidebarProps<TDomain extends string> = {
   selectedDomain: TDomain;
   onSelectDomain: (domain: TDomain) => void;
   domainStates?: DomainStateLite<TDomain>[];
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
 };
 
 function getDomainState<TDomain extends string>(
@@ -32,19 +34,40 @@ export function GroupedSidebar<TDomain extends string>({
   labels,
   selectedDomain,
   onSelectDomain,
-  domainStates
+  domainStates,
+  searchValue = '',
+  onSearchChange
 }: GroupedSidebarProps<TDomain>) {
+  const normalizedSearch = searchValue.trim().toLowerCase();
+
   return (
     <aside className="settings-sidebar-panel">
       <h3 className="settings-sidebar-title">Miền cấu hình</h3>
+      <input
+        type="search"
+        value={searchValue}
+        onChange={(event) => onSearchChange?.(event.target.value)}
+        placeholder="Tìm trang cài đặt..."
+        style={{ width: '100%', marginBottom: '0.6rem' }}
+      />
       <div className="settings-sidebar-groups">
-        {groups.map((group) => (
-          <section key={group.id} className="settings-sidebar-group">
-            <p className="settings-sidebar-group-label">
-              {group.label}
-            </p>
-            <div className="settings-sidebar-domain-list">
-              {group.domains.map((domain) => {
+        {groups.map((group) => {
+          const filteredDomains = group.domains.filter((domain) => {
+            if (!normalizedSearch) {
+              return true;
+            }
+            return labels[domain].toLowerCase().includes(normalizedSearch);
+          });
+          if (filteredDomains.length === 0) {
+            return null;
+          }
+          return (
+            <section key={group.id} className="settings-sidebar-group">
+              <p className="settings-sidebar-group-label">
+                {group.label}
+              </p>
+              <div className="settings-sidebar-domain-list">
+                {filteredDomains.map((domain) => {
                 const state = getDomainState(domainStates, domain);
                 return (
                   <button
@@ -64,10 +87,11 @@ export function GroupedSidebar<TDomain extends string>({
                     </span>
                   </button>
                 );
-              })}
-            </div>
-          </section>
-        ))}
+                })}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </aside>
   );

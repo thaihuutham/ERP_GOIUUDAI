@@ -59,7 +59,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - Từ ADR-026: integrations key có thể nhập trực tiếp trong Settings Center; env secret đóng vai trò fallback/runtime bootstrap.
 
 ### Mặc định hiện tại (MVP single-tenant, có thể override bằng GitHub vars)
-- `AUTH_ENABLED=false`
+- `AUTH_ENABLED=true`
 - `DEFAULT_TENANT_ID=GOIUUDAI`
 - `TENANCY_MODE=single`
 
@@ -74,11 +74,13 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `BHTOT_API_KEY` (optional fallback)
   - `MEILI_MASTER_KEY` (optional)
 - Variables:
-  - `AUTH_ENABLED` (mặc định workflow: `false`)
-  - `NEXT_PUBLIC_AUTH_ENABLED` (mặc định workflow: `false`)
+  - `AUTH_ENABLED` (mặc định workflow: `true`)
+  - `DEV_AUTH_BYPASS_ENABLED` (mặc định workflow: `false`, chỉ cho môi trường non-production)
+  - `NEXT_PUBLIC_AUTH_ENABLED` (mặc định workflow: `true`)
+  - `NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED` (mặc định workflow: `false`, phải đi cùng `DEV_AUTH_BYPASS_ENABLED=true`)
   - `DEFAULT_TENANT_ID` (mặc định workflow: `GOIUUDAI`)
   - `TENANCY_MODE` (mặc định workflow: `single`)
-  - `PERMISSION_ENGINE_ENABLED` (mặc định workflow: `false`)
+  - `PERMISSION_ENGINE_ENABLED` (mặc định workflow: `true`)
   - `IAM_V2_ENABLED` (optional; để trống nếu muốn lấy hoàn toàn từ `settings.access_security.iamV2.enabled`)
   - `POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED` (mặc định workflow: `false`)
   - `POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES` (mặc định workflow: `sales,finance,crm`)
@@ -256,7 +258,7 @@ scripts/deploy/smoke-assistant-access-boundary.sh
 ```
 
 ## Rollout IAM/Permission đề xuất
-1. `AUTH_ENABLED=false`, `NEXT_PUBLIC_AUTH_ENABLED=false`, `PERMISSION_ENGINE_ENABLED=false` (safe default).
+1. `AUTH_ENABLED=true`, `NEXT_PUBLIC_AUTH_ENABLED=true`, `PERMISSION_ENGINE_ENABLED=true` (secure default).
 2. Seed account nhân viên + vị trí + rule quyền trong Settings Center.
 3. UAT với:
    - `AUTH_ENABLED=true`

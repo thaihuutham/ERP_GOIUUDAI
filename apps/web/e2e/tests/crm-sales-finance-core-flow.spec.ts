@@ -627,11 +627,11 @@ test('runs CRM -> Sales -> Finance core flow via Operations Boards', async ({ pa
   await mockCoreErpApis(page, state);
 
   await page.goto('/modules/crm');
-  await page.getByRole('button', { name: 'Khách hàng' }).click();
+  await page.getByRole('button', { name: 'Thêm dữ liệu' }).click();
   await page.getByPlaceholder('Nguyễn Văn A').fill('Khách Lẻ A');
   await page.getByPlaceholder('09xxxxxxxx').fill('0912345678');
   await page.getByPlaceholder('customer@example.com').fill('khach-a@example.com');
-  await page.locator('.side-panel-container').getByRole('button', { name: /^Tạo khách hàng$/ }).click();
+  await page.locator('#crm-create-customer-form').getByRole('button', { name: /^Lưu$/ }).click();
   await expect(page.getByText('Đã tạo khách hàng thành công.')).toBeVisible();
   expect(state.customers).toHaveLength(1);
 

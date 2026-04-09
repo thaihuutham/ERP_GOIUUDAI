@@ -25,7 +25,7 @@ Dự án ERP được rebuild theo kiến trúc mới để giữ toàn bộ fea
 
 ## Local quick start
 ```bash
-cp config/.env.example config/.env
+cp .env.example .env
 npm install
 npm run prisma:generate
 npm run dev:api
@@ -41,7 +41,10 @@ npm run start:prod --workspace @erp/api
 - `start:prod` chạy trực tiếp `node dist/main.js` (không phụ thuộc `ts-node/esm`).
 
 ## Auth & RBAC (Phase 0)
-- API guard bật/tắt bằng `AUTH_ENABLED` (`true` ở staging/prod).
+- API guard mặc định bật (`AUTH_ENABLED=true`).
+- Dev-only bypass phải bật tường minh bằng cặp cờ:
+  - `DEV_AUTH_BYPASS_ENABLED=true` (API)
+  - `NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=true` (Web)
 - JWT ký HS256 dùng `JWT_SECRET`.
 - Public route hiện tại: `GET /api/v1/health`.
 - Các route nhạy cảm (`settings`, `workflows`, `finance` mutate) đã gắn role check.
@@ -98,3 +101,10 @@ AUDIT_STRICT=true npm run quality:security
 ## Post-deploy smoke
 - Script nhanh cho CRM Conversations: `scripts/deploy/smoke-crm-conversations.sh`
 - Xem chi tiết biến môi trường chạy smoke trong `docs/operations/RUNBOOK.md`.
+
+## Safe release export
+```bash
+npm run release:export:safe
+```
+- Xuất bundle sạch, loại bỏ `.env`, `.git`, `.agent`, `node_modules`, `dist`, `test-results` và cache local.
+- Chi tiết: `docs/deployment/SAFE_RELEASE_EXPORT.md`.

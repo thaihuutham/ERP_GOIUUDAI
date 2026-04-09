@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-09 16:07 +07
+- Time: 2026-04-09 20:32 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-09_1607_codex.md`
+- Session Log: `.agent/sessions/2026-04-09_2032_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,75 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-09 20:32 (e2e contract alignment + full web regression green)
+- User confirmation:
+  - tiếp tục xử lý các phần còn tồn từ batch trước.
+- Đã xử lý:
+  - re-read đầy đủ file bắt buộc trong `AGENTS.md` trước khi sửa code.
+  - cập nhật E2E để khớp contract UI hiện tại:
+    - create action label chuẩn hóa: `Thêm dữ liệu`,
+    - submit action label chuẩn hóa: `Lưu` / `Lưu dữ liệu`,
+    - reports module dùng `Reporting Center` flow thay cho `ModuleWorkbench` expectation cũ,
+    - settings grouped IA dùng labels mới (`General`, `Security & Access`).
+  - cập nhật test advanced-mode theo access policy mới:
+    - settings admin-only => test xác nhận default advanced mode ON cho `ADMIN` + toggle hide/reveal field kỹ thuật.
+  - xử lý flaky timeout ở `access-policy-hardening`:
+    - bỏ bước redirect check lặp không cần thiết,
+    - dùng URL matcher finance tolerant với query suffix.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ❌ (pending migration)
+  - `set -a; source .env; set +a; npm run prisma:migrate:deploy --workspace @erp/api` ✅ (applied `20260409190000_add_report_run_lifecycle_and_output_metadata`)
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test:e2e:web -- --reporter=list apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/domain-modules-wave1.spec.ts apps/web/e2e/tests/settings-center-reports.spec.ts` ✅ (`19 passed`)
+  - `npm run test:e2e:web -- --reporter=list apps/web/e2e/tests/access-policy-hardening.spec.ts` ✅ (`3 passed`)
+  - `npm run test:e2e:web -- --reporter=list` ✅ (`59 passed`)
+- Notes:
+  - không thay đổi business logic runtime; thay đổi tập trung e2e contract + anti-flake.
+  - không cần ADR mới trong batch này.
+
+## Update 2026-04-09 19:40 (security/reporting/search/create-flow hardening + production-safe defaults)
+- User confirmation:
+  - triển khai toàn bộ gói fix production gồm security defaults, reporting/search, modal create-flow, theming/settings IA, packaging hygiene và quality gate.
+- Đã xử lý:
+  - security/auth defaults:
+    - xác nhận mặc định auth/permission ở docker/web/api đều bật (`true`),
+    - giữ guard + env validation để chặn bypass auth ngoài dev.
+  - release hygiene:
+    - giữ cơ chế safe export (`.releaseignore`, `scripts/release/export-safe-bundle.sh`),
+    - `.dockerignore` loại bỏ secrets/artifacts/caches.
+  - dashboard/reporting:
+    - dashboard dùng data thật theo range, không fallback fake trend/data.
+    - reports module chuyển sang `ReportsCenter` chuyên dụng:
+      - nhóm theo domain ERP,
+      - preview + drill-through,
+      - run-now/export + run tracking + download.
+  - global search:
+    - backend thêm federated endpoint `/search/global`,
+    - frontend thêm topbar command search + `Cmd/Ctrl+K`.
+  - create-flow standardization:
+    - thêm family `CreateEntityDialog` / `EntityFormModal`,
+    - apply vào `ModuleWorkbench`, CRM customers, CRM vehicles,
+    - hỗ trợ `Lưu & thêm mới` + validation summary.
+  - appearance/settings:
+    - mở rộng runtime appearance tokens (color/surface/chart/radius/shadow/density/fontScale),
+    - settings center có grouped IA + search + tab appearance.
+  - docs/ADR:
+    - cập nhật PROJECT_OVERVIEW + DESIGN_SYSTEM,
+    - thêm `ADR-064`.
+- Verification:
+  - `npm run prisma:generate` ✅
+  - `npm run lint` ✅
+  - `npm run build` ✅
+  - `npm run test --workspace @erp/api -- test/reports.service.test.ts test/jwt-auth.guard.test.ts` ✅
+  - `npm run test --workspace @erp/api -- test/search.service.test.ts` ✅
+- Notes:
+  - report export thực tế cho JSON/CSV/XLSX; PDF trả validation error rõ ràng.
+  - còn một số board custom ngoài CRM chưa migrate hoàn toàn theo create-dialog standard.
 
 ## Update 2026-04-09 16:07 (reports page loading hardening: API timeout guard)
 - User confirmation:

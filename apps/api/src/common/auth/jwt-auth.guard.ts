@@ -27,6 +27,9 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const runtime = resolveTenantRuntimeConfig();
+    const authEnabled = this.readBooleanConfig('AUTH_ENABLED', true);
+    const devAuthBypassEnabled = this.readBooleanConfig('DEV_AUTH_BYPASS_ENABLED', false);
+    const isProduction = this.readStringConfig('NODE_ENV', 'development').toLowerCase() === 'production';
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass()
@@ -36,10 +39,17 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     }
 
-    const defaultAuthEnabled = runtime.singleTenantMode ? 'false' : 'true';
-    const authEnabled = this.config.get<string>('AUTH_ENABLED', defaultAuthEnabled).toLowerCase() === 'true';
     const request = context.switchToHttp().getRequest<{ headers: Record<string, string | string[] | undefined>; user?: AuthUser; url?: string; originalUrl?: string }>();
     if (!authEnabled) {
+      if (isProduction) {
+        throw new UnauthorizedException('AUTH_ENABLED=false is not allowed in production.');
+      }
+      if (!devAuthBypassEnabled) {
+        throw new UnauthorizedException(
+          'AUTH_ENABLED=false requires DEV_AUTH_BYPASS_ENABLED=true for explicit dev-only bypass.'
+        );
+      }
+
       const authUser = this.resolveDevAuthUser(request.headers, runtime.singleTenantMode ? runtime.tenantId : undefined);
       request.user = authUser;
       this.cls.set(AUTH_USER_CONTEXT_KEY, authUser);
@@ -149,6 +159,30 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  private readStringConfig(key: string, fallback = '') {
+    const value = this.config.get<string>(key);
+    if (value === undefined || value === null) {
+      return fallback;
+    }
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : fallback;
+  }
+
+  private readBooleanConfig(key: string, fallback: boolean) {
+    const raw = this.readStringConfig(key, '');
+    if (!raw) {
+      return fallback;
+    }
+    const normalized = raw.toLowerCase();
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes') {
+      return true;
+    }
+    if (normalized === '0' || normalized === 'false' || normalized === 'no') {
+      return false;
+    }
+    return fallback;
   }
 
   private resolveDevAuthUser(

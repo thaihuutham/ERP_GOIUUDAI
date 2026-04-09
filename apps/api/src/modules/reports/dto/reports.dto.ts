@@ -16,6 +16,23 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 export const REPORT_OUTPUT_FORMATS = ['JSON', 'CSV', 'XLSX', 'PDF'] as const;
 export type ReportOutputFormat = (typeof REPORT_OUTPUT_FORMATS)[number];
+export const REPORT_OVERVIEW_RANGES = ['YESTERDAY', 'THIS_WEEK', 'LAST_WEEK', 'LAST_MONTH'] as const;
+export type ReportOverviewRange = (typeof REPORT_OVERVIEW_RANGES)[number];
+
+export class ReportsOverviewQueryDto {
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
+  @IsIn(REPORT_OVERVIEW_RANGES)
+  range?: ReportOverviewRange;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
 
 export class ReportsListQueryDto extends PaginationQueryDto {
   @IsOptional()
@@ -32,6 +49,19 @@ export class ModuleDataQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(80)
   name!: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
+  @IsIn(REPORT_OVERVIEW_RANGES)
+  range?: ReportOverviewRange;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }
 
 export class CreateReportDefinitionDto {
@@ -136,6 +166,19 @@ export class GenerateReportRunDto {
   @IsOptional()
   @IsObject()
   filters?: Record<string, unknown>;
+
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
+  @IsIn(REPORT_OVERVIEW_RANGES)
+  range?: ReportOverviewRange;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }
 
 export class RunDueSchedulesDto {

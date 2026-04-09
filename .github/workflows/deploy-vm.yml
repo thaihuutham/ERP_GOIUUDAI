@@ -30,9 +30,11 @@ jobs:
         env:
           DEPLOY_WORKDIR: /opt/erp-retail
           DEPLOY_ENV_FILE: /opt/erp-retail/.deploy.env
-          AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'false' }}
-          NEXT_PUBLIC_AUTH_ENABLED: ${{ vars.NEXT_PUBLIC_AUTH_ENABLED || 'false' }}
-          PERMISSION_ENGINE_ENABLED: ${{ vars.PERMISSION_ENGINE_ENABLED || 'false' }}
+          AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'true' }}
+          DEV_AUTH_BYPASS_ENABLED: ${{ vars.DEV_AUTH_BYPASS_ENABLED || 'false' }}
+          NEXT_PUBLIC_AUTH_ENABLED: ${{ vars.NEXT_PUBLIC_AUTH_ENABLED || 'true' }}
+          NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED: ${{ vars.NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED || 'false' }}
+          PERMISSION_ENGINE_ENABLED: ${{ vars.PERMISSION_ENGINE_ENABLED || 'true' }}
           IAM_V2_ENABLED: ${{ vars.IAM_V2_ENABLED }}
           DEFAULT_TENANT_ID: ${{ vars.DEFAULT_TENANT_ID || 'GOIUUDAI' }}
           TENANCY_MODE: ${{ vars.TENANCY_MODE || 'single' }}

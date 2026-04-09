@@ -64,6 +64,26 @@ function createPrismaMock() {
   };
 }
 
+function createAuthEnabledConfigMock() {
+  return {
+    get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback))
+  };
+}
+
+function createStaffClsMock(employeeId = 'emp_1') {
+  return {
+    get: vi.fn((key?: string) =>
+      key === 'authUser'
+        ? {
+            role: 'USER',
+            employeeId,
+            userId: `user_${employeeId}`
+          }
+        : undefined
+    )
+  };
+}
+
 describe('HrRegulationService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -76,7 +96,11 @@ describe('HrRegulationService', () => {
 
   it('computes default dueAt by appendix rule for PL01 at end of workday ICT', async () => {
     const prisma = createPrismaMock();
-    const service = new HrRegulationService(prisma as any);
+    const service = new HrRegulationService(
+      prisma as any,
+      createAuthEnabledConfigMock() as any,
+      createStaffClsMock() as any
+    );
 
     const workDate = '2026-04-03';
     let createdSubmission: Record<string, unknown> | null = null;
@@ -122,7 +146,11 @@ describe('HrRegulationService', () => {
 
   it('accepts appendix payload alias "payload" without breaking legacy payloadJson', async () => {
     const prisma = createPrismaMock();
-    const service = new HrRegulationService(prisma as any);
+    const service = new HrRegulationService(
+      prisma as any,
+      createAuthEnabledConfigMock() as any,
+      createStaffClsMock() as any
+    );
 
     prisma.client.employee.findFirst.mockResolvedValue({
       id: 'emp_1',
@@ -169,7 +197,11 @@ describe('HrRegulationService', () => {
 
   it('falls back to HCNS manager as approver when employee has no manager', async () => {
     const prisma = createPrismaMock();
-    const service = new HrRegulationService(prisma as any);
+    const service = new HrRegulationService(
+      prisma as any,
+      createAuthEnabledConfigMock() as any,
+      createStaffClsMock() as any
+    );
 
     const submission = {
       id: 'sub_pl04',
@@ -245,7 +277,11 @@ describe('HrRegulationService', () => {
 
   it('applies T+1 revision payload only after manager approval', async () => {
     const prisma = createPrismaMock();
-    const service = new HrRegulationService(prisma as any);
+    const service = new HrRegulationService(
+      prisma as any,
+      createAuthEnabledConfigMock() as any,
+      createStaffClsMock() as any
+    );
     vi.setSystemTime(new Date('2026-04-03T10:00:00+07:00'));
 
     const submission = {
@@ -490,7 +526,11 @@ describe('HrRegulationService', () => {
 
   it('accepts PIP aliases goals/baseline while keeping compatibility', async () => {
     const prisma = createPrismaMock();
-    const service = new HrRegulationService(prisma as any);
+    const service = new HrRegulationService(
+      prisma as any,
+      createAuthEnabledConfigMock() as any,
+      createStaffClsMock() as any
+    );
 
     prisma.client.employee.findFirst.mockResolvedValue({
       id: 'emp_1',

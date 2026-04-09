@@ -2,7 +2,7 @@
 
 > Tài liệu thiết kế gốc cho toàn bộ frontend ERP.
 > Mọi session agent và developer phải tuân theo spec này khi thay đổi UI.
-> Last updated: 2026-04-03
+> Last updated: 2026-04-09
 
 ---
 
@@ -120,6 +120,35 @@ Settings > Giao diện > Màu chủ đạo
 ```
 
 Hệ thống đã có sẵn cơ chế này qua `runtimePayload?.branding?.primaryColor`.
+
+### 2.3. Runtime Appearance Tokens (Admin Configurable)
+
+Từ 2026-04-09, runtime theming không chỉ còn `logoUrl + primaryColor`.
+Settings Center đã hỗ trợ đầy đủ token vận hành:
+
+- Brand/core:
+  - `primary`, `primaryHover`, `primarySoft`
+- Shell:
+  - `topbarBg`, `sidebarBg`, `sidebarText`
+- Surface:
+  - `surface`, `surfaceMuted`, `border`
+- Semantic:
+  - `success`, `warning`, `danger`, `info`
+- Charts:
+  - `chart1` … `chart6`
+- Shape/shadow:
+  - `radiusSm`, `radiusMd`, `radiusLg`
+  - `shadowSm`, `shadowMd`
+- Density/typography:
+  - `density` (`comfortable` / `compact`)
+  - `fontScale`
+
+Nguồn dữ liệu:
+- Settings domain: `org_profile.branding.appearance`
+- Runtime API: `GET /settings/runtime`
+- Runtime apply tại web shell qua CSS variables.
+
+Preset mặc định vẫn giữ tone xanh hiện tại.
 
 ### 2.3. Module Accent Colors
 
@@ -317,6 +346,35 @@ Khi bảng hoặc section không có dữ liệu:
 - Animation: shimmer pulse từ trái sang phải
 
 ### 5.9. Toast / Notification
+
+### 5.10. Create Flow Standard
+
+Pattern bắt buộc cho thao tác tạo dữ liệu mới:
+
+- CTA chuẩn: **`Thêm dữ liệu`**
+- Component family:
+  - `CreateEntityDialog`
+  - `EntityFormModal`
+- Quy tắc:
+  - form ngắn: modal chuẩn
+  - form dài: fullscreen modal (`fieldCount >= 10`)
+  - luôn hỗ trợ:
+    - validation summary,
+    - inline validation,
+    - success feedback,
+    - `Lưu & thêm mới`.
+
+Không dùng trang create standalone mới cho luồng nhập liệu chuẩn ERP, trừ khi có wizard domain đặc biệt đã được duyệt ADR.
+
+### 5.11. Global Search & Reporting UX
+
+- Global Search:
+  - ô search cố định trên topbar tất cả trang,
+  - mở nhanh bằng `Cmd/Ctrl + K`,
+  - kết quả nhóm theo entity, có icon + type label + deep link.
+- Reporting Center:
+  - phân nhóm báo cáo theo domain ERP (Executive/CRM-Sales/Finance/Inventory-SCM/HR/Projects/Workflow-Audit),
+  - hỗ trợ preview, export, run status tracking và download output.
 
 **Position:** Top-right, stack vertical
 **Types:** success (green), error (red), warning (yellow), info (blue)

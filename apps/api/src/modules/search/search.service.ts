@@ -4,7 +4,11 @@ import { CustomerCareStatus, GenericStatus, Prisma } from '@prisma/client';
 import { MeiliSearch } from 'meilisearch';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { GlobalSearchQueryDto } from './dto/global-search.dto';
 import {
+  FederatedSearchEntity,
+  FederatedSearchResponse,
+  FederatedSearchResultGroup,
   SEARCH_ENTITIES,
   SearchCustomersFilters,
   SearchEntity,
@@ -105,6 +109,21 @@ const INDEX_SETTINGS: Record<SearchEntity, { searchable: string[]; filterable: s
 };
 
 const REINDEX_BATCH_SIZE = 500;
+const FEDERATED_SEARCH_MIN_QUERY_LENGTH = 2;
+const FEDERATED_DEFAULT_LIMIT = 6;
+const FEDERATED_MAX_LIMIT = 20;
+
+const FEDERATED_GROUP_META: Record<FederatedSearchEntity, { label: string; icon: string; modulePath: string }> = {
+  customers: { label: 'Khách hàng', icon: 'users', modulePath: '/modules/crm' },
+  orders: { label: 'Đơn hàng', icon: 'shopping-cart', modulePath: '/modules/sales' },
+  invoices: { label: 'Hóa đơn', icon: 'file-text', modulePath: '/modules/finance' },
+  products: { label: 'Sản phẩm', icon: 'package', modulePath: '/modules/catalog' },
+  employees: { label: 'Nhân sự', icon: 'user-check', modulePath: '/modules/hr' },
+  projects: { label: 'Dự án', icon: 'folder-kanban', modulePath: '/modules/projects' },
+  purchaseOrders: { label: 'Mua hàng (PO)', icon: 'truck', modulePath: '/modules/scm' },
+  workflowTasks: { label: 'Workflow / Tasks', icon: 'git-branch', modulePath: '/modules/workflows' },
+  reports: { label: 'Báo cáo', icon: 'bar-chart-3', modulePath: '/modules/reports' }
+};
 
 @Injectable()
 export class SearchService {
@@ -131,6 +150,397 @@ export class SearchService {
     @Inject(ConfigService) private readonly config: ConfigService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
   ) {}
+
+  async globalSearch(query: GlobalSearchQueryDto): Promise<FederatedSearchResponse> {
+    const keyword = String(query.q ?? '').trim();
+    if (keyword.length < FEDERATED_SEARCH_MIN_QUERY_LENGTH) {
+      throw new BadRequestException(
+        `Từ khóa tìm kiếm phải có ít nhất ${FEDERATED_SEARCH_MIN_QUERY_LENGTH} ký tự.`
+      );
+    }
+
+    const limitPerGroup = this.normalizeFederatedLimit(query.limit);
+    const tenantId = this.prisma.getTenantId();
+    const contains = { contains: keyword, mode: 'insensitive' as const };
+
+    const [
+      customers,
+      orders,
+      invoices,
+      products,
+      employees,
+      projects,
+      purchaseOrders,
+      workflowInstances,
+      projectTasks,
+      reports
+    ] = await Promise.all([
+      this.prisma.client.customer.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [
+            { fullName: contains },
+            { email: contains },
+            { phone: contains },
+            { code: contains }
+          ]
+        },
+        select: {
+          id: true,
+          code: true,
+          fullName: true,
+          email: true,
+          phone: true,
+          status: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.order.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [{ orderNo: contains }, { customerName: contains }, { id: contains }]
+        },
+        select: {
+          id: true,
+          orderNo: true,
+          customerName: true,
+          status: true,
+          totalAmount: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.invoice.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [{ invoiceNo: contains }, { partnerName: contains }, { id: contains }]
+        },
+        select: {
+          id: true,
+          invoiceNo: true,
+          partnerName: true,
+          status: true,
+          totalAmount: true,
+          dueAt: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.product.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [{ name: contains }, { sku: contains }, { categoryPath: contains }]
+        },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          categoryPath: true,
+          status: true,
+          unitPrice: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.employee.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [
+            { fullName: contains },
+            { email: contains },
+            { phone: contains },
+            { code: contains },
+            { department: contains },
+            { position: contains }
+          ]
+        },
+        select: {
+          id: true,
+          code: true,
+          fullName: true,
+          email: true,
+          department: true,
+          position: true,
+          status: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.project.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [{ code: contains }, { name: contains }, { description: contains }]
+        },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.purchaseOrder.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [
+            { poNo: contains },
+            { relatedSalesOrderNo: contains },
+            { notes: contains },
+            { vendor: { is: { name: contains } } }
+          ]
+        },
+        select: {
+          id: true,
+          poNo: true,
+          relatedSalesOrderNo: true,
+          lifecycleStatus: true,
+          status: true,
+          totalAmount: true,
+          updatedAt: true,
+          vendor: {
+            select: {
+              name: true
+            }
+          }
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.workflowInstance.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [
+            { targetType: contains },
+            { targetId: contains },
+            { currentStep: contains }
+          ]
+        },
+        select: {
+          id: true,
+          targetType: true,
+          targetId: true,
+          currentStep: true,
+          status: true,
+          updatedAt: true,
+          definition: {
+            select: {
+              name: true
+            }
+          }
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.projectTask.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [{ title: contains }, { assignedTo: contains }]
+        },
+        select: {
+          id: true,
+          title: true,
+          assignedTo: true,
+          status: true,
+          updatedAt: true,
+          project: {
+            select: {
+              code: true,
+              name: true
+            }
+          }
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      }),
+      this.prisma.client.report.findMany({
+        where: {
+          tenant_Id: tenantId,
+          OR: [{ name: contains }, { reportType: contains }, { moduleName: contains }, { templateCode: contains }]
+        },
+        select: {
+          id: true,
+          name: true,
+          reportType: true,
+          moduleName: true,
+          outputFormat: true,
+          status: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      })
+    ]);
+
+    const workflowTaskItems = [
+      ...workflowInstances.map((item) => ({
+        id: item.id,
+        title: item.definition?.name
+          ? `${item.definition.name} • ${item.targetId || item.id}`
+          : `${item.targetType} • ${item.targetId || item.id}`,
+        snippet: [
+          item.targetType ? `Loại: ${item.targetType}` : '',
+          item.currentStep ? `Bước: ${item.currentStep}` : ''
+        ]
+          .filter(Boolean)
+          .join(' • '),
+        status: item.status,
+        meta: this.relativeTimeLabel(item.updatedAt),
+        target: this.buildModuleTarget('workflowTasks', item.targetId || item.id),
+        sortTime: item.updatedAt.getTime()
+      })),
+      ...projectTasks.map((item) => ({
+        id: item.id,
+        title: item.project?.code
+          ? `[${item.project.code}] ${item.title}`
+          : item.title,
+        snippet: [
+          item.project?.name ? `Dự án: ${item.project.name}` : '',
+          item.assignedTo ? `Phụ trách: ${item.assignedTo}` : ''
+        ]
+          .filter(Boolean)
+          .join(' • '),
+        status: item.status,
+        meta: this.relativeTimeLabel(item.updatedAt),
+        target: this.buildModuleTarget('workflowTasks', item.title),
+        sortTime: item.updatedAt.getTime()
+      }))
+    ]
+      .sort((left, right) => right.sortTime - left.sortTime)
+      .slice(0, limitPerGroup)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        snippet: item.snippet,
+        status: item.status,
+        meta: item.meta,
+        target: item.target
+      }));
+
+    const groups: FederatedSearchResultGroup[] = [
+      this.buildFederatedGroup(
+        'customers',
+        customers.map((item) => ({
+          id: item.id,
+          title: item.code ? `${item.fullName} (${item.code})` : item.fullName,
+          snippet: [item.email, item.phone].filter(Boolean).join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('customers', item.fullName)
+        }))
+      ),
+      this.buildFederatedGroup(
+        'orders',
+        orders.map((item) => ({
+          id: item.id,
+          title: item.orderNo ? `Đơn ${item.orderNo}` : `Đơn ${item.id}`,
+          snippet: [item.customerName, this.currencyLabel(item.totalAmount)].filter(Boolean).join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('orders', item.orderNo || item.id)
+        }))
+      ),
+      this.buildFederatedGroup(
+        'invoices',
+        invoices.map((item) => ({
+          id: item.id,
+          title: item.invoiceNo ? `Hóa đơn ${item.invoiceNo}` : `Hóa đơn ${item.id}`,
+          snippet: [
+            item.partnerName,
+            this.currencyLabel(item.totalAmount),
+            item.dueAt ? `Hạn: ${item.dueAt.toLocaleDateString('vi-VN')}` : ''
+          ]
+            .filter(Boolean)
+            .join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('invoices', item.invoiceNo || item.id)
+        }))
+      ),
+      this.buildFederatedGroup(
+        'products',
+        products.map((item) => ({
+          id: item.id,
+          title: item.sku ? `${item.name} (${item.sku})` : item.name,
+          snippet: [item.categoryPath, this.currencyLabel(item.unitPrice)].filter(Boolean).join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('products', item.sku || item.name)
+        }))
+      ),
+      this.buildFederatedGroup(
+        'employees',
+        employees.map((item) => ({
+          id: item.id,
+          title: item.code ? `${item.fullName} (${item.code})` : item.fullName,
+          snippet: [item.department, item.position, item.email].filter(Boolean).join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('employees', item.fullName)
+        }))
+      ),
+      this.buildFederatedGroup(
+        'projects',
+        projects.map((item) => ({
+          id: item.id,
+          title: item.code ? `${item.name} (${item.code})` : item.name,
+          snippet: [item.startAt ? `Bắt đầu: ${item.startAt.toLocaleDateString('vi-VN')}` : '', item.endAt ? `Kết thúc: ${item.endAt.toLocaleDateString('vi-VN')}` : '']
+            .filter(Boolean)
+            .join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('projects', item.code || item.name)
+        }))
+      ),
+      this.buildFederatedGroup(
+        'purchaseOrders',
+        purchaseOrders.map((item) => ({
+          id: item.id,
+          title: item.poNo ? `PO ${item.poNo}` : `PO ${item.id}`,
+          snippet: [
+            item.vendor?.name,
+            item.relatedSalesOrderNo ? `SO: ${item.relatedSalesOrderNo}` : '',
+            this.currencyLabel(item.totalAmount),
+            item.lifecycleStatus
+          ]
+            .filter(Boolean)
+            .join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('purchaseOrders', item.poNo || item.id)
+        }))
+      ),
+      this.buildFederatedGroup('workflowTasks', workflowTaskItems),
+      this.buildFederatedGroup(
+        'reports',
+        reports.map((item) => ({
+          id: item.id,
+          title: item.name,
+          snippet: [item.reportType, item.moduleName, item.outputFormat].filter(Boolean).join(' • '),
+          status: item.status,
+          meta: this.relativeTimeLabel(item.updatedAt),
+          target: this.buildModuleTarget('reports', item.name)
+        }))
+      )
+    ].filter((group) => group.count > 0);
+
+    return {
+      query: keyword,
+      total: groups.reduce((sum, group) => sum + group.count, 0),
+      limitPerGroup,
+      generatedAt: new Date().toISOString(),
+      groups
+    };
+  }
 
   async shouldUseHybridSearch(keyword?: string, cursor?: string): Promise<boolean> {
     await this.refreshRuntimePolicy();
@@ -627,6 +1037,73 @@ export class SearchService {
     }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private currencyLabel(value: Prisma.Decimal | number | string | null | undefined) {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) {
+      return '';
+    }
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+      maximumFractionDigits: 0
+    }).format(amount);
+  }
+
+  private normalizeFederatedLimit(limitRaw?: number) {
+    const limit = Number(limitRaw);
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return FEDERATED_DEFAULT_LIMIT;
+    }
+    return Math.min(Math.trunc(limit), FEDERATED_MAX_LIMIT);
+  }
+
+  private buildModuleTarget(entity: FederatedSearchEntity, q: string) {
+    const moduleMeta = FEDERATED_GROUP_META[entity];
+    const keyword = String(q ?? '').trim();
+    if (!keyword) {
+      return moduleMeta.modulePath;
+    }
+    const params = new URLSearchParams({ q: keyword });
+    return `${moduleMeta.modulePath}?${params.toString()}`;
+  }
+
+  private buildFederatedGroup(
+    entity: FederatedSearchEntity,
+    items: FederatedSearchResultGroup['items']
+  ): FederatedSearchResultGroup {
+    const meta = FEDERATED_GROUP_META[entity];
+    return {
+      entity,
+      label: meta.label,
+      icon: meta.icon,
+      count: items.length,
+      items
+    };
+  }
+
+  private relativeTimeLabel(value: Date | null | undefined) {
+    if (!value) {
+      return '';
+    }
+    const deltaMs = Date.now() - value.getTime();
+    if (!Number.isFinite(deltaMs)) {
+      return '';
+    }
+    const minutes = Math.max(1, Math.floor(deltaMs / 60_000));
+    if (minutes < 60) {
+      return `${minutes} phút trước`;
+    }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return `${hours} giờ trước`;
+    }
+    const days = Math.floor(hours / 24);
+    return `${days} ngày trước`;
   }
 
   private normalizeLimit(limit: number): number {

@@ -36,6 +36,7 @@ import { StandardDataTable, ColumnDefinition, type StandardTableBulkModalRenderC
 import { SidePanel } from './ui/side-panel';
 import { Modal } from './ui/modal';
 import { Badge, statusToBadge, type BadgeVariant } from './ui/badge';
+import { CreateEntityDialog } from './ui/create-entity-dialog';
 
 type CustomerCareStatus =
   | 'MOI_CHUA_TU_VAN'
@@ -357,7 +358,7 @@ const CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS = [
   'updatedAt',
 ];
 const CUSTOMER_TABLE_PAGE_SIZE = 25;
-const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'true').trim().toLowerCase() === 'true';
 const CUSTOMER_FILTER_OPERATOR_LABELS: Record<CustomerFilterOperator, string> = {
   contains: 'Chứa',
   equals: 'Bằng',
@@ -861,6 +862,7 @@ export function CrmCustomersBoard() {
   const [archivingVehicleId, setArchivingVehicleId] = useState<string | null>(null);
   const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [createValidationErrors, setCreateValidationErrors] = useState<string[]>([]);
   const [isApplyingCustomerBulk, setIsApplyingCustomerBulk] = useState(false);
   const [customerBulkForm, setCustomerBulkForm] = useState<CustomerBulkFormState>({
     softSkip: false,
@@ -1341,9 +1343,19 @@ export function CrmCustomersBoard() {
     });
   };
 
-  const handleCreateCustomer = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitCreateCustomer = async (options: { keepOpen?: boolean } = {}) => {
     if (!canCreate) return;
+
+    const validationErrors: string[] = [];
+    if (!createForm.fullName.trim()) {
+      validationErrors.push('Họ tên khách hàng là bắt buộc.');
+    }
+    if (validationErrors.length > 0) {
+      setCreateValidationErrors(validationErrors);
+      return;
+    }
+
+    setCreateValidationErrors([]);
     setIsCreating(true);
     try {
       await apiRequest('/crm/customers', {
@@ -1360,14 +1372,27 @@ export function CrmCustomersBoard() {
       });
       setResultMessage('Đã tạo khách hàng thành công.');
       setErrorMessage(null);
-      setIsCreatePanelOpen(false);
-      resetCreateForm();
+      if (options.keepOpen) {
+        resetCreateForm();
+      } else {
+        setIsCreatePanelOpen(false);
+        resetCreateForm();
+      }
       await loadCustomers();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi tạo khách hàng');
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const handleCreateCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nativeEvent = event.nativeEvent;
+    const submitter = nativeEvent instanceof SubmitEvent ? nativeEvent.submitter : null;
+    const keepOpen =
+      submitter instanceof HTMLButtonElement && submitter.dataset.action === 'save-add-another';
+    await submitCreateCustomer({ keepOpen });
   };
 
   const handleSaveCustomer = async (id: string | number, values: Partial<Customer>) => {
@@ -2261,10 +2286,11 @@ export function CrmCustomersBoard() {
               <button
                 className="btn btn-primary"
                 onClick={() => {
+                  setCreateValidationErrors([]);
                   setIsCreatePanelOpen(true);
                 }}
               >
-                <Plus size={16} /> Khách hàng
+                <Plus size={16} /> Thêm dữ liệu
               </button>
             )}
           </>
@@ -3025,17 +3051,29 @@ export function CrmCustomersBoard() {
         )}
       </SidePanel>
 
-      <SidePanel
-        isOpen={isCreatePanelOpen}
+      <CreateEntityDialog
+        open={isCreatePanelOpen}
         onClose={() => {
+          if (isCreating) return;
           setIsCreatePanelOpen(false);
-          if (!isCreating) {
-            resetCreateForm();
-          }
+          resetCreateForm();
+          setCreateValidationErrors([]);
         }}
-        title="Tạo khách hàng mới"
+        entityLabel="Khách hàng"
+        helperText="Tạo nhanh hồ sơ khách hàng mới. Có thể lưu liên tục nhiều hồ sơ bằng nút “Lưu & thêm mới”."
+        fieldCount={7}
       >
-        <form onSubmit={handleCreateCustomer} style={{ display: 'grid', gap: '1rem' }}>
+        <form id="crm-create-customer-form" onSubmit={handleCreateCustomer} style={{ display: 'grid', gap: '1rem' }}>
+          {createValidationErrors.length > 0 && (
+            <div className="validation-summary">
+              <strong>Không thể lưu vì:</strong>
+              <ul>
+                {createValidationErrors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="field">
             <label>Họ tên khách hàng *</label>
             <input
@@ -3117,9 +3155,18 @@ export function CrmCustomersBoard() {
               ))}
             </select>
           </div>
-          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
             <button type="submit" className="btn btn-primary" disabled={isCreating} style={{ flex: 1 }}>
-              {isCreating ? 'Đang tạo...' : 'Tạo khách hàng'}
+              {isCreating ? 'Đang tạo...' : 'Lưu'}
+            </button>
+            <button
+              type="submit"
+              className="btn btn-secondary"
+              data-action="save-add-another"
+              disabled={isCreating}
+              style={{ flex: 1 }}
+            >
+              {isCreating ? 'Đang tạo...' : 'Lưu & thêm mới'}
             </button>
             <button
               type="button"
@@ -3129,13 +3176,14 @@ export function CrmCustomersBoard() {
                 if (isCreating) return;
                 setIsCreatePanelOpen(false);
                 resetCreateForm();
+                setCreateValidationErrors([]);
               }}
             >
               Hủy
             </button>
           </div>
         </form>
-      </SidePanel>
+      </CreateEntityDialog>
     </div>
   );
 }

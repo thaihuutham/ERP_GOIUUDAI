@@ -29,9 +29,11 @@ require_single_line_env() {
 }
 
 NODE_ENV_VALUE="${NODE_ENV:-production}"
-AUTH_ENABLED_VALUE="${AUTH_ENABLED:-false}"
-NEXT_PUBLIC_AUTH_ENABLED_VALUE="${NEXT_PUBLIC_AUTH_ENABLED:-false}"
-PERMISSION_ENGINE_ENABLED_VALUE="${PERMISSION_ENGINE_ENABLED:-false}"
+AUTH_ENABLED_VALUE="${AUTH_ENABLED:-true}"
+DEV_AUTH_BYPASS_ENABLED_VALUE="${DEV_AUTH_BYPASS_ENABLED:-false}"
+NEXT_PUBLIC_AUTH_ENABLED_VALUE="${NEXT_PUBLIC_AUTH_ENABLED:-true}"
+NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED_VALUE="${NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED:-false}"
+PERMISSION_ENGINE_ENABLED_VALUE="${PERMISSION_ENGINE_ENABLED:-true}"
 IAM_V2_ENABLED_VALUE="${IAM_V2_ENABLED:-}"
 DATABASE_URL_VALUE="${DATABASE_URL:-postgresql://erp:erp@postgres:5432/erp_retail}"
 REDIS_URL_VALUE="${REDIS_URL:-redis://redis:6379}"
@@ -76,14 +78,47 @@ POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED_VALUE="${POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED
 POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES_VALUE="${POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES:-}"
 JWT_SECRET_VALUE="${JWT_SECRET:-}"
 
-if [ "$AUTH_ENABLED_VALUE" = "true" ] && { [ -z "$JWT_SECRET_VALUE" ] || [ "$JWT_SECRET_VALUE" = "change_me_to_a_long_secret" ]; }; then
+node_env_normalized="$(echo "$NODE_ENV_VALUE" | tr '[:upper:]' '[:lower:]')"
+auth_enabled_normalized="$(echo "$AUTH_ENABLED_VALUE" | tr '[:upper:]' '[:lower:]')"
+dev_auth_bypass_normalized="$(echo "$DEV_AUTH_BYPASS_ENABLED_VALUE" | tr '[:upper:]' '[:lower:]')"
+web_auth_enabled_normalized="$(echo "$NEXT_PUBLIC_AUTH_ENABLED_VALUE" | tr '[:upper:]' '[:lower:]')"
+web_dev_auth_bypass_normalized="$(echo "$NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED_VALUE" | tr '[:upper:]' '[:lower:]')"
+permission_engine_enabled_normalized="$(echo "$PERMISSION_ENGINE_ENABLED_VALUE" | tr '[:upper:]' '[:lower:]')"
+
+if [ "$auth_enabled_normalized" = "true" ] && { [ -z "$JWT_SECRET_VALUE" ] || [ "$JWT_SECRET_VALUE" = "change_me_to_a_long_secret" ]; }; then
   echo "[deploy] error: AUTH_ENABLED=true requires a non-default JWT_SECRET."
   exit 1
 fi
 JWT_SECRET_VALUE="${JWT_SECRET_VALUE:-change_me_to_a_long_secret}"
 
-if [ "$NEXT_PUBLIC_AUTH_ENABLED_VALUE" = "true" ] && [ "$AUTH_ENABLED_VALUE" != "true" ]; then
-  echo "[deploy] warning: NEXT_PUBLIC_AUTH_ENABLED=true but AUTH_ENABLED!=true. UI may enforce login while API auth is disabled."
+if [ "$auth_enabled_normalized" != "$web_auth_enabled_normalized" ]; then
+  echo "[deploy] error: AUTH_ENABLED and NEXT_PUBLIC_AUTH_ENABLED must match."
+  exit 1
+fi
+
+if [ "$node_env_normalized" = "production" ] && [ "$auth_enabled_normalized" != "true" ]; then
+  echo "[deploy] error: AUTH_ENABLED=false is not allowed in production."
+  exit 1
+fi
+
+if [ "$node_env_normalized" = "production" ] && [ "$dev_auth_bypass_normalized" = "true" ]; then
+  echo "[deploy] error: DEV_AUTH_BYPASS_ENABLED=true is not allowed in production."
+  exit 1
+fi
+
+if [ "$node_env_normalized" = "production" ] && [ "$permission_engine_enabled_normalized" != "true" ]; then
+  echo "[deploy] error: PERMISSION_ENGINE_ENABLED=false is not allowed in production."
+  exit 1
+fi
+
+if [ "$auth_enabled_normalized" != "true" ] && [ "$dev_auth_bypass_normalized" != "true" ]; then
+  echo "[deploy] error: AUTH_ENABLED=false requires DEV_AUTH_BYPASS_ENABLED=true for explicit dev bypass."
+  exit 1
+fi
+
+if [ "$web_dev_auth_bypass_normalized" = "true" ] && [ "$dev_auth_bypass_normalized" != "true" ]; then
+  echo "[deploy] error: NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=true requires DEV_AUTH_BYPASS_ENABLED=true."
+  exit 1
 fi
 
 if [ -z "$SETTINGS_ENCRYPTION_MASTER_KEY_VALUE" ]; then
@@ -92,7 +127,9 @@ fi
 
 require_single_line_env "NODE_ENV" "$NODE_ENV_VALUE"
 require_single_line_env "AUTH_ENABLED" "$AUTH_ENABLED_VALUE"
+require_single_line_env "DEV_AUTH_BYPASS_ENABLED" "$DEV_AUTH_BYPASS_ENABLED_VALUE"
 require_single_line_env "NEXT_PUBLIC_AUTH_ENABLED" "$NEXT_PUBLIC_AUTH_ENABLED_VALUE"
+require_single_line_env "NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED" "$NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED_VALUE"
 require_single_line_env "PERMISSION_ENGINE_ENABLED" "$PERMISSION_ENGINE_ENABLED_VALUE"
 require_single_line_env "IAM_V2_ENABLED" "$IAM_V2_ENABLED_VALUE"
 require_single_line_env "DATABASE_URL" "$DATABASE_URL_VALUE"
@@ -143,7 +180,9 @@ umask 077
 cat >"$ENV_FILE" <<EOF
 NODE_ENV=$NODE_ENV_VALUE
 AUTH_ENABLED=$AUTH_ENABLED_VALUE
+DEV_AUTH_BYPASS_ENABLED=$DEV_AUTH_BYPASS_ENABLED_VALUE
 NEXT_PUBLIC_AUTH_ENABLED=$NEXT_PUBLIC_AUTH_ENABLED_VALUE
+NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=$NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED_VALUE
 PERMISSION_ENGINE_ENABLED=$PERMISSION_ENGINE_ENABLED_VALUE
 IAM_V2_ENABLED=$IAM_V2_ENABLED_VALUE
 DATABASE_URL=$DATABASE_URL_VALUE

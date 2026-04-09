@@ -5,12 +5,20 @@ export const TEST_TENANT_ID = 'GOIUUDAI';
 type TestRole = 'ADMIN' | 'USER';
 
 export const setupSingleTenantAuthTestEnv = (jwtSecret: string) => {
+  const ensure = (key: string, value: string) => {
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  };
+
   process.env.NODE_ENV = 'test';
-  process.env.AUTH_ENABLED = 'true';
-  process.env.TENANCY_MODE = 'single';
-  process.env.DEFAULT_TENANT_ID = TEST_TENANT_ID;
-  process.env.JWT_SECRET = jwtSecret;
-  process.env.PRISMA_SKIP_CONNECT = 'true';
+  ensure('AUTH_ENABLED', 'true');
+  ensure('NEXT_PUBLIC_AUTH_ENABLED', 'true');
+  ensure('DEV_AUTH_BYPASS_ENABLED', 'false');
+  ensure('TENANCY_MODE', 'single');
+  ensure('DEFAULT_TENANT_ID', TEST_TENANT_ID);
+  ensure('JWT_SECRET', jwtSecret);
+  ensure('PRISMA_SKIP_CONNECT', 'true');
 };
 
 type MakeTokenOptions = {

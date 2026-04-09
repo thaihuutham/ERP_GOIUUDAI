@@ -19,6 +19,7 @@ import { useUserRole } from './user-role-context';
 import { Badge, statusToBadge } from './ui/badge';
 import { SidePanel } from './ui/side-panel';
 import { ColumnDefinition, StandardDataTable } from './ui/standard-data-table';
+import { CreateEntityDialog } from './ui/create-entity-dialog';
 
 type VehicleKindOption = 'ALL' | 'AUTO' | 'MOTO';
 
@@ -93,7 +94,7 @@ type VehicleImportResponse = {
   errors: VehicleImportError[];
 };
 
-const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'true').trim().toLowerCase() === 'true';
 const FETCH_LIMIT = 200;
 const VEHICLE_TABLE_PAGE_SIZE = 25;
 const VEHICLE_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.vehicles-table-settings.v1';
@@ -292,6 +293,7 @@ export function CrmVehiclesBoard() {
   const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create');
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
   const [vehicleForm, setVehicleForm] = useState<VehicleFormState>(buildVehicleForm(null));
+  const [vehicleValidationErrors, setVehicleValidationErrors] = useState<string[]>([]);
   const [isSavingVehicle, setIsSavingVehicle] = useState(false);
   const [archivingVehicleId, setArchivingVehicleId] = useState<string | null>(null);
   const [isImportingFile, setIsImportingFile] = useState(false);
@@ -444,6 +446,7 @@ export function CrmVehiclesBoard() {
     setEditorMode('create');
     setEditingVehicleId(null);
     setVehicleForm(buildVehicleForm(null, defaultCustomerId, defaultOwnerName));
+    setVehicleValidationErrors([]);
     setIsEditorOpen(true);
   };
 
@@ -454,6 +457,7 @@ export function CrmVehiclesBoard() {
     setEditorMode('edit');
     setEditingVehicleId(vehicle.id);
     setVehicleForm(buildVehicleForm(vehicle));
+    setVehicleValidationErrors([]);
     setIsEditorOpen(true);
   };
 
@@ -468,15 +472,43 @@ export function CrmVehiclesBoard() {
 
   const handleSaveVehicle = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const nativeEvent = event.nativeEvent;
+    const submitter = nativeEvent instanceof SubmitEvent ? nativeEvent.submitter : null;
+    const keepOpen =
+      submitter instanceof HTMLButtonElement &&
+      submitter.dataset.action === 'save-add-another' &&
+      editorMode === 'create';
+
     if (!canCreateVehicle && editorMode === 'create') {
       return;
     }
 
+    const validationErrors: string[] = [];
     const ownerCustomerId = String(vehicleForm.ownerCustomerId || '').trim();
     if (!ownerCustomerId) {
-      setErrorMessage('Vui lòng chọn khách hàng sở hữu xe.');
+      validationErrors.push('Vui lòng chọn khách hàng sở hữu xe.');
+    }
+    if (!String(vehicleForm.ownerFullName || '').trim()) {
+      validationErrors.push('Tên chủ xe là bắt buộc.');
+    }
+    if (!String(vehicleForm.plateNumber || '').trim()) {
+      validationErrors.push('Biển số xe là bắt buộc.');
+    }
+    if (!String(vehicleForm.chassisNumber || '').trim()) {
+      validationErrors.push('Số khung là bắt buộc.');
+    }
+    if (!String(vehicleForm.engineNumber || '').trim()) {
+      validationErrors.push('Số máy là bắt buộc.');
+    }
+    if (!String(vehicleForm.vehicleType || '').trim()) {
+      validationErrors.push('Dòng xe là bắt buộc.');
+    }
+    if (validationErrors.length > 0) {
+      setVehicleValidationErrors(validationErrors);
+      setErrorMessage(validationErrors[0] ?? 'Dữ liệu chưa hợp lệ.');
       return;
     }
+    setVehicleValidationErrors([]);
 
     if (!actorIdentity.isAdmin) {
       const ownerStaffId = resolveCustomerOwnerStaffId(ownerCustomerId);
@@ -517,9 +549,17 @@ export function CrmVehiclesBoard() {
       }
 
       setErrorMessage(null);
-      setIsEditorOpen(false);
-      setEditingVehicleId(null);
-      setEditorMode('create');
+      if (editorMode === 'create' && keepOpen) {
+        const nextDefaultCustomerId = actorIdentity.isAdmin
+          ? (ownerCustomerFilter || customers[0]?.id || ownerCustomerId)
+          : (manageableCustomers[0]?.id || ownerCustomerId);
+        const nextOwnerName = resolveCustomerName(nextDefaultCustomerId);
+        setVehicleForm(buildVehicleForm(null, nextDefaultCustomerId, nextOwnerName));
+      } else {
+        setIsEditorOpen(false);
+        setEditingVehicleId(null);
+        setEditorMode('create');
+      }
       await loadVehicles();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi lưu thông tin xe');
@@ -683,6 +723,149 @@ export function CrmVehiclesBoard() {
     }
   ];
 
+  const vehicleEditorForm = (
+    <form onSubmit={handleSaveVehicle} style={{ display: 'grid', gap: '0.8rem' }}>
+      {vehicleValidationErrors.length > 0 && (
+        <div className="validation-summary">
+          <strong>Không thể lưu vì:</strong>
+          <ul>
+            {vehicleValidationErrors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="field">
+        <label>Khách hàng sở hữu *</label>
+        <select
+          required
+          value={vehicleForm.ownerCustomerId}
+          onChange={(event) => handleOwnerCustomerChange(event.target.value)}
+        >
+          <option value="">-- Chọn khách hàng --</option>
+          {(actorIdentity.isAdmin ? customers : manageableCustomers).map((customer) => (
+            <option key={customer.id} value={customer.id}>
+              {customer.fullName || customer.id}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="field">
+        <label>Chủ xe *</label>
+        <input
+          required
+          value={vehicleForm.ownerFullName}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, ownerFullName: event.target.value }))}
+          placeholder="Nguyễn Văn A"
+        />
+      </div>
+      <div className="field">
+        <label>Địa chỉ chủ xe</label>
+        <input
+          value={vehicleForm.ownerAddress}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, ownerAddress: event.target.value }))}
+        />
+      </div>
+      <div className="field">
+        <label>Biển số *</label>
+        <input
+          required
+          value={vehicleForm.plateNumber}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, plateNumber: event.target.value.toUpperCase() }))}
+          placeholder="30A-12345"
+        />
+      </div>
+      <div className="field">
+        <label>Số khung *</label>
+        <input
+          required
+          value={vehicleForm.chassisNumber}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, chassisNumber: event.target.value.toUpperCase() }))}
+        />
+      </div>
+      <div className="field">
+        <label>Số máy *</label>
+        <input
+          required
+          value={vehicleForm.engineNumber}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, engineNumber: event.target.value.toUpperCase() }))}
+        />
+      </div>
+      <div className="field">
+        <label>Nhóm xe *</label>
+        <select
+          value={vehicleForm.vehicleKind}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, vehicleKind: normalizeVehicleKind(event.target.value) }))}
+        >
+          <option value="AUTO">Ô tô</option>
+          <option value="MOTO">Xe máy</option>
+        </select>
+      </div>
+      <div className="field">
+        <label>Dòng xe *</label>
+        <input
+          required
+          value={vehicleForm.vehicleType}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, vehicleType: event.target.value }))}
+          placeholder="Sedan / SUV / Tay ga..."
+        />
+      </div>
+      <div className="field">
+        <label>Số chỗ</label>
+        <input
+          type="number"
+          min={0}
+          value={vehicleForm.seatCount}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, seatCount: event.target.value }))}
+        />
+      </div>
+      <div className="field">
+        <label>Tải trọng (kg)</label>
+        <input
+          type="number"
+          min={0}
+          value={vehicleForm.loadKg}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, loadKg: event.target.value }))}
+        />
+      </div>
+      <div className="field">
+        <label>Trạng thái</label>
+        <select
+          value={vehicleForm.status}
+          onChange={(event) => setVehicleForm((prev) => ({ ...prev, status: event.target.value as VehicleFormState['status'] }))}
+        >
+          <option value="ACTIVE">ACTIVE</option>
+          <option value="INACTIVE">INACTIVE</option>
+          <option value="DRAFT">DRAFT</option>
+        </select>
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.2rem', flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" type="submit" disabled={isSavingVehicle}>
+          {isSavingVehicle ? 'Đang lưu...' : editorMode === 'create' ? 'Lưu' : 'Lưu cập nhật'}
+        </button>
+        {editorMode === 'create' && (
+          <button className="btn btn-secondary" type="submit" data-action="save-add-another" disabled={isSavingVehicle}>
+            {isSavingVehicle ? 'Đang lưu...' : 'Lưu & thêm mới'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            setIsEditorOpen(false);
+            setEditingVehicleId(null);
+            setEditorMode('create');
+            setVehicleValidationErrors([]);
+          }}
+          disabled={isSavingVehicle}
+        >
+          Hủy
+        </button>
+      </div>
+    </form>
+  );
+
   if (!canView) {
     return null;
   }
@@ -758,7 +941,7 @@ export function CrmVehiclesBoard() {
             </a>
             {canCreateVehicle && (
               <button className="btn btn-primary" onClick={openCreateEditor}>
-                <Plus size={16} /> Thêm xe
+                <Plus size={16} /> Thêm dữ liệu
               </button>
             )}
           </>
@@ -858,140 +1041,36 @@ export function CrmVehiclesBoard() {
         )}
       </SidePanel>
 
-      <SidePanel
-        isOpen={isEditorOpen}
-        onClose={() => {
-          setIsEditorOpen(false);
-          setEditingVehicleId(null);
-          setEditorMode('create');
-        }}
-        title={editorMode === 'create' ? 'Thêm xe mới' : 'Cập nhật thông tin xe'}
-      >
-        <form onSubmit={handleSaveVehicle} style={{ display: 'grid', gap: '0.8rem' }}>
-          <div className="field">
-            <label>Khách hàng sở hữu *</label>
-            <select
-              required
-              value={vehicleForm.ownerCustomerId}
-              onChange={(event) => handleOwnerCustomerChange(event.target.value)}
-            >
-              <option value="">-- Chọn khách hàng --</option>
-              {(actorIdentity.isAdmin ? customers : manageableCustomers).map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.fullName || customer.id}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Chủ xe *</label>
-            <input
-              required
-              value={vehicleForm.ownerFullName}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, ownerFullName: event.target.value }))}
-              placeholder="Nguyễn Văn A"
-            />
-          </div>
-          <div className="field">
-            <label>Địa chỉ chủ xe</label>
-            <input
-              value={vehicleForm.ownerAddress}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, ownerAddress: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label>Biển số *</label>
-            <input
-              required
-              value={vehicleForm.plateNumber}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, plateNumber: event.target.value.toUpperCase() }))}
-              placeholder="30A-12345"
-            />
-          </div>
-          <div className="field">
-            <label>Số khung *</label>
-            <input
-              required
-              value={vehicleForm.chassisNumber}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, chassisNumber: event.target.value.toUpperCase() }))}
-            />
-          </div>
-          <div className="field">
-            <label>Số máy *</label>
-            <input
-              required
-              value={vehicleForm.engineNumber}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, engineNumber: event.target.value.toUpperCase() }))}
-            />
-          </div>
-          <div className="field">
-            <label>Nhóm xe *</label>
-            <select
-              value={vehicleForm.vehicleKind}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, vehicleKind: normalizeVehicleKind(event.target.value) }))}
-            >
-              <option value="AUTO">Ô tô</option>
-              <option value="MOTO">Xe máy</option>
-            </select>
-          </div>
-          <div className="field">
-            <label>Dòng xe *</label>
-            <input
-              required
-              value={vehicleForm.vehicleType}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, vehicleType: event.target.value }))}
-              placeholder="Sedan / SUV / Tay ga..."
-            />
-          </div>
-          <div className="field">
-            <label>Số chỗ</label>
-            <input
-              type="number"
-              min={0}
-              value={vehicleForm.seatCount}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, seatCount: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label>Tải trọng (kg)</label>
-            <input
-              type="number"
-              min={0}
-              value={vehicleForm.loadKg}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, loadKg: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label>Trạng thái</label>
-            <select
-              value={vehicleForm.status}
-              onChange={(event) => setVehicleForm((prev) => ({ ...prev, status: event.target.value as VehicleFormState['status'] }))}
-            >
-              <option value="ACTIVE">ACTIVE</option>
-              <option value="INACTIVE">INACTIVE</option>
-              <option value="DRAFT">DRAFT</option>
-            </select>
-          </div>
-
-          <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.2rem' }}>
-            <button className="btn btn-primary" type="submit" disabled={isSavingVehicle}>
-              {isSavingVehicle ? 'Đang lưu...' : editorMode === 'create' ? 'Tạo xe' : 'Lưu cập nhật'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                setIsEditorOpen(false);
-                setEditingVehicleId(null);
-                setEditorMode('create');
-              }}
-              disabled={isSavingVehicle}
-            >
-              Hủy
-            </button>
-          </div>
-        </form>
-      </SidePanel>
+      {editorMode === 'create' ? (
+        <CreateEntityDialog
+          open={isEditorOpen}
+          onClose={() => {
+            if (isSavingVehicle) return;
+            setIsEditorOpen(false);
+            setEditingVehicleId(null);
+            setEditorMode('create');
+            setVehicleValidationErrors([]);
+          }}
+          entityLabel="Xe khách hàng"
+          helperText="Thêm phương tiện vào CRM. Có thể chọn “Lưu & thêm mới” để nhập liên tục nhiều xe."
+          fieldCount={11}
+        >
+          {vehicleEditorForm}
+        </CreateEntityDialog>
+      ) : (
+        <SidePanel
+          isOpen={isEditorOpen}
+          onClose={() => {
+            setIsEditorOpen(false);
+            setEditingVehicleId(null);
+            setEditorMode('create');
+            setVehicleValidationErrors([]);
+          }}
+          title="Cập nhật thông tin xe"
+        >
+          {vehicleEditorForm}
+        </SidePanel>
+      )}
     </div>
   );
 }

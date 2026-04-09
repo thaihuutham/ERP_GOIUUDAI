@@ -136,8 +136,10 @@ function isAbortError(error: unknown): boolean {
 }
 
 function resolveDevIdentityHeaders(): Record<string, string> {
-  const authEnabled = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'false').trim().toLowerCase() === 'true';
-  if (authEnabled) {
+  const authEnabled = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'true').trim().toLowerCase() === 'true';
+  const devAuthBypassEnabled =
+    String(process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+  if (authEnabled || !devAuthBypassEnabled) {
     return {};
   }
 

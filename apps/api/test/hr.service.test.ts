@@ -89,7 +89,21 @@ describe('HrService (new HR v1 domains)', () => {
 
   it('updates goal progress and auto-completes when reaching 100%', async () => {
     const prisma = makePrismaMock();
-    const service = new HrService(prisma as any);
+    const config = {
+      get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback))
+    };
+    const cls = {
+      get: vi.fn((key?: string) =>
+        key === 'authUser'
+          ? {
+              role: 'USER',
+              employeeId: 'emp_1',
+              userId: 'user_staff'
+            }
+          : undefined
+      )
+    };
+    const service = new HrService(prisma as any, {} as any, undefined, config as any, cls as any);
 
     await service.updateGoalProgress('goal_1', {
       currentValue: 100,

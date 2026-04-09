@@ -2264,7 +2264,7 @@ export class HrRegulationService {
   }
 
   private isAuthEnabled() {
-    const env = String(this.config?.get<string>('AUTH_ENABLED', 'false') ?? 'false').trim().toLowerCase();
+    const env = String(this.config?.get<string>('AUTH_ENABLED', 'true') ?? 'true').trim().toLowerCase();
     return env === 'true';
   }
 

@@ -1,8 +1,20 @@
 import { CustomerCareStatus, GenericStatus } from '@prisma/client';
 
 export const SEARCH_ENTITIES = ['customers', 'orders', 'products'] as const;
+export const FEDERATED_SEARCH_ENTITIES = [
+  'customers',
+  'orders',
+  'invoices',
+  'products',
+  'employees',
+  'projects',
+  'purchaseOrders',
+  'workflowTasks',
+  'reports'
+] as const;
 
 export type SearchEntity = (typeof SEARCH_ENTITIES)[number];
+export type FederatedSearchEntity = (typeof FEDERATED_SEARCH_ENTITIES)[number];
 export type SearchReindexEntity = SearchEntity | 'all';
 
 export type SearchCustomersFilters = {
@@ -53,4 +65,29 @@ export type SearchReindexResult = {
   finishedAt: string;
   durationMs: number;
   results: SearchReindexItemResult[];
+};
+
+export type FederatedSearchResultItem = {
+  id: string;
+  title: string;
+  snippet: string;
+  status?: string | null;
+  meta?: string | null;
+  target: string;
+};
+
+export type FederatedSearchResultGroup = {
+  entity: FederatedSearchEntity;
+  label: string;
+  icon: string;
+  count: number;
+  items: FederatedSearchResultItem[];
+};
+
+export type FederatedSearchResponse = {
+  query: string;
+  total: number;
+  limitPerGroup: number;
+  generatedAt: string;
+  groups: FederatedSearchResultGroup[];
 };
