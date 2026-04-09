@@ -234,7 +234,7 @@ export function SalesCheckoutBoard() {
   const { role } = useUserRole();
   const canView = canModule('sales');
   const canCreate = canAction('sales', 'CREATE');
-  const canOverridePayment = role === 'ADMIN' || role === 'MANAGER';
+  const canOverridePayment = role === 'ADMIN';
 
   const [checkoutConfig, setCheckoutConfig] = useState<CheckoutConfigResponse | null>(null);
   const [isLoadingConfig, setIsLoadingConfig] = useState(false);

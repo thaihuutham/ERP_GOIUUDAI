@@ -2,9 +2,43 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-09 09:59 +07
+- Last updated: 2026-04-09 11:35 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-09 11:35 +07 (Checkpoint push + start admin/user cutover stabilization)
+- User request:
+  - commit toàn bộ dự án, push lên GitHub, sau đó bắt đầu thực hiện nhiệm vụ theo kế hoạch.
+- Đã triển khai:
+  - tạo checkpoint commit và push lên `origin/main`:
+    - commit: `c1cc342`
+    - message: `chore: checkpoint admin-user role migration and policy-as-data draft`
+  - bắt đầu execution task theo kế hoạch bằng bước ổn định gate:
+    - fix các điểm web còn compare role cũ gây fail compile (`MANAGER/STAFF`) ở:
+      - `crm-operations-board.tsx`
+      - `sales-checkout-board.tsx`
+      - `assistant-routes.ts`
+      - `module-definitions.ts`
+      - `modules.ts`
+      - `lib/__tests__/access-policy.test.ts` (rewrite theo model `ADMIN/USER`)
+    - fix migration SQL `20260409120000_admin_user_role_and_user_position_assignment`:
+      - bỏ update enum sai trước bước cast type.
+    - recover migration failed state:
+      - `prisma migrate resolve --rolled-back ...`
+      - apply lại migration bằng `prisma migrate deploy`.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:deploy --workspace @erp/api` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test:unit --workspace @erp/web -- lib/__tests__/access-policy.test.ts` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+- Notes:
+  - đã hoàn thành đúng thứ tự yêu cầu: commit+push trước, triển khai kế hoạch sau.
+  - còn tồn tại các literal `MANAGER/STAFF` rải rác ngoài phạm vi lỗi compile vừa xử lý; cần tiếp tục cutover theo plan big-bang `ADMIN/USER`.
 
 ## Session Update 2026-04-09 09:59 +07 (Phase 4 release-gate web build unblock)
 - User request:

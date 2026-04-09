@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-09 09:59 +07
+- Time: 2026-04-09 11:35 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-09_0959_codex.md`
+- Session Log: `.agent/sessions/2026-04-09_1135_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,34 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-09 11:35 (checkpoint push + start admin/user cutover stabilization)
+- User confirmation:
+  - commit toàn bộ dự án, push GitHub, rồi bắt đầu làm theo kế hoạch.
+- Đã xử lý:
+  - checkpoint commit/push:
+    - commit `c1cc342` đã được push lên `origin/main`.
+  - bắt đầu task kế hoạch bằng bước ổn định role-model cutover:
+    - fix web compile errors do literal `MANAGER/STAFF` còn sót trong typed paths.
+    - rewrite `apps/web/lib/__tests__/access-policy.test.ts` theo model `ADMIN/USER`.
+    - migration fix:
+      - chỉnh `apps/api/prisma/migrations/20260409120000_admin_user_role_and_user_position_assignment/migration.sql`
+      - bỏ step update enum sai thứ tự gây lỗi `invalid input value for enum \"UserRole\": \"USER\"`.
+    - recover migration state:
+      - `prisma migrate resolve --rolled-back 20260409120000_admin_user_role_and_user_position_assignment`
+      - chạy lại `prisma migrate deploy` thành công.
+- Verification:
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test:unit --workspace @erp/web -- lib/__tests__/access-policy.test.ts` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+- Notes:
+  - thứ tự yêu cầu user đã được đáp ứng: push checkpoint trước, execution kế hoạch sau.
+  - còn nợ bước cutover tiếp theo cho các literal `MANAGER/STAFF` còn lại ngoài phạm vi compile errors đã sửa.
 
 ## Update 2026-04-09 09:59 (Phase 4 release-gate web build unblock)
 - User confirmation:

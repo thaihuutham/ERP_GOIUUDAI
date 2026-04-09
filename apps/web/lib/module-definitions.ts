@@ -220,7 +220,7 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             label: 'Đánh dấu đã thanh toán',
             method: 'POST',
             endpoint: '/crm/payment-requests/:id/mark-paid',
-            allowedRoles: ['MANAGER', 'ADMIN'],
+            allowedRoles: ['ADMIN'],
             fields: [
               { name: 'id', label: 'Mã yêu cầu thanh toán', required: true },
               { name: 'reason', label: 'Lý do override', required: true, placeholder: 'Webhook timeout fallback' },

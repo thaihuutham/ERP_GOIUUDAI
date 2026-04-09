@@ -460,7 +460,7 @@ export function CrmOperationsBoard() {
   const canUpdate = canAction('crm', 'UPDATE');
   const canDelete = canAction('crm', 'DELETE');
   const canApprove = canAction('crm', 'APPROVE');
-  const canManualMarkPaid = canApprove && role !== 'STAFF';
+  const canManualMarkPaid = canApprove && role === 'ADMIN';
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);

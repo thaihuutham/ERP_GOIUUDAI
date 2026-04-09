@@ -9,7 +9,7 @@ import {
 } from '../access-policy';
 
 function buildSnapshot(args: {
-  role: 'STAFF' | 'MANAGER' | 'ADMIN';
+  role: 'USER' | 'ADMIN';
   enabledModules?: string[] | null;
   effectivePermissions?: EffectivePermissionMap;
   runtimeResolved?: boolean;
@@ -25,16 +25,16 @@ function buildSnapshot(args: {
 }
 
 describe('access policy snapshot merge', () => {
-  it('treats MANAGER/STAFF legacy roles as USER in iam v2 mode', () => {
-    expect(mapRuntimeRoleToAccessRole('MANAGER', true)).toBe('USER');
-    expect(mapRuntimeRoleToAccessRole('STAFF', true)).toBe('USER');
+  it('maps runtime role to access role in admin/user model', () => {
+    expect(mapRuntimeRoleToAccessRole('USER', true)).toBe('USER');
+    expect(mapRuntimeRoleToAccessRole('USER', false)).toBe('USER');
     expect(mapRuntimeRoleToAccessRole('ADMIN', true)).toBe('ADMIN');
-    expect(mapRuntimeRoleToAccessRole('MANAGER', false)).toBe('MANAGER');
+    expect(mapRuntimeRoleToAccessRole('ADMIN', false)).toBe('ADMIN');
   });
 
   it('applies baseline then effective permissions', () => {
     const snapshot = buildSnapshot({
-      role: 'MANAGER',
+      role: 'USER',
       enabledModules: ['crm', 'sales', 'reports'],
       effectivePermissions: {
         crm: {
@@ -45,15 +45,15 @@ describe('access policy snapshot merge', () => {
     });
 
     expect(decideActionAccess(snapshot, 'crm', 'VIEW').allowed).toBe(true);
-    expect(decideActionAccess(snapshot, 'crm', 'CREATE').allowed).toBe(true);
+    expect(decideActionAccess(snapshot, 'crm', 'CREATE').allowed).toBe(false);
     expect(decideActionAccess(snapshot, 'crm', 'UPDATE').allowed).toBe(false);
     expect(decideActionAccess(snapshot, 'crm', 'DELETE').allowed).toBe(true);
-    expect(decideActionAccess(snapshot, 'crm', 'APPROVE').allowed).toBe(true);
+    expect(decideActionAccess(snapshot, 'crm', 'APPROVE').allowed).toBe(false);
   });
 
-  it('keeps hard deny rules for settings and staff restricted modules', () => {
-    const managerSnapshot = buildSnapshot({
-      role: 'MANAGER',
+  it('keeps hard deny rules for settings', () => {
+    const userSnapshot = buildSnapshot({
+      role: 'USER',
       enabledModules: ['settings', 'crm'],
       effectivePermissions: {
         settings: {
@@ -62,27 +62,14 @@ describe('access policy snapshot merge', () => {
         }
       }
     });
-    const staffSnapshot = buildSnapshot({
-      role: 'STAFF',
-      enabledModules: ['finance', 'workflows', 'audit', 'crm'],
-      effectivePermissions: {
-        finance: {
-          VIEW: 'ALLOW',
-          APPROVE: 'ALLOW'
-        }
-      }
-    });
 
-    expect(decideModuleAccess(managerSnapshot, 'settings').allowed).toBe(false);
-    expect(decideActionAccess(managerSnapshot, 'settings', 'UPDATE').allowed).toBe(false);
-    expect(decideModuleAccess(staffSnapshot, 'finance').allowed).toBe(false);
-    expect(decideModuleAccess(staffSnapshot, 'workflows').allowed).toBe(false);
-    expect(decideModuleAccess(staffSnapshot, 'audit').allowed).toBe(false);
+    expect(decideModuleAccess(userSnapshot, 'settings').allowed).toBe(false);
+    expect(decideActionAccess(userSnapshot, 'settings', 'UPDATE').allowed).toBe(false);
   });
 
   it('applies runtime-enabled modules as final gate', () => {
     const snapshot = buildSnapshot({
-      role: 'MANAGER',
+      role: 'USER',
       enabledModules: ['sales'],
       effectivePermissions: {
         crm: {
@@ -98,7 +85,7 @@ describe('access policy snapshot merge', () => {
 
   it('fails safe on sensitive modules while policy is loading', () => {
     const snapshot = buildSnapshot({
-      role: 'MANAGER',
+      role: 'USER',
       enabledModules: null,
       runtimeResolved: false,
       effectiveResolved: false
@@ -117,26 +104,16 @@ describe('access policy snapshot merge', () => {
 });
 
 describe('access policy route decisions', () => {
-  it('denies restricted routes for staff and manager correctly', () => {
-    const staffSnapshot = buildSnapshot({
-      role: 'STAFF',
-      enabledModules: ['crm', 'sales', 'hr', 'reports', 'assistant', 'notifications']
-    });
-    const managerSnapshot = buildSnapshot({
-      role: 'MANAGER',
-      enabledModules: ['crm', 'sales', 'finance', 'workflows', 'audit', 'assistant', 'reports']
+  it('denies settings and assistant channels for USER', () => {
+    const userSnapshot = buildSnapshot({
+      role: 'USER',
+      enabledModules: ['crm', 'sales', 'finance', 'workflows', 'audit', 'assistant', 'reports', 'notifications']
     });
 
-    expect(decideRouteAccess(staffSnapshot, '/modules/finance').allowed).toBe(false);
-    expect(decideRouteAccess(staffSnapshot, '/modules/workflows').allowed).toBe(false);
-    expect(decideRouteAccess(staffSnapshot, '/modules/audit').allowed).toBe(false);
-    expect(decideRouteAccess(staffSnapshot, '/modules/settings').allowed).toBe(false);
-    expect(decideRouteAccess(staffSnapshot, '/modules/assistant/channels').allowed).toBe(false);
-    expect(decideRouteAccess(staffSnapshot, '/modules/assistant/runs').allowed).toBe(true);
-
-    expect(decideRouteAccess(managerSnapshot, '/modules/settings').allowed).toBe(false);
-    expect(decideRouteAccess(managerSnapshot, '/modules/finance').allowed).toBe(true);
-    expect(decideRouteAccess(managerSnapshot, '/modules/workflows').allowed).toBe(true);
+    expect(decideRouteAccess(userSnapshot, '/modules/settings').allowed).toBe(false);
+    expect(decideRouteAccess(userSnapshot, '/modules/assistant/channels').allowed).toBe(false);
+    expect(decideRouteAccess(userSnapshot, '/modules/assistant/runs').allowed).toBe(true);
+    expect(decideRouteAccess(userSnapshot, '/modules/finance').allowed).toBe(true);
   });
 
   it('allows admin module routes and non-module routes', () => {

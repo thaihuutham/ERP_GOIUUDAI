@@ -17,11 +17,11 @@ export const ASSISTANT_ROUTE_DEFINITIONS: AssistantRouteDefinition[] = [
   { key: 'channels', title: 'Kênh phân phối', href: '/modules/assistant/channels' }
 ];
 
-const STAFF_ALLOWED_ROUTES = new Set<AssistantRouteKey>(['runs', 'access', 'proxy']);
+const USER_ALLOWED_ROUTES = new Set<AssistantRouteKey>(['runs', 'access', 'proxy']);
 
 export function canAccessAssistantRoute(role: UserRole, routeKey: AssistantRouteKey) {
-  if (role === 'STAFF') {
-    return STAFF_ALLOWED_ROUTES.has(routeKey);
+  if (role === 'USER') {
+    return USER_ALLOWED_ROUTES.has(routeKey);
   }
   return true;
 }

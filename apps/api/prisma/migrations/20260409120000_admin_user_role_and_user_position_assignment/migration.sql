@@ -4,10 +4,6 @@ CREATE TYPE "UserRole_new" AS ENUM ('ADMIN', 'USER');
 
 ALTER TABLE "User" ALTER COLUMN "role" DROP DEFAULT;
 
-UPDATE "User"
-SET "role" = 'USER'
-WHERE "role"::text IN ('MANAGER', 'STAFF');
-
 ALTER TABLE "User"
 ALTER COLUMN "role" TYPE "UserRole_new"
 USING (
