@@ -22,7 +22,7 @@ const BASE_SALES_POLICY = {
   },
   paymentPolicy: {
     partialPaymentEnabled: true,
-    overrideRoles: ['ADMIN', 'MANAGER'],
+    overrideRoles: ['ADMIN'],
     callbackTolerance: 300,
     reconcileSchedule: '0 */2 * * *'
   },
@@ -356,8 +356,8 @@ describe('SalesCheckoutService', () => {
     );
   });
 
-  it('blocks STAFF from manual payment override', async () => {
-    const { service, prisma } = makeOverrideHarness(UserRole.STAFF);
+  it('blocks USER from manual payment override', async () => {
+    const { service, prisma } = makeOverrideHarness(UserRole.USER);
 
     await expect(service.createPaymentOverride('order_override_1', {
       reason: 'Webhook timeout fallback',

@@ -74,8 +74,8 @@ describe('JwtAuthGuard', () => {
       {
         sub: 'user_1',
         userId: 'user_1',
-        email: 'staff@erp.local',
-        role: 'STAFF',
+        email: 'user@erp.local',
+        role: 'USER',
         tenantId: 'GOIUUDAI',
         mustChangePassword: true
       },
@@ -110,14 +110,14 @@ describe('JwtAuthGuard', () => {
     process.env.TENANCY_MODE = 'single';
     process.env.DEFAULT_TENANT_ID = 'GOIUUDAI';
 
-    const guard = makeGuard({ authEnabled: false, requiredRoles: [UserRole.MANAGER, UserRole.ADMIN] });
+    const guard = makeGuard({ authEnabled: false, requiredRoles: [UserRole.ADMIN] });
     await expect(
       guard.canActivate(
         makeContext('/api/v1/assistant/channels', {
           headers: {
             'x-tenant-id': 'GOIUUDAI',
-            'x-erp-dev-role': 'STAFF',
-            'x-erp-dev-user-id': 'dev_staff'
+            'x-erp-dev-role': 'USER',
+            'x-erp-dev-user-id': 'dev_user'
           }
         })
       )

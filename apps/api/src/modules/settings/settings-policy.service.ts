@@ -830,11 +830,10 @@ export class SettingsPolicyService {
     const policy = this.ensureRecord(value);
     const roleMapRaw = this.ensureRecord(policy.domainRoleMap);
     const userMapRaw = this.ensureRecord(policy.userDomainMap);
-    const legacyUserDomains = roleMapRaw.USER ?? roleMapRaw.MANAGER ?? roleMapRaw.STAFF;
 
     const normalizedRoleMap: Record<string, SettingsDomain[]> = {
       ADMIN: this.normalizeDomainList(roleMapRaw.ADMIN),
-      USER: this.normalizeDomainList(legacyUserDomains)
+      USER: this.normalizeDomainList(roleMapRaw.USER)
     };
 
     const normalizedUserMap: Record<string, SettingsDomain[]> = {};
@@ -888,10 +887,7 @@ export class SettingsPolicyService {
       enabled: this.toBool(policy.enabled, false),
       roleScopeDefaults: {
         ADMIN: this.normalizeAssistantScope(roleScopeDefaults.ADMIN, 'company'),
-        USER: this.normalizeAssistantScope(
-          roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF,
-          'department'
-        )
+        USER: this.normalizeAssistantScope(roleScopeDefaults.USER, 'department')
       },
       enforcePermissionEngine: this.toBool(policy.enforcePermissionEngine, true),
       denyIfNoScope: this.toBool(policy.denyIfNoScope, true),
@@ -1679,9 +1675,8 @@ export class SettingsPolicyService {
 
       const assistantAccessPolicy = this.ensureRecord(value.assistantAccessPolicy);
       const roleScopeDefaults = this.ensureRecord(assistantAccessPolicy.roleScopeDefaults);
-      const legacyUserScope = roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF;
       for (const role of ['ADMIN', 'USER']) {
-        const rawScope = role === 'USER' ? legacyUserScope : roleScopeDefaults[role];
+        const rawScope = roleScopeDefaults[role];
         const scope = this.cleanString(rawScope).toLowerCase();
         if (!scope || !['company', 'branch', 'department', 'self'].includes(scope)) {
           errors.push(`assistantAccessPolicy.roleScopeDefaults.${role} phải là company|branch|department|self.`);
@@ -1704,9 +1699,8 @@ export class SettingsPolicyService {
       const domainRoleMap = this.ensureRecord(policy.domainRoleMap);
       const userDomainMap = this.ensureRecord(policy.userDomainMap);
 
-      const legacyUserDomains = domainRoleMap.USER ?? domainRoleMap.MANAGER ?? domainRoleMap.STAFF;
       for (const role of ['ADMIN', 'USER']) {
-        const domains = this.toStringArray(role === 'USER' ? legacyUserDomains : domainRoleMap[role]);
+        const domains = this.toStringArray(domainRoleMap[role]);
         const invalid = domains.filter((item) => !SETTINGS_DOMAIN_SET.has(item as SettingsDomain));
         if (invalid.length > 0) {
           errors.push(`settingsEditorPolicy.domainRoleMap.${role} có domain không hợp lệ: ${invalid.join(', ')}.`);
@@ -2160,7 +2154,7 @@ export class SettingsPolicyService {
     if (normalized === 'ADMIN') {
       return 'ADMIN';
     }
-    if (normalized === 'USER' || normalized === 'MANAGER' || normalized === 'STAFF') {
+    if (normalized === 'USER') {
       return 'USER';
     }
     return '';

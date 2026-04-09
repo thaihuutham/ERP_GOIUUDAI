@@ -50,7 +50,7 @@ function normalizeWebRole(value: unknown): UserRole {
   if (normalized === 'ADMIN') {
     return 'ADMIN';
   }
-  if (normalized === 'USER' || normalized === 'MANAGER' || normalized === 'STAFF') {
+  if (normalized === 'USER') {
     return 'USER';
   }
   return DEFAULT_WEB_ROLE;

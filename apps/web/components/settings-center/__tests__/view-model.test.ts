@@ -42,8 +42,7 @@ const sections: MockSection[] = [
 describe('settings view model', () => {
   it('defaults advanced mode by role', () => {
     expect(resolveDefaultAdvancedMode('ADMIN')).toBe(true);
-    expect(resolveDefaultAdvancedMode('MANAGER')).toBe(false);
-    expect(resolveDefaultAdvancedMode('STAFF')).toBe(false);
+    expect(resolveDefaultAdvancedMode('USER')).toBe(false);
     expect(resolveDefaultAdvancedMode(undefined)).toBe(false);
   });
 
@@ -140,12 +139,13 @@ describe('settings view model', () => {
       'security-observability',
       'security-matrix'
     ]);
-    expect(filterDomainTabsByRole('access_security', tabs, 'MANAGER').map((item) => item.key)).toEqual([
+    expect(filterDomainTabsByRole('access_security', tabs, 'USER').map((item) => item.key)).toEqual([
       'security-auth',
       'security-observability'
     ]);
-    expect(filterDomainTabsByRole('access_security', tabs, 'STAFF').map((item) => item.key)).toEqual([
-      'security-auth'
+    expect(filterDomainTabsByRole('access_security', tabs, undefined).map((item) => item.key)).toEqual([
+      'security-auth',
+      'security-observability'
     ]);
   });
 });

@@ -120,11 +120,11 @@ async function main() {
       steps: [
         {
           key: 'approval',
-          name: 'Manager Approval',
+          name: 'User Approval',
           approvalMode: 'ALL',
           minApprovers: 1,
           slaHours: 24,
-          approvers: [{ type: 'ROLE', role: 'MANAGER' }],
+          approvers: [{ type: 'ROLE', role: 'USER' }],
           transitions: [
             { action: 'APPROVE', terminalStatus: 'APPROVED' },
             { action: 'REJECT', terminalStatus: 'REJECTED' }

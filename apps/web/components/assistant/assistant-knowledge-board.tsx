@@ -109,8 +109,7 @@ export function AssistantKnowledgeBoard() {
   const [formSelectedScopeRefs, setFormSelectedScopeRefs] = useState<string[]>([]);
   const [formSelectedRoles, setFormSelectedRoles] = useState<Record<string, boolean>>({
     ADMIN: false,
-    MANAGER: true,
-    STAFF: true
+    USER: true
   });
   const [formIsActive, setFormIsActive] = useState(true);
   const sourceTableFingerprint = useMemo(
@@ -568,7 +567,7 @@ export function AssistantKnowledgeBoard() {
         <fieldset style={{ border: '1px solid #d9eadf', borderRadius: '8px', padding: '0.55rem' }}>
           <legend style={{ fontSize: '0.82rem', padding: '0 0.3rem' }}>Vai trò được phép</legend>
           <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
-            {['ADMIN', 'MANAGER', 'STAFF'].map((roleKey) => (
+            {['ADMIN', 'USER'].map((roleKey) => (
               <label key={roleKey} style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
                 <input
                   type="checkbox"

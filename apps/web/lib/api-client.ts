@@ -3,7 +3,7 @@ import { readStoredAuthSession } from './auth-session';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1').replace(/\/$/, '');
 const WEB_ROLE_STORAGE_KEY = 'erp_web_role';
-const DEV_ROLES = new Set(['STAFF', 'MANAGER', 'ADMIN']);
+const DEV_ROLES = new Set(['USER', 'ADMIN']);
 
 export type ApiListPageInfo = {
   limit: number;
@@ -104,7 +104,7 @@ function resolveDevIdentityHeaders(): Record<string, string> {
   }
 
   const authSession = readStoredAuthSession();
-  let role = 'MANAGER';
+  let role = 'USER';
   if (typeof window !== 'undefined') {
     const storedRole = String(window.localStorage.getItem(WEB_ROLE_STORAGE_KEY) ?? '').trim().toUpperCase();
     if (DEV_ROLES.has(storedRole)) {

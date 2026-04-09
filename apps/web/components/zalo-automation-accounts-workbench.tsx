@@ -212,7 +212,7 @@ export function ZaloAutomationAccountsWorkbench() {
   }, [users]);
 
   const ownerSelectionOptions = useMemo(
-    () => users.filter((user) => user.role === 'ADMIN' || user.role === 'MANAGER'),
+    () => users.filter((user) => user.role === 'ADMIN' || user.role === 'USER'),
     [users]
   );
 

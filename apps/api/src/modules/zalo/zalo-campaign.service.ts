@@ -2409,7 +2409,7 @@ export class ZaloCampaignService {
     const raw = this.toRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
     const userId = this.cleanString(raw.userId ?? raw.sub) || null;
     const roleRaw = this.cleanString(raw.role).toUpperCase();
-    const role = roleRaw === 'ADMIN' ? 'ADMIN' : roleRaw === 'USER' || roleRaw === 'MANAGER' || roleRaw === 'STAFF' ? 'USER' : 'USER';
+    const role = roleRaw === 'ADMIN' ? 'ADMIN' : 'USER';
     return {
       userId,
       role,

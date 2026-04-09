@@ -421,9 +421,8 @@ async function seed() {
   const userRows = Array.from({ length: COUNTS.users }, (_, idx) => {
     const i = idx + 1;
     const employee = employees[idx % employees.length];
-    let role = UserRole.STAFF;
+    let role = UserRole.USER;
     if (i === 1) role = UserRole.ADMIN;
-    if (i >= 2 && i <= 12) role = UserRole.MANAGER;
 
     return {
       tenant_Id: TENANT_ID,
@@ -440,7 +439,7 @@ async function seed() {
     where: { tenant_Id: TENANT_ID, email: { startsWith: 'user.' } },
     orderBy: { email: 'asc' }
   });
-  const approvers = users.filter((user) => user.role === UserRole.ADMIN || user.role === UserRole.MANAGER);
+  const approvers = users.filter((user) => user.role === UserRole.ADMIN || user.role === UserRole.USER);
 
   const customerRows = Array.from({ length: COUNTS.customers }, (_, idx) => {
     const i = idx + 1;
@@ -572,7 +571,7 @@ async function seed() {
           approvers: [
             {
               type: 'ROLE',
-              role: module === 'sales' ? 'MANAGER' : 'ADMIN'
+              role: module === 'sales' ? 'USER' : 'ADMIN'
             }
           ],
           transitions: [
@@ -1480,10 +1479,10 @@ async function seed() {
         settingKey: 'settings.approval_matrix.v1',
         settingValue: {
           rules: [
-            { module: 'sales', minAmount: 0, approverRole: 'MANAGER' },
-            { module: 'finance', minAmount: 0, approverRole: 'MANAGER' },
-            { module: 'scm', minAmount: 0, approverRole: 'MANAGER' },
-            { module: 'hr', minAmount: 0, approverRole: 'MANAGER' }
+            { module: 'sales', minAmount: 0, approverRole: 'USER' },
+            { module: 'finance', minAmount: 0, approverRole: 'USER' },
+            { module: 'scm', minAmount: 0, approverRole: 'USER' },
+            { module: 'hr', minAmount: 0, approverRole: 'USER' }
           ],
           escalation: { enabled: true, slaHours: 24, escalateToRole: 'ADMIN' },
           delegation: { enabled: true, maxDays: 14 }

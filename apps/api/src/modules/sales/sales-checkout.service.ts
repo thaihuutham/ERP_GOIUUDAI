@@ -1231,7 +1231,7 @@ export class SalesCheckoutService {
     if (normalized === UserRole.ADMIN) {
       return UserRole.ADMIN;
     }
-    if (normalized === UserRole.USER || normalized === 'MANAGER' || normalized === 'STAFF') {
+    if (normalized === UserRole.USER) {
       return UserRole.USER;
     }
     return UserRole.USER;

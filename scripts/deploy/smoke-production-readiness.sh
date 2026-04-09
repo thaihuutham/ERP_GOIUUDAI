@@ -8,8 +8,7 @@ SMOKE_BEARER_TOKEN="${SMOKE_BEARER_TOKEN:-}"
 SMOKE_JWT_SECRET="${SMOKE_JWT_SECRET:-${JWT_SECRET:-}}"
 SMOKE_ENV_FILES="${SMOKE_ENV_FILES:-config/.env:.env}"
 SMOKE_AUTH_ROLE_ADMIN="${SMOKE_AUTH_ROLE_ADMIN:-ADMIN}"
-SMOKE_AUTH_ROLE_MANAGER="${SMOKE_AUTH_ROLE_MANAGER:-MANAGER}"
-SMOKE_AUTH_ROLE_STAFF="${SMOKE_AUTH_ROLE_STAFF:-STAFF}"
+SMOKE_AUTH_ROLE_USER="${SMOKE_AUTH_ROLE_USER:-USER}"
 SMOKE_AUTH_SUB_PREFIX="${SMOKE_AUTH_SUB_PREFIX:-phase4_smoke}"
 SMOKE_PAYMENT_CALLBACK_PATH="${SMOKE_PAYMENT_CALLBACK_PATH:-/integrations/payments/bank-events}"
 SMOKE_PAYMENT_CALLBACK_PAYLOAD="${SMOKE_PAYMENT_CALLBACK_PAYLOAD:-}"
@@ -254,21 +253,15 @@ run_permission_boundary_checks() {
   fi
 
   if [ -z "$SMOKE_JWT_SECRET" ]; then
-    log "Permission boundary role check: skip vì không có JWT secret để phát token MANAGER/STAFF."
+    log "Permission boundary role check: skip vì không có JWT secret để phát token USER."
     return
   fi
 
-  local manager_token
-  manager_token="$(build_role_token "$SMOKE_AUTH_ROLE_MANAGER")"
-  local staff_token
-  staff_token="$(build_role_token "$SMOKE_AUTH_ROLE_STAFF")"
+  local user_token
+  user_token="$(build_role_token "$SMOKE_AUTH_ROLE_USER")"
 
-  log "Permission boundary: MANAGER phải bị chặn endpoint admin-only (/settings)."
-  api_request_basic GET "/settings" "" auth "$manager_token"
-  assert_status_in "403"
-
-  log "Permission boundary: STAFF phải bị chặn endpoint admin-only (/settings)."
-  api_request_basic GET "/settings" "" auth "$staff_token"
+  log "Permission boundary: USER phải bị chặn endpoint admin-only (/settings)."
+  api_request_basic GET "/settings" "" auth "$user_token"
   assert_status_in "403"
 }
 

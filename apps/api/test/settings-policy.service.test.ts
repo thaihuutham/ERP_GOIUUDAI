@@ -147,8 +147,7 @@ describe('SettingsPolicyService', () => {
     expect(metadata.groupedSidebar).toHaveLength(4);
     expect(metadata.advancedMode.defaultByRole).toEqual({
       ADMIN: true,
-      MANAGER: false,
-      STAFF: false
+      USER: false
     });
     expect(metadata.domainTabs.org_profile.map((tab) => tab.key)).toEqual(['org-general', 'org-structure']);
     expect(metadata.domainTabs.integrations.map((tab) => tab.key)).toEqual([
@@ -285,7 +284,7 @@ describe('SettingsPolicyService', () => {
     expect(productLeadDays.DIGITAL_SERVICE).toBe(120);
   });
 
-  it('normalizes checkout override roles to ADMIN/MANAGER baseline only', async () => {
+  it('normalizes checkout override roles to ADMIN baseline only', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();
     const search = makeSearchMock();
@@ -294,7 +293,7 @@ describe('SettingsPolicyService', () => {
 
     const result = await service.updateDomain('sales_crm_policies', {
       paymentPolicy: {
-        overrideRoles: ['manager', 'ACCOUNTANT', 'staff', 'ADMIN', 'MANAGER']
+        overrideRoles: ['user', 'ACCOUNTANT', 'ADMIN']
       }
     }, {
       reason: 'normalize checkout override roles'
@@ -302,7 +301,7 @@ describe('SettingsPolicyService', () => {
 
     const sales = result.data as Record<string, unknown>;
     const paymentPolicy = (sales.paymentPolicy ?? {}) as Record<string, unknown>;
-    expect(paymentPolicy.overrideRoles).toEqual(['MANAGER', 'ADMIN']);
+    expect(paymentPolicy.overrideRoles).toEqual(['ADMIN']);
   });
 
   it('blocks removing in-use sales taxonomy values via direct domain update', async () => {
@@ -408,8 +407,7 @@ describe('SettingsPolicyService', () => {
         enabled: true,
         roleScopeDefaults: {
           ADMIN: 'BRANCH',
-          MANAGER: 'TEAM',
-          STAFF: 'SELF'
+          USER: 'TEAM'
         },
         enforcePermissionEngine: true,
         denyIfNoScope: true,
@@ -426,8 +424,7 @@ describe('SettingsPolicyService', () => {
 
     expect(assistantPolicy.enabled).toBe(true);
     expect(roleScopeDefaults.ADMIN).toBe('branch');
-    expect(roleScopeDefaults.MANAGER).toBe('department');
-    expect(roleScopeDefaults.STAFF).toBe('self');
+    expect(roleScopeDefaults.USER).toBe('department');
     expect(assistantPolicy.allowedModules).toEqual(['sales', 'finance']);
   });
 
@@ -644,16 +641,16 @@ describe('SettingsPolicyService', () => {
     const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
 
     cls.setAuth({
-      role: 'MANAGER',
-      email: 'manager@erp.local',
-      userId: 'manager-1'
+      role: 'USER',
+      email: 'user@erp.local',
+      userId: 'user-1'
     });
 
     await expect(
       service.updateDomain('org_profile', {
         companyName: 'Denied update'
       }, {
-        reason: 'manager write without policy'
+        reason: 'user write without policy'
       })
     ).rejects.toThrow('Bạn không có quyền chỉnh domain org_profile.');
   });
@@ -674,25 +671,24 @@ describe('SettingsPolicyService', () => {
     await service.updateDomain('access_security', {
       settingsEditorPolicy: {
         domainRoleMap: {
-          MANAGER: ['org_profile'],
-          STAFF: []
+          USER: ['org_profile']
         },
         userDomainMap: {}
       }
     }, {
-      reason: 'grant manager org profile edit'
+      reason: 'grant user org profile edit'
     });
 
     cls.setAuth({
-      role: 'MANAGER',
-      email: 'manager@erp.local',
-      userId: 'manager-1'
+      role: 'USER',
+      email: 'user@erp.local',
+      userId: 'user-1'
     });
 
     const result = await service.updateDomain('org_profile', {
       companyName: 'Allowed update'
     }, {
-      reason: 'manager write with policy'
+      reason: 'user write with policy'
     });
 
     expect(result.changed).toBe(true);
@@ -705,7 +701,7 @@ describe('SettingsPolicyService', () => {
           baseUrl: 'https://bhtot.example.com'
         }
       }, {
-        reason: 'manager tries sensitive domain without explicit grant'
+        reason: 'user tries sensitive domain without explicit grant'
       })
     ).rejects.toThrow('Domain nhạy cảm integrations yêu cầu quyền explicit.');
   });

@@ -131,7 +131,7 @@ type PendingInboxBulkActionContext = {
 };
 
 const MODULE_OPTIONS = ['crm', 'sales', 'catalog', 'hr', 'finance', 'scm', 'assets', 'projects', 'workflows', 'reports', 'notifications'];
-const ROLE_APPROVER_OPTIONS = ['MANAGER', 'ADMIN', 'STAFF', 'DIRECTOR', 'BRANCH_MANAGER', 'DEPARTMENT_MANAGER'];
+const ROLE_APPROVER_OPTIONS = ['USER', 'ADMIN', 'DIRECTOR', 'BRANCH_MANAGER', 'DEPARTMENT_MANAGER'];
 const TERMINAL_STATUS_OPTIONS: WorkflowStatus[] = ['APPROVED', 'REJECTED', 'ARCHIVED', 'INACTIVE'];
 const SIMULATE_ACTION_OPTIONS = ['APPROVE', 'REJECT', 'APPROVE,APPROVE', 'APPROVE,REJECT'];
 const STEP_TEMPLATE_OPTIONS = [
@@ -168,7 +168,7 @@ function createStepFromTemplate(templateId = 'manager_approval'): BuilderStep {
     approvalMode: 'ALL',
     minApprovers: 1,
     slaHours: 24,
-    approvers: 'ROLE:MANAGER',
+    approvers: 'ROLE:USER',
     approveToStep: '',
     rejectToStep: '',
     approveTerminalStatus: 'APPROVED',
@@ -727,7 +727,7 @@ export function WorkflowsOperationsBoard() {
                   })
                   .filter(Boolean)
                   .join('\n')
-              : 'ROLE:MANAGER',
+              : 'ROLE:USER',
             approveToStep: String(approveTransition?.toStep ?? ''),
             rejectToStep: String(rejectTransition?.toStep ?? ''),
             approveTerminalStatus: (String(approveTransition?.terminalStatus ?? 'APPROVED').toUpperCase() as WorkflowStatus),

@@ -291,7 +291,7 @@ export class RuntimeSettingsService {
         enabled: this.toBool(assistantAccessPolicy.enabled, false),
         roleScopeDefaults: {
           ADMIN: normalizeAssistantScope(roleScopeDefaults.ADMIN, 'company'),
-          USER: normalizeAssistantScope(roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF, 'department')
+          USER: normalizeAssistantScope(roleScopeDefaults.USER, 'department')
         },
         enforcePermissionEngine: this.toBool(assistantAccessPolicy.enforcePermissionEngine, true),
         denyIfNoScope: this.toBool(assistantAccessPolicy.denyIfNoScope, true),

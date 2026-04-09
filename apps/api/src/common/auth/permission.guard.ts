@@ -420,7 +420,7 @@ export class PermissionGuard implements CanActivate {
     if (normalized === 'USER') {
       return 'USER';
     }
-    // Legacy collapse for cutover: MANAGER/STAFF are mapped to USER.
+    // Keep runtime role model strict: only ADMIN/USER are valid decision roles.
     return 'USER';
   }
 

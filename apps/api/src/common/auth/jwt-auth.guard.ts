@@ -193,7 +193,7 @@ export class JwtAuthGuard implements CanActivate {
     if (normalized === 'ADMIN') {
       return ADMIN_ACCESS_ROLE;
     }
-    if (normalized === 'USER' || normalized === 'MANAGER' || normalized === 'STAFF') {
+    if (normalized === 'USER') {
       return USER_ACCESS_ROLE;
     }
     return USER_ACCESS_ROLE;

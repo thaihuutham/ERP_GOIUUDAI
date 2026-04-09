@@ -770,7 +770,7 @@ export function HomeDashboard() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {!canViewAudit && (
-              <p className="dashboard-widget-note">Feed audit chỉ hiển thị cho MANAGER/ADMIN theo policy bảo mật.</p>
+              <p className="dashboard-widget-note">Feed audit chỉ hiển thị cho USER/ADMIN theo policy bảo mật.</p>
             )}
             {canViewAudit && activitiesState.status === 'loading' && activitiesState.data.length === 0 && (
               <>

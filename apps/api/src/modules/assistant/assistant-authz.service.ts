@@ -446,12 +446,11 @@ export class AssistantAuthzService {
   private normalizeAssistantPolicy(value: unknown) {
     const policy = this.ensureRecord(value);
     const roleScopeDefaults = this.ensureRecord(policy.roleScopeDefaults);
-    const userScope = roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF;
     return {
       enabled: this.toBool(policy.enabled, false),
       roleScopeDefaults: {
         ADMIN: this.normalizeScope(roleScopeDefaults.ADMIN, 'company'),
-        USER: this.normalizeScope(userScope, 'department')
+        USER: this.normalizeScope(roleScopeDefaults.USER, 'department')
       } as Record<UserRole, AssistantScopeType>,
       enforcePermissionEngine: this.toBool(policy.enforcePermissionEngine, true),
       denyIfNoScope: this.toBool(policy.denyIfNoScope, true),
@@ -523,7 +522,7 @@ export class AssistantAuthzService {
     const roleRaw = this.cleanString(auth.role).toUpperCase();
     const role = roleRaw === UserRole.ADMIN
       ? UserRole.ADMIN
-      : roleRaw === UserRole.USER || roleRaw === 'MANAGER' || roleRaw === 'STAFF'
+      : roleRaw === UserRole.USER
         ? UserRole.USER
         : null;
 

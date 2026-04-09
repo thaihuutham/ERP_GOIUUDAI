@@ -7,7 +7,7 @@ export type DomainTabConfig = {
   showAccessMatrix?: boolean;
 };
 
-type RoleKey = 'ADMIN' | 'MANAGER' | 'STAFF';
+type RoleKey = 'ADMIN' | 'USER';
 
 type FieldLike = {
   isAdvanced?: boolean;
@@ -112,10 +112,10 @@ export function resolveDomainTabs(domain: string): DomainTabConfig[] {
 
 function normalizeRole(role: string | null | undefined): RoleKey {
   const normalized = String(role ?? '').trim().toUpperCase();
-  if (normalized === 'ADMIN' || normalized === 'MANAGER') {
-    return normalized;
+  if (normalized === 'ADMIN') {
+    return 'ADMIN';
   }
-  return 'STAFF';
+  return 'USER';
 }
 
 export function filterDomainTabsByRole(
@@ -130,8 +130,7 @@ export function filterDomainTabsByRole(
   const roleKey = normalizeRole(role);
   const allowListByRole: Record<RoleKey, string[]> = {
     ADMIN: ['security-auth', 'security-governance', 'security-observability', 'security-matrix'],
-    MANAGER: ['security-auth', 'security-observability'],
-    STAFF: ['security-auth']
+    USER: ['security-auth', 'security-observability']
   };
 
   const allowList = allowListByRole[roleKey];

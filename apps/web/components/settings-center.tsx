@@ -305,8 +305,7 @@ const ASSISTANT_ALLOWED_MODULE_OPTIONS: FieldOption[] = MODULE_OPTIONS.filter(
 
 const ROLE_OPTIONS: FieldOption[] = [
   { value: 'ADMIN', label: 'ADMIN' },
-  { value: 'MANAGER', label: 'MANAGER' },
-  { value: 'STAFF', label: 'STAFF' }
+  { value: 'USER', label: 'USER' }
 ];
 
 const CURRENCY_OPTIONS: FieldOption[] = [
@@ -365,8 +364,7 @@ const CHECKOUT_ACTIVATION_MODE_OPTIONS: FieldOption[] = [
 ];
 
 const CHECKOUT_OVERRIDE_ROLE_OPTIONS: FieldOption[] = [
-  { value: 'ADMIN', label: 'ADMIN' },
-  { value: 'MANAGER', label: 'MANAGER' }
+  { value: 'ADMIN', label: 'ADMIN' }
 ];
 
 const CHECKOUT_ORDER_RESET_RULE_OPTIONS: FieldOption[] = [
@@ -421,8 +419,7 @@ const REASON_TEMPLATES = [
 
 const ROLE_LABEL_MAP: Record<string, string> = {
   ADMIN: 'Admin',
-  MANAGER: 'Manager',
-  STAFF: 'Nhân viên'
+  USER: 'Người dùng'
 };
 
 const ACCESS_SECURITY_ROLE_PLAYBOOK = [
@@ -436,21 +433,12 @@ const ACCESS_SECURITY_ROLE_PLAYBOOK = [
     ]
   },
   {
-    role: 'MANAGER',
-    title: 'Theo dõi phạm vi quản lý',
+    role: 'USER',
+    title: 'Theo dõi theo phạm vi được cấp',
     steps: [
-      'Kiểm tra chính sách đăng nhập áp dụng cho đội nhóm.',
-      'Theo dõi tab nhật ký & Trợ lý AI theo phạm vi phòng/chi nhánh.',
+      'Kiểm tra chính sách đăng nhập áp dụng cho tài khoản của bạn.',
+      'Theo dõi tab nhật ký & Trợ lý AI theo phạm vi đã cấp.',
       'Đề xuất thay đổi cho Admin khi cần mở rộng quyền.'
-    ]
-  },
-  {
-    role: 'STAFF',
-    title: 'Sử dụng tối giản',
-    steps: [
-      'Chỉ theo dõi hướng dẫn đăng nhập/mật khẩu liên quan trực tiếp.',
-      'Không cần thao tác ở ma trận phân quyền.',
-      'Báo lỗi truy cập qua quản lý trực tiếp hoặc Admin.'
     ]
   }
 ] as const;
@@ -714,7 +702,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'security-audit-director', path: 'auditViewPolicy.groups.DIRECTOR.enabled', label: 'Giám đốc: xem toàn công ty', type: 'switch' },
           { id: 'security-audit-branch', path: 'auditViewPolicy.groups.BRANCH_MANAGER.enabled', label: 'Trưởng chi nhánh: xem trong phạm vi chi nhánh', type: 'switch' },
           { id: 'security-audit-department', path: 'auditViewPolicy.groups.DEPARTMENT_MANAGER.enabled', label: 'Trưởng phòng: xem trong phạm vi phòng ban', type: 'switch' },
-          { id: 'security-audit-deny-ungrouped', path: 'auditViewPolicy.denyIfUngroupedManager', label: 'Chặn MANAGER chưa được gán vào đơn vị tổ chức', type: 'switch' }
+          { id: 'security-audit-deny-ungrouped', path: 'auditViewPolicy.denyIfUngroupedManager', label: 'Chặn quản lý chưa được gán vào đơn vị tổ chức', type: 'switch' }
         ]
       },
       {
@@ -724,8 +712,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         fields: [
           { id: 'assistant-policy-enabled', path: 'assistantAccessPolicy.enabled', label: 'Bật chính sách Trợ lý AI', type: 'switch' },
           { id: 'assistant-policy-admin-scope', path: 'assistantAccessPolicy.roleScopeDefaults.ADMIN', label: 'Phạm vi mặc định cho ADMIN', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
-          { id: 'assistant-policy-manager-scope', path: 'assistantAccessPolicy.roleScopeDefaults.MANAGER', label: 'Phạm vi mặc định cho MANAGER', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
-          { id: 'assistant-policy-staff-scope', path: 'assistantAccessPolicy.roleScopeDefaults.STAFF', label: 'Phạm vi mặc định cho STAFF', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
+          { id: 'assistant-policy-user-scope', path: 'assistantAccessPolicy.roleScopeDefaults.USER', label: 'Phạm vi mặc định cho USER', type: 'select', options: ASSISTANT_SCOPE_OPTIONS },
           { id: 'assistant-policy-permission-engine', path: 'assistantAccessPolicy.enforcePermissionEngine', label: 'Bắt buộc qua động cơ phân quyền', type: 'switch' },
           { id: 'assistant-policy-deny-no-scope', path: 'assistantAccessPolicy.denyIfNoScope', label: 'Từ chối khi không xác định được phạm vi', type: 'switch' },
           { id: 'assistant-policy-allowed-modules', path: 'assistantAccessPolicy.allowedModules', label: 'Phân hệ AI được phép truy vấn', type: 'multiSelect', options: ASSISTANT_ALLOWED_MODULE_OPTIONS },
@@ -738,16 +725,9 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         description: 'ADMIN luôn có quyền. Người dùng khác chỉ sửa được miền đã cấp.',
         fields: [
           {
-            id: 'security-policy-manager',
-            path: 'settingsEditorPolicy.domainRoleMap.MANAGER',
-            label: 'Miền cấu hình cho MANAGER',
-            type: 'multiSelect',
-            options: DOMAIN_OPTIONS
-          },
-          {
-            id: 'security-policy-staff',
-            path: 'settingsEditorPolicy.domainRoleMap.STAFF',
-            label: 'Miền cấu hình cho STAFF',
+            id: 'security-policy-user',
+            path: 'settingsEditorPolicy.domainRoleMap.USER',
+            label: 'Miền cấu hình cho USER',
             type: 'multiSelect',
             options: DOMAIN_OPTIONS
           },
@@ -2078,7 +2058,7 @@ export function SettingsCenter() {
   const [accountForm, setAccountForm] = useState({
     fullName: '',
     email: '',
-    role: 'STAFF',
+    role: 'USER',
     positionId: '',
     orgUnitId: ''
   });
@@ -2731,7 +2711,7 @@ export function SettingsCenter() {
       setAccountForm({
         fullName: '',
         email: '',
-        role: 'STAFF',
+        role: 'USER',
         positionId: '',
         orgUnitId: ''
       });
@@ -3895,7 +3875,7 @@ export function SettingsCenter() {
                           <input
                             value={positionForm.level}
                             onChange={(event) => setPositionForm((current) => ({ ...current, level: event.target.value }))}
-                            placeholder="MANAGER / LEAD / STAFF"
+                            placeholder="LEAD / SENIOR / JUNIOR"
                           />
                         </div>
                         <div className="field">

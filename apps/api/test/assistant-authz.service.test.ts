@@ -16,8 +16,7 @@ function makeRuntimeSettingsMock(overrides?: Partial<Record<string, unknown>>) {
         enabled: true,
         roleScopeDefaults: {
           ADMIN: 'company',
-          MANAGER: 'department',
-          STAFF: 'self'
+          USER: 'self'
         },
         enforcePermissionEngine: true,
         denyIfNoScope: true,
@@ -92,6 +91,9 @@ function makePrismaMock(options?: {
         }),
         findMany: vi.fn().mockResolvedValue(usersByEmployees)
       },
+      userPositionAssignment: {
+        findMany: vi.fn().mockResolvedValue([])
+      },
       assistantAccessDecisionLog: {
         create: vi.fn().mockResolvedValue({ id: 'log_1' })
       }
@@ -120,13 +122,13 @@ describe('AssistantAuthzService', () => {
     expect(prisma.client.assistantAccessDecisionLog.create).toHaveBeenCalledTimes(1);
   });
 
-  it('denies STAFF when permission engine is enforced without explicit ALLOW rule', async () => {
+  it('denies USER when permission engine is enforced without explicit ALLOW rule', async () => {
     const cls = makeClsMock({
-      userId: 'u_staff',
-      email: 'staff@erp.local',
-      role: UserRole.STAFF,
-      employeeId: 'e_staff',
-      positionId: 'p_staff'
+      userId: 'u_user',
+      email: 'user@erp.local',
+      role: UserRole.USER,
+      employeeId: 'e_user',
+      positionId: 'p_user'
     });
     const prisma = makePrismaMock({
       positionRules: [],
@@ -140,13 +142,13 @@ describe('AssistantAuthzService', () => {
     expect(prisma.client.assistantAccessDecisionLog.create).toHaveBeenCalled();
   });
 
-  it('resolves STAFF allowed modules from explicit position rules', async () => {
+  it('resolves USER allowed modules from explicit position rules', async () => {
     const cls = makeClsMock({
-      userId: 'u_staff',
-      email: 'staff@erp.local',
-      role: UserRole.STAFF,
-      employeeId: 'e_staff',
-      positionId: 'p_staff'
+      userId: 'u_user',
+      email: 'user@erp.local',
+      role: UserRole.USER,
+      employeeId: 'e_user',
+      positionId: 'p_user'
     });
     const prisma = makePrismaMock({
       positionRules: [
@@ -166,13 +168,13 @@ describe('AssistantAuthzService', () => {
     expect(access.moduleActions.finance).not.toContain(PermissionAction.VIEW);
   });
 
-  it('denies MANAGER when denyIfNoScope=true and manager has no managed org unit', async () => {
+  it('denies USER when denyIfNoScope=true and user has no scope', async () => {
     const cls = makeClsMock({
-      userId: 'u_manager',
-      email: 'manager@erp.local',
-      role: UserRole.MANAGER,
+      userId: 'u_user',
+      email: 'user@erp.local',
+      role: UserRole.USER,
       employeeId: '',
-      positionId: 'p_manager'
+      positionId: 'p_user'
     });
     const prisma = makePrismaMock({
       userEmployeeId: null,
@@ -181,16 +183,16 @@ describe('AssistantAuthzService', () => {
     const runtime = makeRuntimeSettingsMock();
 
     const service = new AssistantAuthzService(cls as any, prisma as any, runtime as any);
-    await expect(service.resolveCurrentAccess()).rejects.toThrow('không resolve được scope AI');
+    await expect(service.resolveCurrentAccess()).rejects.toThrow('không có quyền VIEW');
   });
 
-  it('resolves MANAGER branch scope from org tree', async () => {
+  it('resolves USER branch scope from org tree', async () => {
     const cls = makeClsMock({
-      userId: 'u_manager',
-      email: 'manager@erp.local',
-      role: UserRole.MANAGER,
-      employeeId: 'e_manager',
-      positionId: 'p_manager'
+      userId: 'u_user',
+      email: 'user@erp.local',
+      role: UserRole.USER,
+      employeeId: 'e_user',
+      positionId: 'p_user'
     });
     const prisma = makePrismaMock({
       managedUnits: [
@@ -214,8 +216,7 @@ describe('AssistantAuthzService', () => {
         enabled: true,
         roleScopeDefaults: {
           ADMIN: 'company',
-          MANAGER: 'branch',
-          STAFF: 'self'
+          USER: 'branch'
         },
         enforcePermissionEngine: false,
         denyIfNoScope: true,
@@ -232,11 +233,11 @@ describe('AssistantAuthzService', () => {
     expect(access.scope.actorIds).toEqual(expect.arrayContaining(['u_01', 'u_02']));
   });
 
-  it('falls back to company scope for synthetic dev MANAGER without employee mapping', async () => {
+  it('falls back to company scope for synthetic dev USER without employee mapping', async () => {
     const cls = makeClsMock({
-      userId: 'dev_manager',
-      email: 'manager@local.erp',
-      role: UserRole.MANAGER,
+      userId: 'dev_user',
+      email: 'user@local.erp',
+      role: UserRole.USER,
       employeeId: '',
       positionId: ''
     });
@@ -249,8 +250,7 @@ describe('AssistantAuthzService', () => {
         enabled: true,
         roleScopeDefaults: {
           ADMIN: 'company',
-          MANAGER: 'department',
-          STAFF: 'self'
+          USER: 'department'
         },
         enforcePermissionEngine: false,
         denyIfNoScope: true,

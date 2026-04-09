@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-09 11:35 +07
+- Time: 2026-04-09 11:59 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-09_1135_codex.md`
+- Session Log: `.agent/sessions/2026-04-09_1159_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,37 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-09 11:59 (admin/user cutover continuation: scripts + runtime sweep)
+- User confirmation:
+  - tiếp tục kế hoạch đang dở với chỉ thị ngắn: `ok, bạn làm đi`.
+- Đã xử lý:
+  - hoàn tất cleanup role legacy trong script/runtime:
+    - `scripts/deploy/smoke-crm-conversations.sh`: default smoke role `USER`.
+    - `scripts/deploy/smoke-production-readiness.sh`:
+      - bỏ nhánh verify riêng `MANAGER/STAFF`,
+      - giữ boundary check: `ADMIN` pass, `USER` bị chặn endpoint admin-only.
+    - `apps/api/scripts/smoke-workflow-definition-lifecycle.ts`:
+      - workflow smoke approver role `USER`.
+    - `apps/api/scripts/seed-demo.ts`:
+      - seed users role model chuyển `ADMIN/USER`,
+      - approval matrix + workflow graph demo chuyển approver role `USER`.
+  - xác nhận phạm vi runtime chính đã sạch literal legacy:
+    - `apps/api/src`, `apps/web/components`, `apps/web/lib`, `scripts/deploy`, `apps/api/scripts` không còn `MANAGER/STAFF`.
+- Verification:
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `bash -n scripts/deploy/smoke-crm-conversations.sh scripts/deploy/smoke-production-readiness.sh` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/assistant-authz.service.test.ts test/jwt-auth.guard.test.ts test/sales-checkout.service.test.ts test/zalo-campaign.service.test.ts` ✅ (49 tests)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web -- lib/__tests__/access-policy.test.ts components/settings-center/__tests__/view-model.test.ts` ✅ (13 tests)
+- Notes:
+  - chưa xử lý full literal `MANAGER/STAFF` cho toàn bộ test/e2e/docs lịch sử trong session này.
+  - runtime path phục vụ deploy và nghiệp vụ chính đã theo role model `ADMIN/USER`.
 
 ## Update 2026-04-09 11:35 (checkpoint push + start admin/user cutover stabilization)
 - User confirmation:

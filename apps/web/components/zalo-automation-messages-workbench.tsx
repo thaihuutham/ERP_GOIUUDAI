@@ -241,7 +241,7 @@ function permissionBadge(permission: ZaloPermissionLevel | null | undefined) {
 
 function isOutgoingMessage(message: MessageRow) {
   const senderType = String(message.senderType ?? '').trim().toUpperCase();
-  if (senderType === 'AGENT' || senderType === 'STAFF' || senderType === 'ADMIN' || senderType === 'SYSTEM') {
+  if (senderType === 'AGENT' || senderType === 'USER' || senderType === 'ADMIN' || senderType === 'SYSTEM') {
     return true;
   }
   return false;

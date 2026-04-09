@@ -721,7 +721,7 @@ function buildVehicleFormState(
 
 function resolveCurrentActorIdentity(role: string) {
   const roleUpper = String(role ?? '').trim().toUpperCase();
-  const normalizedRole = roleUpper === 'ADMIN' ? 'ADMIN' : roleUpper === 'STAFF' ? 'STAFF' : 'MANAGER';
+  const normalizedRole = roleUpper === 'ADMIN' ? 'ADMIN' : 'USER';
   if (!AUTH_ENABLED) {
     return {
       role: normalizedRole,

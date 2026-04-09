@@ -26,7 +26,7 @@ export type AssistantAccess = {
   actor: {
     userId: string;
     email: string;
-    role: 'STAFF' | 'MANAGER' | 'ADMIN';
+    role: 'USER' | 'ADMIN';
     tenantId: string;
     employeeId?: string;
     positionId?: string;

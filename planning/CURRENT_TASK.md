@@ -2,9 +2,40 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-09 11:35 +07
+- Last updated: 2026-04-09 11:59 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-09 11:59 +07 (Admin/User cutover continuation: scripts/runtime sweep)
+- User request:
+  - tiếp tục thực hiện kế hoạch đang dở (`ok, bạn làm đi`).
+- Đã triển khai:
+  - hoàn tất sweep role legacy trong các script runtime/deploy:
+    - `scripts/deploy/smoke-crm-conversations.sh`: default role smoke `USER`.
+    - `scripts/deploy/smoke-production-readiness.sh`:
+      - bỏ nhánh `MANAGER/STAFF`,
+      - chỉ verify boundary `USER` bị chặn ở endpoint admin-only.
+    - `apps/api/scripts/smoke-workflow-definition-lifecycle.ts`:
+      - approver role `MANAGER` -> `USER`.
+    - `apps/api/scripts/seed-demo.ts`:
+      - seed user role `STAFF/MANAGER` -> `USER`,
+      - approval matrix/workflow graph demo chuyển approver role sang `USER`.
+  - trạng thái runtime sweep:
+    - `MANAGER/STAFF` không còn xuất hiện trong `apps/api/src`, `apps/web/components`, `apps/web/lib`, `scripts/deploy`, `apps/api/scripts`.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `bash -n scripts/deploy/smoke-crm-conversations.sh scripts/deploy/smoke-production-readiness.sh` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts test/assistant-authz.service.test.ts test/jwt-auth.guard.test.ts test/sales-checkout.service.test.ts test/zalo-campaign.service.test.ts` ✅ (`49 passed`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web -- lib/__tests__/access-policy.test.ts components/settings-center/__tests__/view-model.test.ts` ✅ (`13 passed`)
+- Notes:
+  - phạm vi session này ưu tiên runtime/deploy path để chốt behavior `ADMIN/USER`.
+  - vẫn còn literal `MANAGER/STAFF` ở test/e2e/docs lịch sử; cần batch riêng nếu muốn cleanup toàn repo.
 
 ## Session Update 2026-04-09 11:35 +07 (Checkpoint push + start admin/user cutover stabilization)
 - User request:
