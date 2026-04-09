@@ -1093,21 +1093,43 @@ export class CrmService {
     return created;
   }
 
-  async markPaymentRequestPaid(id: string) {
+  async markPaymentRequestPaid(id: string, payload: Record<string, unknown>) {
     const row = await this.prisma.client.paymentRequest.findFirst({ where: { id } });
     if (!row) {
       throw new NotFoundException('Không tìm thấy yêu cầu thanh toán.');
     }
+    const actor = this.resolveCustomerActor();
+    if (!actor.role || actor.role === UserRole.STAFF) {
+      throw new ForbiddenException('Sale/Staff không được phép mark paid thủ công. Vui lòng dùng webhook hoặc kế toán/admin override.');
+    }
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.MANAGER) {
+      throw new ForbiddenException('Chỉ kế toán/admin (vai trò quản lý) được phép mark paid thủ công.');
+    }
+    const reason = this.cleanString(payload.reason);
+    const reference = this.cleanString(payload.reference);
+    if (!reason) {
+      throw new BadRequestException('Thiếu reason khi mark paid thủ công.');
+    }
+    if (!reference) {
+      throw new BadRequestException('Thiếu reference khi mark paid thủ công.');
+    }
+    const note = this.cleanString(payload.note);
     const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
     const finalizedCustomerStage = this.resolveFinalizedCustomerStage(salesPolicy.customerTaxonomy.stages);
     const purchasedCustomerTag = this.resolvePurchasedCustomerTag(salesPolicy.tagRegistry.customerTags);
+    const overrideNote = [
+      this.cleanString(row.note),
+      `[override] role=${actor.role}; by=${actor.userId || actor.email || 'unknown'}; reason=${reason}; reference=${reference}`,
+      note
+    ].filter(Boolean).join(' | ');
 
     await this.prisma.client.$transaction(async (tx) => {
       await tx.paymentRequest.updateMany({
         where: { id: row.id },
         data: {
           status: 'DA_THANH_TOAN',
-          paidAt: new Date()
+          paidAt: new Date(),
+          note: overrideNote
         }
       });
 
@@ -1129,9 +1151,16 @@ export class CrmService {
       }
 
       if (row.invoiceId || row.invoiceNo) {
+        const paidAmount = row.amount ?? undefined;
+        const paidAt = new Date();
         await tx.invoice.updateMany({
           where: row.invoiceId ? { id: row.invoiceId } : { invoiceNo: row.invoiceNo ?? undefined },
-          data: { status: GenericStatus.APPROVED }
+          data: {
+            status: GenericStatus.APPROVED,
+            paidAmount,
+            paidAt,
+            closedAt: paidAt
+          }
         });
       }
     });

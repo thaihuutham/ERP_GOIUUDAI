@@ -1267,6 +1267,7 @@ export class SettingsPolicyService {
       const bhtot = this.ensureRecord(integrations.bhtot);
       const ai = this.ensureRecord(integrations.ai);
       const zalo = this.ensureRecord(integrations.zalo);
+      const payments = this.ensureRecord(integrations.payments);
 
       const {
         apiSecret: _bhtotApiSecret,
@@ -1290,6 +1291,12 @@ export class SettingsPolicyService {
         isConfigured: _zaloIsConfigured,
         ...zaloSafe
       } = zalo;
+      const {
+        token: _paymentsToken,
+        hasSecret: _paymentsHasSecret,
+        isConfigured: _paymentsIsConfigured,
+        ...paymentsSafe
+      } = payments;
 
       const normalizedApiKeyRef = this.cleanString(bhtot.apiKeyRef);
       const normalizedApiKey = this.readDecryptedSecret(bhtot.apiKey, 'integrations.bhtot.apiKey', { strict: false });
@@ -1299,6 +1306,7 @@ export class SettingsPolicyService {
       const normalizedZaloAccessToken = this.readDecryptedSecret(zalo.accessToken, 'integrations.zalo.accessToken', { strict: false });
       const normalizedZaloWebhookSecretRef = this.cleanString(zalo.webhookSecretRef);
       const normalizedZaloWebhookSecret = this.readDecryptedSecret(zalo.webhookSecret, 'integrations.zalo.webhookSecret', { strict: false });
+      const normalizedPaymentsSecretRef = this.cleanString(payments.bankWebhookSecretRef);
 
       return {
         ...integrations,
@@ -1328,6 +1336,13 @@ export class SettingsPolicyService {
           webhookSecretRef: normalizedZaloWebhookSecretRef,
           outboundTimeoutMs: this.toInt(zalo.outboundTimeoutMs, 20000, 2000, 180000),
           lastValidatedAt: zalo.lastValidatedAt ? String(zalo.lastValidatedAt) : null
+        },
+        payments: {
+          ...paymentsSafe,
+          enabled: this.toBool(payments.enabled, true),
+          bankWebhookSecretRef: normalizedPaymentsSecretRef,
+          callbackSkewSeconds: this.toInt(payments.callbackSkewSeconds, 300, 10, 86_400),
+          reconcileEnabled: this.toBool(payments.reconcileEnabled, true)
         }
       };
     }
@@ -1370,16 +1385,29 @@ export class SettingsPolicyService {
     if (domain === 'sales_crm_policies') {
       const sales = this.ensureRecord(merged);
       const orderSettings = this.ensureRecord(sales.orderSettings);
+      const paymentPolicy = this.ensureRecord(sales.paymentPolicy);
       const customerTaxonomy = this.ensureRecord(sales.customerTaxonomy);
       const tagRegistry = this.ensureRecord(sales.tagRegistry);
       const renewalReminder = this.ensureRecord(sales.renewalReminder);
       const productLeadDays = this.ensureRecord(renewalReminder.productLeadDays);
+      const normalizedOverrideRoles = this.toStringArray(paymentPolicy.overrideRoles)
+        .map((item) => this.cleanString(item).toUpperCase())
+        .filter((item) => item === 'ADMIN' || item === 'MANAGER')
+        .filter((item, index, list) => list.indexOf(item) === index);
+      const overrideRoles = normalizedOverrideRoles.length > 0 ? normalizedOverrideRoles : ['ADMIN', 'MANAGER'];
       return {
         ...sales,
         orderSettings: {
           allowIncreaseWithoutApproval: this.toBool(orderSettings.allowIncreaseWithoutApproval, true),
           requireApprovalForDecrease: this.toBool(orderSettings.requireApprovalForDecrease, true),
           approverId: this.cleanString(orderSettings.approverId)
+        },
+        paymentPolicy: {
+          ...paymentPolicy,
+          partialPaymentEnabled: this.toBool(paymentPolicy.partialPaymentEnabled, true),
+          overrideRoles,
+          callbackTolerance: this.toInt(paymentPolicy.callbackTolerance, 300, 10, 86_400),
+          reconcileSchedule: this.cleanString(paymentPolicy.reconcileSchedule) || '0 */2 * * *'
         },
         customerTaxonomy: {
           stages: this.normalizeSalesTaxonomyValues(customerTaxonomy.stages),
@@ -1851,12 +1879,14 @@ export class SettingsPolicyService {
       const bhtot = this.ensureRecord(integrations.bhtot);
       const ai = this.ensureRecord(integrations.ai);
       const zalo = this.ensureRecord(integrations.zalo);
+      const payments = this.ensureRecord(integrations.payments);
 
       for (const [field, ref] of [
         ['integrations.bhtot.apiKeyRef', this.cleanString(bhtot.apiKeyRef)],
         ['integrations.ai.apiKeyRef', this.cleanString(ai.apiKeyRef)],
         ['integrations.zalo.accessTokenRef', this.cleanString(zalo.accessTokenRef)],
-        ['integrations.zalo.webhookSecretRef', this.cleanString(zalo.webhookSecretRef)]
+        ['integrations.zalo.webhookSecretRef', this.cleanString(zalo.webhookSecretRef)],
+        ['integrations.payments.bankWebhookSecretRef', this.cleanString(payments.bankWebhookSecretRef)]
       ]) {
         if (ref && !this.isAllowedSecretRef(ref)) {
           errors.push(`${field} không nằm trong allowlist.`);
@@ -1880,6 +1910,9 @@ export class SettingsPolicyService {
       }
       if (this.toBool(zalo.enabled, false) && !this.cleanString(zalo.webhookSecret) && !this.cleanString(zalo.webhookSecretRef)) {
         warnings.push('Zalo enabled nhưng chưa có webhookSecret hoặc webhookSecretRef.');
+      }
+      if (this.toBool(payments.enabled, true) && !this.cleanString(payments.bankWebhookSecretRef)) {
+        warnings.push('Payments callback enabled nhưng chưa có bankWebhookSecretRef.');
       }
     }
 
@@ -1927,10 +1960,12 @@ export class SettingsPolicyService {
     const bhtot = this.ensureRecord(integrations.bhtot);
     const ai = this.ensureRecord(integrations.ai);
     const zalo = this.ensureRecord(integrations.zalo);
+    const payments = this.ensureRecord(integrations.payments);
     const bhtotSecret = this.resolveSecretValue(bhtot.apiKey, bhtot.apiKeyRef, 'BHTOT_API_KEY');
     const aiSecret = this.resolveSecretValue(ai.apiKey, ai.apiKeyRef, 'AI_OPENAI_COMPAT_API_KEY');
     const zaloToken = this.resolveSecretValue(zalo.accessToken, zalo.accessTokenRef, 'ZALO_OA_ACCESS_TOKEN');
     const zaloWebhookSecret = this.resolveSecretValue(zalo.webhookSecret, zalo.webhookSecretRef, 'ZALO_OA_WEBHOOK_SECRET');
+    const paymentsSecret = this.resolveSecretValue('', payments.bankWebhookSecretRef, 'PAYMENTS_BANK_WEBHOOK_SECRET');
 
     return {
       ...integrations,
@@ -1948,6 +1983,11 @@ export class SettingsPolicyService {
         ...zalo,
         isConfigured: Boolean(this.cleanString(zalo.outboundUrl) || this.cleanString(zalo.apiBaseUrl)),
         hasSecret: Boolean(zaloToken || zaloWebhookSecret)
+      },
+      payments: {
+        ...payments,
+        isConfigured: this.toBool(payments.enabled, true),
+        hasSecret: Boolean(paymentsSecret)
       }
     };
   }

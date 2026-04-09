@@ -5,6 +5,7 @@ import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import { useAccessPolicy } from './access-policy-context';
+import { useUserRole } from './user-role-context';
 import { Badge, statusToBadge } from './ui';
 
 type GenericStatus = 'ALL' | 'ACTIVE' | 'INACTIVE' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -147,6 +148,12 @@ type CreatePaymentRequestForm = {
   note: string;
 };
 
+type MarkPaymentRequestForm = {
+  reason: string;
+  reference: string;
+  note: string;
+};
+
 type MergeCustomersForm = {
   primaryCustomerId: string;
   mergedCustomerId: string;
@@ -176,6 +183,11 @@ type CustomerColumnDefinition = {
 
 const STATUS_OPTIONS: GenericStatus[] = ['ALL', 'ACTIVE', 'INACTIVE', 'DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'ARCHIVED'];
 const PAYMENT_STATUS_OPTIONS = ['ALL', 'DA_GUI', 'DA_THANH_TOAN', 'HUY'] as const;
+const DEFAULT_MARK_PAID_FORM: MarkPaymentRequestForm = {
+  reason: 'Webhook timeout fallback',
+  reference: '',
+  note: ''
+};
 const CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.customer-column-settings.v1';
 const CUSTOMER_IMPORT_MAX_ROWS = 400;
 
@@ -442,11 +454,13 @@ function readSelectedOptions(event: ChangeEvent<HTMLSelectElement>) {
 
 export function CrmOperationsBoard() {
   const { canModule, canAction } = useAccessPolicy();
+  const { role } = useUserRole();
   const canView = canModule('crm');
   const canCreate = canAction('crm', 'CREATE');
   const canUpdate = canAction('crm', 'UPDATE');
   const canDelete = canAction('crm', 'DELETE');
   const canApprove = canAction('crm', 'APPROVE');
+  const canManualMarkPaid = canApprove && role !== 'STAFF';
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
@@ -486,6 +500,7 @@ export function CrmOperationsBoard() {
 
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState('');
+  const [markPaidTargetId, setMarkPaidTargetId] = useState('');
 
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
   const [isLoadingInteractions, setIsLoadingInteractions] = useState(false);
@@ -551,6 +566,7 @@ export function CrmOperationsBoard() {
     sentAt: '',
     note: ''
   });
+  const [markPaidForm, setMarkPaidForm] = useState<MarkPaymentRequestForm>(DEFAULT_MARK_PAID_FORM);
 
   const [mergeForm, setMergeForm] = useState<MergeCustomersForm>({
     primaryCustomerId: '',
@@ -563,6 +579,10 @@ export function CrmOperationsBoard() {
   const selectedPaymentRequest = useMemo(
     () => paymentRequests.find((row) => row.id === selectedPaymentRequestId) ?? null,
     [paymentRequests, selectedPaymentRequestId]
+  );
+  const markPaidTarget = useMemo(
+    () => paymentRequests.find((row) => row.id === markPaidTargetId) ?? null,
+    [paymentRequests, markPaidTargetId]
   );
 
   const orderedCustomerColumns = useMemo(
@@ -650,6 +670,16 @@ export function CrmOperationsBoard() {
       setSelectedPaymentRequestId(paymentRequests[0].id);
     }
   }, [paymentRequests, selectedPaymentRequestId]);
+
+  useEffect(() => {
+    if (!markPaidTargetId) {
+      return;
+    }
+    if (!paymentRequests.some((row) => row.id === markPaidTargetId)) {
+      setMarkPaidTargetId('');
+      setMarkPaidForm(DEFAULT_MARK_PAID_FORM);
+    }
+  }, [markPaidTargetId, paymentRequests]);
 
   useEffect(() => {
     if (!selectedCustomerId) {
@@ -1124,16 +1154,52 @@ export function CrmOperationsBoard() {
     }
   };
 
-  const onMarkPaid = async (paymentRequestId: string) => {
-    if (!canApprove) return;
+  const openMarkPaidForm = (paymentRequestId: string) => {
+    if (!canManualMarkPaid) return;
+    setMarkPaidTargetId(paymentRequestId);
+    setMarkPaidForm((prev) => ({
+      reason: prev.reason.trim() || DEFAULT_MARK_PAID_FORM.reason,
+      reference: '',
+      note: ''
+    }));
+    setErrorMessage(null);
+    setResultMessage(null);
+  };
+
+  const onCancelMarkPaid = () => {
+    setMarkPaidTargetId('');
+    setMarkPaidForm(DEFAULT_MARK_PAID_FORM);
+  };
+
+  const onSubmitMarkPaid = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canManualMarkPaid || !markPaidTargetId) return;
+
+    const reason = markPaidForm.reason.trim();
+    const reference = markPaidForm.reference.trim();
+    if (!reason) {
+      setErrorMessage('Cần nhập reason để mark paid thủ công.');
+      return;
+    }
+    if (!reference) {
+      setErrorMessage('Cần nhập reference để mark paid thủ công.');
+      return;
+    }
 
     setErrorMessage(null);
     setResultMessage(null);
     try {
-      await apiRequest(`/crm/payment-requests/${paymentRequestId}/mark-paid`, {
-        method: 'POST'
+      await apiRequest(`/crm/payment-requests/${markPaidTargetId}/mark-paid`, {
+        method: 'POST',
+        body: {
+          reason,
+          reference,
+          note: markPaidForm.note.trim() || undefined
+        }
       });
       setResultMessage('Đã ghi nhận thanh toán thành công.');
+      setMarkPaidTargetId('');
+      setMarkPaidForm(DEFAULT_MARK_PAID_FORM);
       await Promise.all([loadPaymentRequests(), loadCustomers()]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Không thể mark paid cho payment request.');
@@ -2068,13 +2134,13 @@ export function CrmOperationsBoard() {
                         <td>{toDateTime(item.sentAt)}</td>
                         <td>{toDateTime(item.paidAt)}</td>
                         <td>
-                          {canApprove && item.status !== 'DA_THANH_TOAN' ? (
+                          {canManualMarkPaid && item.status !== 'DA_THANH_TOAN' ? (
                             <button
                               type="button"
                               className="btn btn-ghost"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                void onMarkPaid(item.id);
+                                openMarkPaidForm(item.id);
                               }}
                             >
                               Mark paid
@@ -2086,6 +2152,50 @@ export function CrmOperationsBoard() {
                   </tbody>
                 </table>
               </div>
+            ) : null}
+
+            {canManualMarkPaid && markPaidTarget ? (
+              <form className="form-grid" onSubmit={onSubmitMarkPaid}>
+                <h3>Mark paid thủ công</h3>
+                <p className="muted">
+                  Payment request: {markPaidTarget.invoiceNo || markPaidTarget.orderNo || markPaidTarget.id}
+                  {' · '}
+                  Khách hàng: {markPaidTarget.customer?.fullName || markPaidTarget.customerId || '--'}
+                </p>
+                <div className="field">
+                  <label htmlFor="crm-mark-paid-reason">Reason *</label>
+                  <input
+                    id="crm-mark-paid-reason"
+                    required
+                    value={markPaidForm.reason}
+                    onChange={(event) => setMarkPaidForm((prev) => ({ ...prev, reason: event.target.value }))}
+                    placeholder="Webhook timeout fallback"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="crm-mark-paid-reference">Reference *</label>
+                  <input
+                    id="crm-mark-paid-reference"
+                    required
+                    value={markPaidForm.reference}
+                    onChange={(event) => setMarkPaidForm((prev) => ({ ...prev, reference: event.target.value }))}
+                    placeholder="PR-PAID-20260409-001"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="crm-mark-paid-note">Note</label>
+                  <textarea
+                    id="crm-mark-paid-note"
+                    value={markPaidForm.note}
+                    onChange={(event) => setMarkPaidForm((prev) => ({ ...prev, note: event.target.value }))}
+                    placeholder="Ghi chú bổ sung (optional)"
+                  />
+                </div>
+                <div className="action-buttons">
+                  <button type="submit" className="btn btn-primary">Xác nhận mark paid</button>
+                  <button type="button" className="btn btn-ghost" onClick={onCancelMarkPaid}>Hủy</button>
+                </div>
+              </form>
             ) : null}
 
             {canCreate ? (

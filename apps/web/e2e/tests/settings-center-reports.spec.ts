@@ -1,4 +1,4 @@
-import { expect, test, type Route } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 
 function json(route: Route, payload: unknown, status = 200) {
   return route.fulfill({
@@ -6,6 +6,46 @@ function json(route: Route, payload: unknown, status = 200) {
     contentType: 'application/json',
     body: JSON.stringify(payload)
   });
+}
+
+async function clickRoleControl(
+  page: Page,
+  role: 'button' | 'tab' | 'link',
+  name: string | RegExp
+) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const locator = page.getByRole(role, { name }).first();
+    try {
+      await expect(locator).toBeVisible({ timeout: 5000 });
+      await locator.click({ timeout: 5000 });
+      return;
+    } catch (error) {
+      if (attempt === 4) {
+        throw error;
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+}
+
+async function checkSelectAllCheckbox(page: Page) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const checkbox = page.locator('table.data-table thead input[type="checkbox"]').first();
+    try {
+      await expect(checkbox).toBeVisible({ timeout: 5000 });
+      await checkbox.check({ force: true, timeout: 5000 });
+      return;
+    } catch (error) {
+      if (attempt === 4) {
+        throw error;
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+}
+
+async function waitForSettingsReloadReady(page: Page) {
+  await expect(page.getByRole('button', { name: 'Làm mới' })).toBeEnabled();
 }
 
 const DOMAIN_STATES = [
@@ -125,11 +165,13 @@ function buildDomainPayload(domain: string) {
 }
 
 test.describe('Settings Center reports alignment', () => {
-  test('renders phase-2 managed list fields for security and finance domains', async ({ page }) => {
+  test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem('erp_web_role', 'ADMIN');
     });
+  });
 
+  test('renders phase-2 managed list fields for security and finance domains', async ({ page }) => {
     await page.route('**/api/v1/**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -203,10 +245,6 @@ test.describe('Settings Center reports alignment', () => {
   });
 
   test('opens a dedicated position detail page when clicking position name', async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('erp_web_role', 'ADMIN');
-    });
-
     await page.route('**/api/v1/**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -344,8 +382,9 @@ test.describe('Settings Center reports alignment', () => {
 
     await page.goto('/modules/settings');
 
-    await page.getByRole('button', { name: /Chính sách.*nhân sự/i }).click();
-    await page.getByRole('tab', { name: 'Phụ lục hợp đồng' }).click();
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', /Chính sách.*nhân sự/i);
+    await clickRoleControl(page, 'tab', 'Phụ lục hợp đồng');
 
     await expect(page.locator('[data-testid="list-manager-hr-field-custom1-options"]')).toBeVisible();
     await expect(page.locator('[data-testid="list-manager-hr-field-custom2-options"]')).toBeVisible();
@@ -524,19 +563,26 @@ test.describe('Settings Center reports alignment', () => {
     page.once('dialog', (dialog) => dialog.accept());
 
     await page.goto('/modules/settings');
-    await page.getByRole('button', { name: /Chính sách (HR|nhân sự)/i }).click();
-    await page.getByRole('tab', { name: 'Tài khoản nhân viên' }).click();
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', /Chính sách (HR|nhân sự)/i);
+    await clickRoleControl(page, 'tab', 'Tài khoản nhân viên');
 
     await expect(page.getByText('Danh sách tài khoản IAM')).toBeVisible();
+    await expect(page.locator('table.data-table tbody tr')).toHaveCount(2);
 
-    await page.locator('table.data-table thead input[type="checkbox"]').first().check();
-    await page.getByRole('button', { name: 'Bulk reset mật khẩu' }).click();
+    await checkSelectAllCheckbox(page);
+    await clickRoleControl(page, 'button', 'Bulk reset mật khẩu');
 
+    await expect.poll(() => resetRequests.length).toBe(2);
     await expect(page.getByText('Reset mật khẩu IAM: thành công 2/2.')).toBeVisible();
     expect(resetRequests.sort()).toEqual(['user_1', 'user_2']);
   });
 
   test('advanced mode defaults to OFF for manager and reveals technical fields on demand', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('erp_web_role', 'MANAGER');
+    });
+
     await page.route('**/api/v1/**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -674,69 +720,51 @@ test.describe('Settings Center reports alignment', () => {
     });
 
     await page.goto('/modules/settings');
-
-    const waitForReloadDone = async () => {
-      await expect(page.getByRole('button', { name: 'Làm mới' })).toBeEnabled();
-    };
-    const clickByRole = async (role: 'button' | 'tab', name: string) => {
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        try {
-          await page.getByRole(role, { name }).click({ force: true, timeout: 5000 });
-          return;
-        } catch (error) {
-          if (attempt === 3) {
-            throw error;
-          }
-          await page.waitForTimeout(150);
-        }
-      }
-    };
-
-    await waitForReloadDone();
-    await clickByRole('button', 'Ma trận phê duyệt');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Ma trận phê duyệt');
     await expect(page.getByRole('tab', { name: 'Quy tắc duyệt' })).toBeVisible();
-    await clickByRole('tab', 'Leo thang & ủy quyền');
+    await clickRoleControl(page, 'tab', 'Leo thang & ủy quyền');
     await expect(page.getByRole('heading', { name: 'Leo thang & ủy quyền' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Kiểm soát tài chính');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Kiểm soát tài chính');
     await expect(page.getByRole('tab', { name: 'Kỳ kế toán' })).toBeVisible();
-    await clickByRole('tab', 'Đánh số chứng từ');
+    await clickRoleControl(page, 'tab', 'Đánh số chứng từ');
     await expect(page.getByRole('heading', { name: 'Đánh số chứng từ' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Chính sách CRM/Bán hàng');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Chính sách CRM/Bán hàng');
     await expect(page.getByRole('tab', { name: 'Quy tắc đơn hàng' })).toBeVisible();
-    await clickByRole('tab', 'Phân loại khách hàng');
+    await clickRoleControl(page, 'tab', 'Phân loại khách hàng');
     await expect(page.getByRole('heading', { name: 'Phân loại khách hàng' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Chính sách Danh mục/SCM');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Chính sách Danh mục/SCM');
     await expect(page.getByRole('tab', { name: 'Mặc định hệ thống' })).toBeVisible();
-    await clickByRole('tab', 'Ràng buộc nhập/xuất');
+    await clickRoleControl(page, 'tab', 'Ràng buộc nhập/xuất');
     await expect(page.getByRole('heading', { name: 'Ràng buộc nhập/xuất' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Tích hợp hệ thống');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Tích hợp hệ thống');
     await expect(page.getByRole('tab', { name: 'BHTOT' })).toBeVisible();
-    await clickByRole('tab', 'Zalo OA');
+    await clickRoleControl(page, 'tab', 'Zalo OA');
     await expect(page.getByRole('heading', { name: 'Zalo OA' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Thông báo & mẫu');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Thông báo & mẫu');
     await expect(page.getByRole('tab', { name: 'Template' })).toBeVisible();
-    await clickByRole('tab', 'Kênh gửi');
+    await clickRoleControl(page, 'tab', 'Kênh gửi');
     await expect(page.getByRole('heading', { name: 'Chính sách kênh gửi' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Tìm kiếm & hiệu năng');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Tìm kiếm & hiệu năng');
     await expect(page.getByRole('tab', { name: 'Runtime' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Reindex' })).toBeVisible();
 
-    await waitForReloadDone();
-    await clickByRole('button', 'Dữ liệu & backup');
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Dữ liệu & backup');
     await expect(page.getByRole('tab', { name: 'Vòng đời dữ liệu' })).toBeVisible();
-    await clickByRole('tab', 'Chính sách export');
+    await clickRoleControl(page, 'tab', 'Chính sách export');
     await expect(page.getByRole('heading', { name: 'Chính sách export' })).toBeVisible();
   });
 
@@ -850,9 +878,10 @@ test.describe('Settings Center reports alignment', () => {
     await expect(page.getByText('Nhóm Metadata Chung')).toBeVisible();
     await expect(page.getByLabel('Chế độ Chuyên gia / IT')).not.toBeChecked();
 
-    await page.getByRole('button', { name: 'Ma trận phê duyệt' }).click();
+    await waitForSettingsReloadReady(page);
+    await clickRoleControl(page, 'button', 'Ma trận phê duyệt');
     await expect(page.getByRole('tab', { name: 'Luồng duyệt metadata' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Escalation metadata' }).click();
+    await clickRoleControl(page, 'tab', 'Escalation metadata');
     await expect(page.getByRole('heading', { name: 'Leo thang & ủy quyền' })).toBeVisible();
   });
 });

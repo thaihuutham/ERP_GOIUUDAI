@@ -94,7 +94,7 @@ describe('CRM API flow integration', () => {
       return state.paymentRequest as any;
     });
 
-    vi.spyOn(crmService, 'markPaymentRequestPaid').mockImplementation(async (_id: string) => ({
+    vi.spyOn(crmService, 'markPaymentRequestPaid').mockImplementation(async (_id: string, _body: Record<string, unknown>) => ({
       ...state.paymentRequest,
       status: 'DA_THANH_TOAN',
       paidAt: new Date().toISOString()
@@ -144,7 +144,10 @@ describe('CRM API flow integration', () => {
     const markPaidRes = await request(app.getHttpServer())
       .post('/api/v1/crm/payment-requests/pay_api_1/mark-paid')
       .set('authorization', `Bearer ${managerToken}`)
-      .send({});
+      .send({
+        reason: 'Webhook timeout fallback',
+        reference: 'MANUAL-REF-001'
+      });
 
     expect(markPaidRes.status).toBe(201);
     expect(markPaidRes.body.status).toBe('DA_THANH_TOAN');

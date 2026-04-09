@@ -8,9 +8,23 @@ on:
 jobs:
   deploy:
     runs-on: [self-hosted, vm-prod]
+    env:
+      PHASE4_RELEASE_GATE_ENABLED: ${{ vars.PHASE4_RELEASE_GATE_ENABLED || 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install dependencies (release gate)
+        if: ${{ env.PHASE4_RELEASE_GATE_ENABLED != 'false' }}
+        run: npm ci
+
+      - name: Phase 4 release gate
+        if: ${{ env.PHASE4_RELEASE_GATE_ENABLED != 'false' }}
+        env:
+          SMOKE_JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          chmod +x scripts/quality/run-phase4-release-gate.sh
+          scripts/quality/run-phase4-release-gate.sh
 
       - name: Deploy on VM runner
         env:
@@ -19,6 +33,7 @@ jobs:
           AUTH_ENABLED: ${{ vars.AUTH_ENABLED || 'false' }}
           NEXT_PUBLIC_AUTH_ENABLED: ${{ vars.NEXT_PUBLIC_AUTH_ENABLED || 'false' }}
           PERMISSION_ENGINE_ENABLED: ${{ vars.PERMISSION_ENGINE_ENABLED || 'false' }}
+          IAM_V2_ENABLED: ${{ vars.IAM_V2_ENABLED }}
           DEFAULT_TENANT_ID: ${{ vars.DEFAULT_TENANT_ID || 'GOIUUDAI' }}
           TENANCY_MODE: ${{ vars.TENANCY_MODE || 'single' }}
           API_PORT: ${{ vars.API_PORT || '3001' }}
@@ -59,6 +74,8 @@ jobs:
           MINIO_CONSOLE_PORT: ${{ vars.MINIO_CONSOLE_PORT || '9001' }}
           MINIO_ROOT_USER: ${{ vars.MINIO_ROOT_USER || 'erpminio' }}
           MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED: ${{ vars.POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED || 'false' }}
+          POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES: ${{ vars.POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES || 'sales,finance,crm' }}
         run: |
           chmod +x scripts/deploy/deploy-from-runner.sh
           scripts/deploy/deploy-from-runner.sh

@@ -1,10 +1,28 @@
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { CustomerCareStatus, CustomFieldEntityType } from '@prisma/client';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { CrmContractsService } from './crm-contracts.service';
 import { CrmService } from './crm.service';
+
+class MarkPaymentRequestPaidDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(180)
+  reference!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
 
 @Controller('crm')
 export class CrmController {
@@ -165,8 +183,8 @@ export class CrmController {
 
   @Post('payment-requests/:id/mark-paid')
   @AuditAction({ action: 'MARK_PAYMENT_REQUEST_PAID', entityType: 'PaymentRequest', entityIdParam: 'id' })
-  markPaymentRequestPaid(@Param('id') id: string) {
-    return this.crmService.markPaymentRequestPaid(id);
+  markPaymentRequestPaid(@Param('id') id: string, @Body() body: MarkPaymentRequestPaidDto) {
+    return this.crmService.markPaymentRequestPaid(id, body as unknown as Record<string, unknown>);
   }
 
   @Get('dedup-candidates')

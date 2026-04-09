@@ -24,6 +24,7 @@ export const SETTINGS_SECRET_ALLOWLIST = [
   'AI_OPENAI_COMPAT_API_KEY',
   'ZALO_OA_ACCESS_TOKEN',
   'ZALO_OA_WEBHOOK_SECRET',
+  'PAYMENTS_BANK_WEBHOOK_SECRET',
   'MEILI_MASTER_KEY'
 ] as const;
 
@@ -213,6 +214,77 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
         AUTO_INSURANCE: 30,
         MOTO_INSURANCE: 30,
         DIGITAL_SERVICE: 30
+      }
+    },
+    checkoutTemplates: {
+      INSURANCE: [
+        {
+          code: 'INSURANCE_STD',
+          label: 'Mẫu bảo hiểm tiêu chuẩn',
+          requiredFields: ['insuranceType', 'termDays', 'requestedEffectiveDate']
+        }
+      ],
+      TELECOM: [
+        {
+          code: 'TELECOM_STD',
+          label: 'Mẫu viễn thông tiêu chuẩn',
+          requiredFields: ['packageCode', 'billingCycle', 'servicePhone']
+        }
+      ],
+      DIGITAL: [
+        {
+          code: 'DIGITAL_STD',
+          label: 'Mẫu dịch vụ số tiêu chuẩn',
+          requiredFields: ['planCode', 'termDays', 'startDate']
+        }
+      ]
+    },
+    paymentPolicy: {
+      partialPaymentEnabled: true,
+      overrideRoles: ['ADMIN', 'MANAGER'],
+      callbackTolerance: 300,
+      reconcileSchedule: '0 */2 * * *'
+    },
+    invoiceAutomation: {
+      INSURANCE: {
+        trigger: 'ON_ACTIVATED',
+        requireFullPayment: true
+      },
+      TELECOM: {
+        trigger: 'ON_PAID',
+        requireFullPayment: true
+      },
+      DIGITAL: {
+        trigger: 'ON_PAID',
+        requireFullPayment: true
+      }
+    },
+    activationPolicy: {
+      INSURANCE: 'HYBRID',
+      TELECOM: 'HYBRID',
+      DIGITAL: 'AUTO'
+    },
+    effectiveDateMapping: {
+      INSURANCE: {
+        from: 'autoPolicy.policyFromAt|motoPolicy.policyFromAt',
+        to: 'autoPolicy.policyToAt|motoPolicy.policyToAt'
+      },
+      TELECOM: {
+        from: 'activationAt',
+        to: 'telecom.currentExpiryAt'
+      },
+      DIGITAL: {
+        from: 'service.startsAt',
+        to: 'service.endsAt'
+      }
+    },
+    orderNumberingPolicy: {
+      resetRule: 'DAILY',
+      sequencePadding: 4,
+      groupPrefixes: {
+        INSURANCE: 'INS',
+        TELECOM: 'TEL',
+        DIGITAL: 'DIG'
       }
     }
   },
@@ -475,6 +547,12 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       timeoutMs: 45000,
       lastHealthStatus: 'UNKNOWN',
       lastValidatedAt: null
+    },
+    payments: {
+      enabled: true,
+      bankWebhookSecretRef: 'PAYMENTS_BANK_WEBHOOK_SECRET',
+      callbackSkewSeconds: 300,
+      reconcileEnabled: true
     }
   },
   notifications_templates: {

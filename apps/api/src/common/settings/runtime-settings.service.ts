@@ -18,6 +18,7 @@ const HR_APPENDIX_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] 
 const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as const;
 const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
 const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
+const CHECKOUT_OVERRIDE_ROLE_ALLOWLIST = new Set(['ADMIN', 'MANAGER']);
 
 type CacheEntry = {
   value: Record<string, unknown>;
@@ -57,6 +58,13 @@ type IntegrationRuntime = {
     webhookSecretRef: string;
     accessToken: string;
     webhookSecret: string;
+  };
+  payments: {
+    enabled: boolean;
+    bankWebhookSecretRef: string;
+    bankWebhookSecret: string;
+    callbackSkewSeconds: number;
+    reconcileEnabled: boolean;
   };
 };
 
@@ -367,6 +375,12 @@ export class RuntimeSettingsService {
     const tagRegistry = this.toRecord(domain.tagRegistry);
     const renewalReminder = this.toRecord(domain.renewalReminder);
     const productLeadDays = this.toRecord(renewalReminder.productLeadDays);
+    const checkoutTemplates = this.toRecord(domain.checkoutTemplates);
+    const paymentPolicy = this.toRecord(domain.paymentPolicy);
+    const invoiceAutomation = this.toRecord(domain.invoiceAutomation);
+    const activationPolicy = this.toRecord(domain.activationPolicy);
+    const effectiveDateMapping = this.toRecord(domain.effectiveDateMapping);
+    const orderNumberingPolicy = this.toRecord(domain.orderNumberingPolicy);
     const readOptionalLeadDays = (value: unknown) => {
       const parsed = Number(value);
       if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
@@ -374,6 +388,43 @@ export class RuntimeSettingsService {
       }
       return parsed;
     };
+    const normalizeCheckoutTemplateGroup = (groupKey: 'INSURANCE' | 'TELECOM' | 'DIGITAL') => {
+      const rawItems = Array.isArray(checkoutTemplates[groupKey]) ? checkoutTemplates[groupKey] : [];
+      return rawItems
+        .map((item) => this.toRecord(item))
+        .map((item, index) => ({
+          code: this.readString(item.code, `${groupKey}_TEMPLATE_${index + 1}`).toUpperCase(),
+          label: this.readString(item.label, `${groupKey} template ${index + 1}`),
+          requiredFields: this.toStringArray(item.requiredFields)
+        }))
+        .filter((item) => item.code.length > 0);
+    };
+    const normalizeInvoiceTrigger = (value: unknown) => {
+      const trigger = this.readString(value, 'MANUAL').toUpperCase();
+      if (trigger === 'ON_PAID' || trigger === 'ON_ACTIVATED' || trigger === 'MANUAL') {
+        return trigger;
+      }
+      return 'MANUAL';
+    };
+    const normalizeActivationMode = (value: unknown) => {
+      const mode = this.readString(value, 'MANUAL').toUpperCase();
+      if (mode === 'AUTO' || mode === 'MANUAL' || mode === 'HYBRID') {
+        return mode;
+      }
+      return 'MANUAL';
+    };
+    const insuranceInvoiceAutomation = this.toRecord(invoiceAutomation.INSURANCE);
+    const telecomInvoiceAutomation = this.toRecord(invoiceAutomation.TELECOM);
+    const digitalInvoiceAutomation = this.toRecord(invoiceAutomation.DIGITAL);
+    const effectiveInsurance = this.toRecord(effectiveDateMapping.INSURANCE);
+    const effectiveTelecom = this.toRecord(effectiveDateMapping.TELECOM);
+    const effectiveDigital = this.toRecord(effectiveDateMapping.DIGITAL);
+    const numberingGroupPrefixes = this.toRecord(orderNumberingPolicy.groupPrefixes);
+    const normalizedOverrideRoles = this.toStringArray(paymentPolicy.overrideRoles)
+      .map((item) => item.toUpperCase())
+      .filter((item) => CHECKOUT_OVERRIDE_ROLE_ALLOWLIST.has(item))
+      .filter((item, index, list) => list.indexOf(item) === index);
+    const checkoutOverrideRoles = normalizedOverrideRoles.length > 0 ? normalizedOverrideRoles : ['ADMIN', 'MANAGER'];
 
     return {
       orderSettings: {
@@ -405,6 +456,59 @@ export class RuntimeSettingsService {
           AUTO_INSURANCE: readOptionalLeadDays(productLeadDays.AUTO_INSURANCE),
           MOTO_INSURANCE: readOptionalLeadDays(productLeadDays.MOTO_INSURANCE),
           DIGITAL_SERVICE: readOptionalLeadDays(productLeadDays.DIGITAL_SERVICE)
+        }
+      },
+      checkoutTemplates: {
+        INSURANCE: normalizeCheckoutTemplateGroup('INSURANCE'),
+        TELECOM: normalizeCheckoutTemplateGroup('TELECOM'),
+        DIGITAL: normalizeCheckoutTemplateGroup('DIGITAL')
+      },
+      paymentPolicy: {
+        partialPaymentEnabled: this.toBool(paymentPolicy.partialPaymentEnabled, true),
+        overrideRoles: checkoutOverrideRoles,
+        callbackTolerance: this.toInt(paymentPolicy.callbackTolerance, 300, 10, 86_400),
+        reconcileSchedule: this.readString(paymentPolicy.reconcileSchedule, '0 */2 * * *')
+      },
+      invoiceAutomation: {
+        INSURANCE: {
+          trigger: normalizeInvoiceTrigger(insuranceInvoiceAutomation.trigger),
+          requireFullPayment: this.toBool(insuranceInvoiceAutomation.requireFullPayment, true)
+        },
+        TELECOM: {
+          trigger: normalizeInvoiceTrigger(telecomInvoiceAutomation.trigger),
+          requireFullPayment: this.toBool(telecomInvoiceAutomation.requireFullPayment, true)
+        },
+        DIGITAL: {
+          trigger: normalizeInvoiceTrigger(digitalInvoiceAutomation.trigger),
+          requireFullPayment: this.toBool(digitalInvoiceAutomation.requireFullPayment, true)
+        }
+      },
+      activationPolicy: {
+        INSURANCE: normalizeActivationMode(activationPolicy.INSURANCE),
+        TELECOM: normalizeActivationMode(activationPolicy.TELECOM),
+        DIGITAL: normalizeActivationMode(activationPolicy.DIGITAL)
+      },
+      effectiveDateMapping: {
+        INSURANCE: {
+          from: this.readString(effectiveInsurance.from),
+          to: this.readString(effectiveInsurance.to)
+        },
+        TELECOM: {
+          from: this.readString(effectiveTelecom.from),
+          to: this.readString(effectiveTelecom.to)
+        },
+        DIGITAL: {
+          from: this.readString(effectiveDigital.from),
+          to: this.readString(effectiveDigital.to)
+        }
+      },
+      orderNumberingPolicy: {
+        resetRule: this.readString(orderNumberingPolicy.resetRule, 'DAILY').toUpperCase(),
+        sequencePadding: this.toInt(orderNumberingPolicy.sequencePadding, 4, 3, 12),
+        groupPrefixes: {
+          INSURANCE: this.readString(numberingGroupPrefixes.INSURANCE, 'INS').toUpperCase(),
+          TELECOM: this.readString(numberingGroupPrefixes.TELECOM, 'TEL').toUpperCase(),
+          DIGITAL: this.readString(numberingGroupPrefixes.DIGITAL, 'DIG').toUpperCase()
         }
       }
     };
@@ -464,6 +568,7 @@ export class RuntimeSettingsService {
     const bhtot = this.toRecord(domain.bhtot);
     const ai = this.toRecord(domain.ai);
     const zalo = this.toRecord(domain.zalo);
+    const payments = this.toRecord(domain.payments);
 
     const bhtotApiKey = this.readIntegrationSecret(bhtot.apiKey, 'integrations.bhtot.apiKey');
     const aiApiKey = this.readIntegrationSecret(ai.apiKey, 'integrations.ai.apiKey');
@@ -474,11 +579,13 @@ export class RuntimeSettingsService {
     const aiRef = this.readString(ai.apiKeyRef);
     const zaloRef = this.readString(zalo.accessTokenRef);
     const zaloWebhookRef = this.readString(zalo.webhookSecretRef);
+    const paymentsSecretRef = this.readString(payments.bankWebhookSecretRef);
 
     const fallbackBhtotApiKey = this.readString(this.config.get<string>('BHTOT_API_KEY'));
     const fallbackAiApiKey = this.readString(this.config.get<string>('AI_OPENAI_COMPAT_API_KEY'));
     const fallbackZaloToken = this.readString(this.config.get<string>('ZALO_OA_ACCESS_TOKEN'));
     const fallbackZaloWebhookSecret = this.readString(this.config.get<string>('ZALO_OA_WEBHOOK_SECRET'));
+    const fallbackPaymentsWebhookSecret = this.readString(this.config.get<string>('PAYMENTS_BANK_WEBHOOK_SECRET'));
 
     return {
       bhtot: {
@@ -510,6 +617,18 @@ export class RuntimeSettingsService {
         webhookSecretRef: zaloWebhookRef,
         accessToken: zaloAccessToken || this.resolveSecretByRef(zaloRef) || fallbackZaloToken,
         webhookSecret: zaloWebhookSecret || this.resolveSecretByRef(zaloWebhookRef) || fallbackZaloWebhookSecret
+      },
+      payments: {
+        enabled: this.toBool(payments.enabled, true),
+        bankWebhookSecretRef: paymentsSecretRef,
+        bankWebhookSecret: this.resolveSecretByRef(paymentsSecretRef) || fallbackPaymentsWebhookSecret,
+        callbackSkewSeconds: this.toInt(
+          payments.callbackSkewSeconds,
+          this.toInt(this.config.get<string>('PAYMENTS_CALLBACK_SKEW_SECONDS'), 300, 10, 86_400),
+          10,
+          86_400
+        ),
+        reconcileEnabled: this.toBool(payments.reconcileEnabled, this.toBool(this.config.get<string>('PAYMENTS_RECONCILE_ENABLED'), true))
       }
     };
   }

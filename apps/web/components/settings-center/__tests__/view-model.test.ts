@@ -58,6 +58,13 @@ describe('settings view model', () => {
       'security-observability',
       'security-matrix'
     ]);
+
+    const securityGovernanceTab = securityTabs.find((item) => item.key === 'security-governance');
+    expect(securityGovernanceTab?.sectionIds).toEqual([
+      'security-permission-engine',
+      'security-iam-v2-rollout',
+      'security-settings-editors'
+    ]);
   });
 
   it('resolves domain tabs for phase-2 domains', () => {
@@ -72,8 +79,10 @@ describe('settings view model', () => {
     ]);
     expect(resolveDomainTabs('sales_crm_policies').map((item) => item.key)).toEqual([
       'sales-orders',
+      'sales-checkout-core',
       'sales-credit',
       'sales-taxonomy',
+      'sales-tags',
       'sales-renewal'
     ]);
     expect(resolveDomainTabs('catalog_scm_policies').map((item) => item.key)).toEqual([
@@ -83,7 +92,8 @@ describe('settings view model', () => {
     expect(resolveDomainTabs('integrations').map((item) => item.key)).toEqual([
       'integration-bhtot',
       'integration-zalo',
-      'integration-ai'
+      'integration-ai',
+      'integration-payments'
     ]);
     expect(resolveDomainTabs('notifications_templates').map((item) => item.key)).toEqual([
       'notify-template',

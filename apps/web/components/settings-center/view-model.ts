@@ -46,8 +46,21 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
   ],
   sales_crm_policies: [
     { key: 'sales-orders', label: 'Quy tắc đơn hàng', sectionIds: ['sales-order-policy'] },
+    {
+      key: 'sales-checkout-core',
+      label: 'Sale Checkout Core',
+      sectionIds: [
+        'sales-checkout-templates',
+        'sales-checkout-payment',
+        'sales-checkout-invoice',
+        'sales-checkout-activation',
+        'sales-checkout-effective',
+        'sales-checkout-numbering'
+      ]
+    },
     { key: 'sales-credit', label: 'Chiết khấu & tín dụng', sectionIds: ['sales-discount-credit'] },
     { key: 'sales-taxonomy', label: 'Phân loại khách hàng', sectionIds: ['sales-taxonomy'] },
+    { key: 'sales-tags', label: 'Tag Registry', sectionIds: ['sales-tag-registry'] },
     { key: 'sales-renewal', label: 'Nhắc gia hạn CRM', sectionIds: ['sales-renewal-reminder'] }
   ],
   catalog_scm_policies: [
@@ -63,7 +76,7 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
     {
       key: 'security-governance',
       label: 'Phân quyền hệ thống',
-      sectionIds: ['security-permission-engine', 'security-settings-editors']
+      sectionIds: ['security-permission-engine', 'security-iam-v2-rollout', 'security-settings-editors']
     },
     {
       key: 'security-observability',
@@ -75,7 +88,8 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
   integrations: [
     { key: 'integration-bhtot', label: 'BHTOT', sectionIds: ['integration-bhtot'] },
     { key: 'integration-zalo', label: 'Zalo OA', sectionIds: ['integration-zalo'] },
-    { key: 'integration-ai', label: 'AI Connector', sectionIds: ['integration-ai'] }
+    { key: 'integration-ai', label: 'AI Connector', sectionIds: ['integration-ai'] },
+    { key: 'integration-payments', label: 'Payments', sectionIds: ['integration-payments'] }
   ],
   notifications_templates: [
     { key: 'notify-template', label: 'Template', sectionIds: ['notify-template'] },

@@ -61,6 +61,42 @@ enum GenericStatus {
   ARCHIVED
 }
 
+enum CheckoutOrderGroup {
+  INSURANCE
+  TELECOM
+  DIGITAL
+}
+
+enum CheckoutOrderStatus {
+  PENDING_PAYMENT
+  PARTIALLY_PAID
+  PAID
+  ACTIVATING
+  ACTIVE
+  CANCELLED
+}
+
+enum CheckoutLineActivationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum PaymentIntentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentTransactionStatus {
+  RECEIVED
+  APPLIED
+  DUPLICATE
+  REJECTED
+}
+
 enum CustomerCareStatus {
   MOI_CHUA_TU_VAN
   DANG_SUY_NGHI
@@ -825,6 +861,80 @@ model PaymentRequest {
   @@index([tenant_Id, status])
 }
 
+model PaymentIntent {
+  id             String            @id @default(cuid())
+  tenant_Id      String
+  orderId        String
+  intentCode     String
+  amountLocked   Decimal           @db.Decimal(18, 2)
+  paidAmount     Decimal           @default(0) @db.Decimal(18, 2)
+  remainingAmount Decimal          @default(0) @db.Decimal(18, 2)
+  currency       String            @default("VND")
+  qrPayload      String?
+  paymentLink    String?
+  qrActive       Boolean           @default(true)
+  status         PaymentIntentStatus @default(UNPAID)
+  paidAt         DateTime?
+  lockedAt       DateTime          @default(now())
+  expiresAt      DateTime?
+  metadataJson   Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  order          Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  transactions   PaymentTransaction[]
+  overrides      PaymentOverrideLog[]
+
+  @@unique([tenant_Id, orderId])
+  @@unique([tenant_Id, intentCode])
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, createdAt])
+}
+
+model PaymentTransaction {
+  id             String                   @id @default(cuid())
+  tenant_Id      String
+  intentId       String
+  transactionRef String
+  bankTxnAt      DateTime?
+  amount         Decimal                  @db.Decimal(18, 2)
+  currency       String                   @default("VND")
+  rawPayloadJson Json?
+  dedupeHash     String
+  status         PaymentTransactionStatus @default(RECEIVED)
+  note           String?
+  source         String?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  intent         PaymentIntent            @relation(fields: [intentId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, dedupeHash])
+  @@index([tenant_Id])
+  @@index([tenant_Id, intentId, createdAt])
+  @@index([tenant_Id, transactionRef])
+}
+
+model PaymentOverrideLog {
+  id           String        @id @default(cuid())
+  tenant_Id    String
+  intentId     String
+  overrideBy   String
+  overrideRole String?
+  reason       String
+  reference    String?
+  amount       Decimal       @db.Decimal(18, 2)
+  note         String?
+  metadataJson Json?
+  createdAt    DateTime      @default(now())
+
+  intent       PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, intentId, createdAt])
+}
+
 model CustomerMergeLog {
   id                String   @id @default(cuid())
   tenant_Id         String
@@ -877,12 +987,16 @@ model Order {
   id            String   @id @default(cuid())
   tenant_Id     String
   orderNo       String?
+  orderGroup    CheckoutOrderGroup?
+  checkoutStatus CheckoutOrderStatus?
   customerId    String?
   customerName  String?
   employeeId    String?
   customFieldSchemaVersion Int?
   totalAmount   Decimal? @db.Decimal(18, 2)
   status        GenericStatus @default(PENDING)
+  commercialLockedAt DateTime?
+  commercialSnapshotJson Json?
   createdBy     String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -890,11 +1004,14 @@ model Order {
   customer      Customer? @relation(fields: [customerId], references: [id])
   items         OrderItem[]
   invoices      Invoice[]
+  paymentIntents PaymentIntent[]
   serviceContracts ServiceContract[]
   externalOrderIngests ExternalOrderIngest[]
 
   @@unique([tenant_Id, orderNo])
   @@index([tenant_Id])
+  @@index([tenant_Id, orderGroup])
+  @@index([tenant_Id, checkoutStatus])
   @@index([tenant_Id, createdAt])
   @@index([tenant_Id, employeeId])
   @@index([tenant_Id, customFieldSchemaVersion])
@@ -908,6 +1025,12 @@ model OrderItem {
   productName String?
   quantity    Int      @default(1)
   unitPrice   Decimal  @db.Decimal(18, 2)
+  effectiveFrom DateTime?
+  effectiveTo  DateTime?
+  activationStatus CheckoutLineActivationStatus @default(PENDING)
+  activatedAt  DateTime?
+  activationRef String?
+  serviceMetaJson Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -916,6 +1039,8 @@ model OrderItem {
 
   @@index([tenant_Id])
   @@index([tenant_Id, orderId])
+  @@index([tenant_Id, activationStatus])
+  @@index([tenant_Id, effectiveTo])
 }
 
 model ServiceContract {

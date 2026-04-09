@@ -1,7 +1,7 @@
 # VM AUTODEPLOY
 
 ## Luồng
-MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma migrate deploy` -> healthcheck
+MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma migrate deploy` -> healthcheck -> optional post-deploy Auth/RBAC smoke
 
 ## Thành phần deploy
 - `postgres` (stateful)
@@ -31,6 +31,10 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - `MEILI_ENABLE_WRITE_SYNC` (`true|false`)
 - `PERMISSION_ENGINE_ENABLED` (`true|false`)
 - `IAM_V2_ENABLED` (`true|false`, optional env override cho guard IAM v2)
+- `POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED` (`true|false`, bật smoke Auth/RBAC tự động sau deploy)
+- `POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES` (CSV module đang enforce, ví dụ `sales,finance,crm`)
+- `PHASE4_RELEASE_GATE_ENABLED` (`true|false`, bật release gate pre-deploy; mặc định workflow = `true`)
+- `SMOKE_PAYMENT_CALLBACK_REQUIRED` (`true|false`, strict callback route check trong `smoke-production-readiness.sh`; mặc định `false`)
 - `NEXT_PUBLIC_AUTH_ENABLED` (`true|false`, web login gate)
 - `AUDIT_ARCHIVE_S3_ENDPOINT` (vd `http://minio:9000`)
 - `AUDIT_ARCHIVE_S3_BUCKET` (vd `erp-audit-archive`)
@@ -76,6 +80,9 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `TENANCY_MODE` (mặc định workflow: `single`)
   - `PERMISSION_ENGINE_ENABLED` (mặc định workflow: `false`)
   - `IAM_V2_ENABLED` (optional; để trống nếu muốn lấy hoàn toàn từ `settings.access_security.iamV2.enabled`)
+  - `POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED` (mặc định workflow: `false`)
+  - `POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES` (mặc định workflow: `sales,finance,crm`)
+  - `PHASE4_RELEASE_GATE_ENABLED` (mặc định workflow: `true`; set `false` chỉ khi cần bypass có kiểm soát)
   - `AI_OPENAI_COMPAT_BASE_URL`
   - `AI_OPENAI_COMPAT_MODEL`
   - `AI_OPENAI_COMPAT_TIMEOUT_MS`
@@ -103,11 +110,28 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `MINIO_PORT`
   - `MINIO_CONSOLE_PORT`
 
+Mẫu cấu hình Phase 2 UAT:
+- `docs/deployment/PHASE2_UAT_GITHUB_VARIABLES_TEMPLATE.md`
+
 ## Script chính
 - `scripts/deploy/deploy-from-runner.sh`
 - `scripts/deploy/healthcheck.sh`
 - `scripts/deploy/smoke-crm-conversations.sh`
 - `scripts/deploy/smoke-assistant-access-boundary.sh`
+- `scripts/deploy/iam-v2-rollout.sh`
+- `scripts/deploy/smoke-auth-rbac-modules.sh`
+- `scripts/deploy/smoke-production-readiness.sh`
+- `scripts/quality/run-phase4-release-gate.sh`
+
+## Phase 4 release gate (pre-deploy)
+- Workflow `deploy-vm` chạy release gate trước bước deploy khi `PHASE4_RELEASE_GATE_ENABLED != false`.
+- Gate hiện tại:
+  1. Infra checks (docker postgres + db port),
+  2. `prisma migrate status`,
+  3. API lint/build + targeted tests checkout callback/override,
+  4. Web lint/build,
+  5. Phase 3 stabilization gate,
+  6. production-readiness smoke.
 
 ## Migration gate (bắt buộc)
 - Deploy script luôn chạy `prisma migrate deploy` trước khi khởi động `api/web` và trước healthcheck.
@@ -157,6 +181,7 @@ scripts/deploy/smoke-assistant-access-boundary.sh
 - Mọi release qua GitHub Actions workflow.
 - Không hardcode key API hoặc session thật vào repo/log CI.
 - Deploy script fail sớm nếu `AUTH_ENABLED=true` mà `JWT_SECRET` chưa được set đúng (không cho chạy với placeholder).
+- Khi `POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED=true`, deploy script sẽ tự chạy `scripts/deploy/smoke-auth-rbac-modules.sh` sau healthcheck.
 - Audit cold-tier:
   - Job archive + prune + verify chạy tự động hằng ngày (scheduler trong API).
   - Chỉ prune hot sau khi upload archive thành công và verify object tồn tại.
@@ -255,3 +280,77 @@ scripts/deploy/smoke-assistant-access-boundary.sh
   2. Gỡ module khỏi `enforcementModules` nếu chỉ rollback cục bộ.
   3. Nếu sự cố rộng, đặt `mode=OFF` hoặc tạm `IAM_V2_ENABLED=false`.
   4. Verify lại bằng endpoint mismatch report + smoke permission/e2e trước khi rollout lại.
+
+### Lệnh rollout nhanh (khuyến nghị cho UAT)
+```bash
+# Xem trạng thái IAM v2 hiện tại
+scripts/deploy/iam-v2-rollout.sh status
+
+# Bước 1: SHADOW module đầu tiên
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh shadow sales
+
+# Bước 2: ENFORCE module đã ổn định
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh enforce sales
+
+# Mở rộng dần theo thứ tự safe-baseline
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh shadow sales,finance,crm
+```
+
+### Rollback nhanh theo module
+```bash
+# Giảm mức cưỡng chế toàn bộ về SHADOW
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh rollback-shadow
+
+# Gỡ riêng một module khỏi enforcement list
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh rollback-module sales
+```
+
+## Safe-baseline rollout order (checkout-first)
+- Module rollout khuyến nghị sau khi checkout gate đã ổn định:
+  1. `sales`
+  2. `finance`
+  3. `crm`
+  4. `hr`
+  5. `scm`
+  6. `assets`
+  7. `projects`
+  8. `reports`
+- Mỗi module đi theo chu trình:
+  - `SHADOW` -> theo dõi mismatch + e2e mục tiêu -> `ENFORCE`.
+  - Nếu lỗi, rollback module đó về `SHADOW` ngay, không rollback toàn hệ thống trừ khi sự cố diện rộng.
+
+## Hypercare checklist (7-14 ngày sau go-live)
+- Theo dõi bắt buộc:
+  - Tỷ lệ callback payment fail/reject.
+  - Số lần override thanh toán thủ công theo ngày.
+  - Thời gian xử lý từ phát sinh payment exception -> resolved.
+  - Mismatch IAM v2 theo module.
+- Ngưỡng cảnh báo vận hành:
+  - Callback fail tăng đột biến theo giờ.
+  - Override thủ công vượt baseline vận hành đã thống nhất.
+  - Mismatch IAM v2 không giảm sau 2 chu kỳ rollout liên tiếp.
+
+## Post-deploy smoke cho Auth + RBAC (module đang enforce)
+```bash
+SMOKE_API_BASE_URL="http://127.0.0.1:3001/api/v1" \
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+SMOKE_ENFORCED_MODULES="sales,finance,crm" \
+scripts/deploy/smoke-auth-rbac-modules.sh
+```
+
+Smoke này kiểm tra:
+- health API,
+- auth boundary (`settings/center` không token bị chặn khi auth bật),
+- mismatch report endpoint,
+- probe read endpoint cho từng module đang enforce.

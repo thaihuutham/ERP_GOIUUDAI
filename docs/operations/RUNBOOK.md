@@ -70,6 +70,9 @@ npm run test --workspace @erp/api
 - `AUTH_ENABLED` (khuyến nghị `true` cho production)
 - `NEXT_PUBLIC_AUTH_ENABLED` (bật login gate ở web; nên đồng bộ với `AUTH_ENABLED`)
 - `PERMISSION_ENGINE_ENABLED` (bật Permission Guard runtime)
+- `IAM_V2_ENABLED` (optional override cho `iamV2.enabled`; để trống nếu dùng hoàn toàn từ settings runtime)
+- `POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED` (bật smoke Auth/RBAC tự động sau deploy)
+- `POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES` (CSV module enforce để smoke probe đúng phạm vi)
 - `DEFAULT_TENANT_ID`
 - `TENANCY_MODE` (`single` cho nội bộ, `multi` cho SaaS)
 - `AI_OPENAI_COMPAT_BASE_URL`
@@ -193,3 +196,283 @@ curl -sS "http://127.0.0.1:3001/api/v1/zalo/operations/metrics" \
 3. Nếu `assignmentMetrics.mismatchCount > 0`:
    - dùng `assignmentMetrics.samples` để xác định bản ghi lỗi,
    - cleanup assignment không hợp lệ hoặc gán lại đúng user còn active.
+
+## 14. Sale Checkout operations (safe baseline)
+- Nguyên tắc vận hành:
+  - Activation line chỉ complete khi thanh toán đủ theo policy.
+  - Override thanh toán thủ công chỉ cho `MANAGER|ADMIN`, bắt buộc `reason/reference`.
+  - Không dùng prompt/JSON tay cho nghiệp vụ mark-paid user-facing.
+
+### 14.1 Kiểm tra nhanh trạng thái checkout
+```bash
+curl -sS "http://127.0.0.1:3001/api/v1/sales/checkout/orders/<orderId>" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "x-tenant-id: GOIUUDAI" | jq
+```
+
+```bash
+curl -sS "http://127.0.0.1:3001/api/v1/sales/checkout/orders/<orderId>/payment-intent" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "x-tenant-id: GOIUUDAI" | jq
+```
+
+### 14.2 Manual override chuẩn
+```bash
+curl -sS -X POST "http://127.0.0.1:3001/api/v1/sales/checkout/orders/<orderId>/payment-overrides" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: GOIUUDAI" \
+  -d '{
+    "reason":"Webhook timeout fallback",
+    "reference":"OVR-<ticket-id>",
+    "note":"manual reconciliation"
+  }' | jq
+```
+
+### 14.3 Checklist khi activation bị chặn
+1. Đọc `payment intent status` (`PAID` hay chưa).
+2. Kiểm tra `transactions` có bản ghi `REJECTED/DUPLICATE` và `note`.
+3. Nếu callback lỗi upstream:
+   - reconcile chứng từ ngân hàng,
+   - thực hiện override có audit,
+   - re-run `invoice-actions/re-evaluate` nếu cần.
+
+### 14.4 Callback fail playbook (payment webhook)
+1. Kiểm tra nhanh trạng thái payment intent:
+```bash
+curl -sS "http://127.0.0.1:3001/api/v1/sales/checkout/orders/<orderId>/payment-intent" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "x-tenant-id: GOIUUDAI" | jq
+```
+2. Nếu có giao dịch bị `REJECTED` vì policy hoặc mismatch payload:
+   - đối soát giao dịch ngân hàng,
+   - gọi manual override theo mục `14.2` (bắt buộc `reason/reference`).
+3. Nếu cần bơm lại callback để tái xử lý sau khi fix upstream:
+```bash
+curl -sS -X POST "http://127.0.0.1:3001/api/v1/integrations/payments/bank-events" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: GOIUUDAI" \
+  -H "x-signature: <signature>" \
+  -H "x-timestamp: <unix-timestamp>" \
+  -H "x-idempotency-key: <idempotency-key>" \
+  -d '{
+    "intentCode": "<intent-code>",
+    "transactionRef": "<txn-ref>",
+    "amount": 1000000,
+    "currency": "VND",
+    "bankTxnAt": "2026-04-09T08:00:00.000Z"
+  }' | jq
+```
+
+### 14.5 Drift reconciliation playbook (payment/effective-date/invoice)
+1. So khớp 3 nguồn trạng thái:
+   - `payment-intent.status`,
+   - `order.checkoutStatus` + `items[].activationStatus/effectiveFrom/effectiveTo`,
+   - `invoices[]` (status, paidAmount).
+2. Nếu payment đã `PAID` nhưng invoice chưa đồng bộ:
+```bash
+curl -sS -X POST "http://127.0.0.1:3001/api/v1/sales/checkout/orders/<orderId>/invoice-actions/re-evaluate" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: GOIUUDAI" \
+  -d '{
+    "force": false,
+    "reason": "phase3_drift_reconcile"
+  }' | jq
+```
+3. Nếu activation đã xong nghiệp vụ nhưng `effectiveFrom/effectiveTo` chưa đúng:
+```bash
+curl -sS -X POST "http://127.0.0.1:3001/api/v1/sales/checkout/orders/<orderId>/activation-lines/<lineId>/complete" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "Content-Type: application/json" \
+  -H "x-tenant-id: GOIUUDAI" \
+  -d '{
+    "activationRef": "ACT-<ticket-id>",
+    "effectiveFrom": "2026-04-09T00:00:00.000Z",
+    "effectiveTo": null
+  }' | jq
+```
+4. Sau reconcile, bắt buộc verify lại `14.1` và ghi incident note với `orderId`, `intentCode`, `invoiceNo`, thao tác đã thực hiện.
+
+## 15. Phase 2 rollout Auth + RBAC (UAT)
+- Flag UAT bắt buộc bật cùng nhau:
+  - `AUTH_ENABLED=true`
+  - `NEXT_PUBLIC_AUTH_ENABLED=true`
+  - `PERMISSION_ENGINE_ENABLED=true`
+- IAM v2 rollout theo module:
+  - `SHADOW` trước, `ENFORCE` sau khi mismatch ổn định.
+  - thứ tự khuyến nghị: `sales -> finance -> crm -> hr -> scm -> assets -> projects -> reports`.
+- Bộ biến đề xuất để cấu hình GitHub UAT:
+  - `docs/deployment/PHASE2_UAT_GITHUB_VARIABLES_TEMPLATE.md`
+
+### 15.1 Lệnh rollout IAM v2
+```bash
+# Xem trạng thái hiện tại
+scripts/deploy/iam-v2-rollout.sh status
+
+# SHADOW cho module đầu tiên
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh shadow sales
+
+# ENFORCE cho module đã ổn định
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh enforce sales
+```
+
+### 15.2 Rollback nhanh
+```bash
+# Hạ toàn bộ rollout về SHADOW
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh rollback-shadow
+
+# Gỡ module cụ thể khỏi enforcement list
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+scripts/deploy/iam-v2-rollout.sh rollback-module sales
+```
+
+### 15.3 Smoke Auth + RBAC theo module enforce
+```bash
+SMOKE_API_BASE_URL="http://127.0.0.1:3001/api/v1" \
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+SMOKE_ENFORCED_MODULES="sales,finance,crm" \
+scripts/deploy/smoke-auth-rbac-modules.sh
+```
+
+Checklist smoke:
+1. API health `200`.
+2. `settings/center` không token bị chặn khi auth bật.
+3. `settings/center` có token truy cập được.
+4. `settings/permissions/iam-v2/mismatch-report` trả dữ liệu.
+5. Mỗi module enforce có read probe trả `200`.
+
+Nếu muốn workflow `deploy-vm` tự chạy bước smoke này sau mỗi deploy:
+- set `POST_DEPLOY_AUTH_RBAC_SMOKE_ENABLED=true`
+- set `POST_DEPLOY_AUTH_RBAC_SMOKE_MODULES` theo module đang enforce (ví dụ `sales,finance,crm`).
+
+## 16. Phase 3 stabilization gate (full-system)
+- Mục tiêu:
+  - regression theo module không làm lệch nghiệp vụ cũ,
+  - chặn anti-pattern nhập liệu user-facing (`window.prompt`, `type: 'json'`),
+  - giữ khả năng smoke auth/rbac full module sau rollout Phase 2.
+
+### 16.1 Chạy gate theo từng bước
+```bash
+npm run phase3:form-guard
+```
+
+```bash
+SMOKE_AUTH_ENABLED=true \
+SMOKE_JWT_SECRET="<jwt-secret>" \
+SMOKE_ENFORCED_MODULES="sales,finance,crm,hr,scm,assets,projects,reports" \
+scripts/deploy/smoke-auth-rbac-modules.sh
+```
+
+```bash
+npm run phase3:stabilization
+```
+
+### 16.2 Tùy chọn runtime cho script `phase3:stabilization`
+- `PHASE3_SKIP_FORM_GUARD=true|false`
+- `PHASE3_SKIP_API_SMOKE=true|false`
+- `PHASE3_SKIP_E2E=true|false`
+- `PHASE3_SMOKE_MODULES=<csv-modules>`
+- `PHASE3_E2E_SPECS="<space-separated-spec-files>"`
+- `PHASE3_E2E_WORKERS=<number>`
+- Mặc định `phase3:stabilization` đã bao gồm `settings-center-reports.spec.ts` trong bộ regression.
+
+## 17. Phase 4 production readiness + go-live hardening
+- Lệnh tổng hợp release gate:
+```bash
+npm run phase4:release-gate
+```
+
+- Smoke production readiness độc lập:
+```bash
+npm run phase4:smoke:prod-readiness
+```
+
+### 17.1 Release gate checklist (script `run-phase4-release-gate.sh`)
+1. Infra checks: `docker ps` có `erp-postgres`, DB port listening.
+2. Prisma: `prisma migrate status`.
+3. API quality: lint/build + targeted tests checkout callback/override.
+4. Web quality: lint/build.
+5. Re-run Phase 3 stabilization gate.
+6. Production-readiness smoke.
+
+Tùy chọn skip theo env:
+- `PHASE4_SKIP_INFRA_CHECK`
+- `PHASE4_SKIP_PRISMA_STATUS`
+- `PHASE4_SKIP_API_QUALITY`
+- `PHASE4_SKIP_WEB_QUALITY`
+- `PHASE4_SKIP_PHASE3_GATE`
+- `PHASE4_SKIP_PROD_SMOKE`
+- `PHASE4_SKIP_API_TARGETED_TESTS`
+
+### 17.2 Production smoke (script `smoke-production-readiness.sh`)
+- Kiểm tra:
+  - health API/Web,
+  - auth boundary (public vs enforced),
+  - permission boundary qua endpoint admin-only `GET /settings`,
+  - payment callback boundary (signature invalid phải bị reject).
+- Khi callback route chưa tồn tại ở runtime hiện tại:
+  - mặc định script sẽ `skip` check callback (`SMOKE_PAYMENT_CALLBACK_REQUIRED=false`),
+  - bật strict mode bằng `SMOKE_PAYMENT_CALLBACK_REQUIRED=true` để fail cứng khi route callback thiếu (`404`).
+- Nhánh optional callback success:
+  - cung cấp đủ:
+    - `SMOKE_PAYMENT_CALLBACK_PAYLOAD`
+    - `SMOKE_PAYMENT_CALLBACK_SIGNATURE`
+    - `SMOKE_PAYMENT_CALLBACK_TIMESTAMP`
+  - script sẽ verify theo `SMOKE_PAYMENT_CALLBACK_EXPECTED_STATUS` (default `200 201 202`).
+
+## 18. Hypercare 7-14 ngày (checkout + IAM v2)
+### 18.1 Callback fail rate
+```sql
+WITH base AS (
+  SELECT
+    COUNT(*)::numeric AS total_callbacks,
+    COUNT(*) FILTER (WHERE "status" = 'REJECTED')::numeric AS rejected_callbacks
+  FROM "PaymentTransaction"
+  WHERE "tenant_Id" = 'GOIUUDAI'
+    AND "createdAt" >= NOW() - INTERVAL '14 days'
+)
+SELECT
+  total_callbacks,
+  rejected_callbacks,
+  CASE
+    WHEN total_callbacks = 0 THEN 0
+    ELSE ROUND((rejected_callbacks / total_callbacks) * 100, 2)
+  END AS rejected_rate_percent
+FROM base;
+```
+
+### 18.2 Manual override volume + xử lý override
+```sql
+WITH override_base AS (
+  SELECT
+    o."id",
+    o."createdAt" AS override_at,
+    i."createdAt" AS intent_created_at,
+    EXTRACT(EPOCH FROM (o."createdAt" - i."createdAt")) / 60.0 AS minutes_to_override
+  FROM "PaymentOverrideLog" o
+  JOIN "PaymentIntent" i ON i."id" = o."intentId"
+  WHERE o."tenant_Id" = 'GOIUUDAI'
+    AND o."createdAt" >= NOW() - INTERVAL '14 days'
+)
+SELECT
+  COUNT(*) AS override_count,
+  ROUND(AVG(minutes_to_override)::numeric, 2) AS avg_minutes_to_override,
+  ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY minutes_to_override)::numeric, 2) AS p95_minutes_to_override
+FROM override_base;
+```
+
+### 18.3 IAM v2 mismatch theo module
+```bash
+curl -sS "http://127.0.0.1:3001/api/v1/settings/permissions/iam-v2/mismatch-report?limit=100" \
+  -H "Authorization: Bearer <jwt-manager-or-admin>" \
+  -H "x-tenant-id: GOIUUDAI" | jq
+```

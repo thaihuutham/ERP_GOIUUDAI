@@ -285,6 +285,26 @@ describe('SettingsPolicyService', () => {
     expect(productLeadDays.DIGITAL_SERVICE).toBe(120);
   });
 
+  it('normalizes checkout override roles to ADMIN/MANAGER baseline only', async () => {
+    const prisma = makePrismaMock();
+    const cls = makeClsMock();
+    const search = makeSearchMock();
+    const runtimeSettings = makeRuntimeSettingsMock();
+    const service = new SettingsPolicyService(prisma as any, cls as any, search as any, runtimeSettings as any);
+
+    const result = await service.updateDomain('sales_crm_policies', {
+      paymentPolicy: {
+        overrideRoles: ['manager', 'ACCOUNTANT', 'staff', 'ADMIN', 'MANAGER']
+      }
+    }, {
+      reason: 'normalize checkout override roles'
+    });
+
+    const sales = result.data as Record<string, unknown>;
+    const paymentPolicy = (sales.paymentPolicy ?? {}) as Record<string, unknown>;
+    expect(paymentPolicy.overrideRoles).toEqual(['MANAGER', 'ADMIN']);
+  });
+
   it('blocks removing in-use sales taxonomy values via direct domain update', async () => {
     const prisma = makePrismaMock();
     const cls = makeClsMock();

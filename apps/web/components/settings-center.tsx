@@ -266,6 +266,32 @@ const MODULE_OPTIONS: FieldOption[] = ERP_MODULES
     label: MODULE_LABEL_MAP[moduleKey] ?? moduleKey.toUpperCase()
   }));
 
+const IAM_V2_PHASE2_MODULE_ORDER = ['sales', 'finance', 'crm', 'hr', 'scm', 'assets', 'projects', 'reports'] as const;
+const IAM_V2_ROLLOUT_PRIORITY = new Map<string, number>(
+  IAM_V2_PHASE2_MODULE_ORDER.map((moduleKey, index) => [moduleKey, index])
+);
+const IAM_V2_ENFORCEMENT_MODULE_OPTIONS: FieldOption[] = [...MODULE_OPTIONS].sort((left, right) => {
+  const leftPriority = IAM_V2_ROLLOUT_PRIORITY.get(left.value);
+  const rightPriority = IAM_V2_ROLLOUT_PRIORITY.get(right.value);
+
+  if (leftPriority !== undefined && rightPriority !== undefined) {
+    return leftPriority - rightPriority;
+  }
+  if (leftPriority !== undefined) {
+    return -1;
+  }
+  if (rightPriority !== undefined) {
+    return 1;
+  }
+
+  return left.label.localeCompare(right.label, 'vi');
+});
+const IAM_V2_MODE_OPTIONS: FieldOption[] = [
+  { value: 'OFF', label: 'OFF (Tắt IAM v2)' },
+  { value: 'SHADOW', label: 'SHADOW (Quan sát mismatch)' },
+  { value: 'ENFORCE', label: 'ENFORCE (Chặn theo IAM v2)' }
+];
+
 const ASSISTANT_SCOPE_OPTIONS: FieldOption[] = [
   { value: 'company', label: 'Toàn công ty' },
   { value: 'branch', label: 'Theo chi nhánh' },
@@ -322,7 +348,31 @@ const SECRET_REF_OPTIONS: FieldOption[] = [
   { value: 'AI_OPENAI_COMPAT_API_KEY', label: 'AI_OPENAI_COMPAT_API_KEY' },
   { value: 'ZALO_OA_ACCESS_TOKEN', label: 'ZALO_OA_ACCESS_TOKEN' },
   { value: 'ZALO_OA_WEBHOOK_SECRET', label: 'ZALO_OA_WEBHOOK_SECRET' },
+  { value: 'PAYMENTS_BANK_WEBHOOK_SECRET', label: 'PAYMENTS_BANK_WEBHOOK_SECRET' },
   { value: 'MEILI_MASTER_KEY', label: 'MEILI_MASTER_KEY' }
+];
+
+const CHECKOUT_INVOICE_TRIGGER_OPTIONS: FieldOption[] = [
+  { value: 'ON_PAID', label: 'Khi thanh toán đủ' },
+  { value: 'ON_ACTIVATED', label: 'Khi kích hoạt dịch vụ' },
+  { value: 'MANUAL', label: 'Thủ công' }
+];
+
+const CHECKOUT_ACTIVATION_MODE_OPTIONS: FieldOption[] = [
+  { value: 'AUTO', label: 'AUTO' },
+  { value: 'MANUAL', label: 'MANUAL' },
+  { value: 'HYBRID', label: 'HYBRID' }
+];
+
+const CHECKOUT_OVERRIDE_ROLE_OPTIONS: FieldOption[] = [
+  { value: 'ADMIN', label: 'ADMIN' },
+  { value: 'MANAGER', label: 'MANAGER' }
+];
+
+const CHECKOUT_ORDER_RESET_RULE_OPTIONS: FieldOption[] = [
+  { value: 'DAILY', label: 'Reset theo ngày' },
+  { value: 'MONTHLY', label: 'Reset theo tháng' },
+  { value: 'YEARLY', label: 'Reset theo năm' }
 ];
 
 const SEARCH_ENGINE_OPTIONS: FieldOption[] = [
@@ -625,6 +675,37 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         ]
       },
       {
+        id: 'security-iam-v2-rollout',
+        title: 'IAM v2 rollout (Phase 2)',
+        description: 'Áp dụng SHADOW trước, ENFORCE sau theo module. Thứ tự khuyến nghị: sales -> finance -> crm -> hr -> scm -> assets -> projects -> reports.',
+        fields: [
+          { id: 'security-iamv2-enabled', path: 'iamV2.enabled', label: 'Bật IAM v2', type: 'switch' },
+          { id: 'security-iamv2-mode', path: 'iamV2.mode', label: 'Chế độ IAM v2', type: 'select', options: IAM_V2_MODE_OPTIONS },
+          {
+            id: 'security-iamv2-enforcement-modules',
+            path: 'iamV2.enforcementModules',
+            label: 'Module áp dụng IAM v2',
+            helper: 'Để trống = áp dụng toàn bộ module hợp lệ. Khuyến nghị rollout theo thứ tự ưu tiên ở trên.',
+            type: 'multiSelect',
+            options: IAM_V2_ENFORCEMENT_MODULE_OPTIONS
+          },
+          {
+            id: 'security-iamv2-protect-admin-core',
+            path: 'iamV2.protectAdminCore',
+            label: 'Bảo vệ quyền lõi ADMIN',
+            type: 'switch',
+            isAdvanced: true
+          },
+          {
+            id: 'security-iamv2-deny-self-elevation',
+            path: 'iamV2.denySelfElevation',
+            label: 'Chặn tự nâng quyền',
+            type: 'switch',
+            isAdvanced: true
+          }
+        ]
+      },
+      {
         id: 'security-audit-matrix',
         title: 'Phân quyền nhật ký hệ thống theo cấp quản lý',
         description: 'Phạm vi nhật ký tính theo người thực hiện. ADMIN xem toàn công ty.',
@@ -790,6 +871,76 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'sales-allow-increase', path: 'orderSettings.allowIncreaseWithoutApproval', label: 'Cho phép tăng giá trị đơn không cần duyệt', type: 'switch' },
           { id: 'sales-require-decrease', path: 'orderSettings.requireApprovalForDecrease', label: 'Giảm giá trị đơn phải duyệt', type: 'switch' },
           { id: 'sales-approver-id', path: 'orderSettings.approverId', label: 'Người duyệt mặc định (ID/email)', type: 'text' }
+        ]
+      },
+      {
+        id: 'sales-checkout-templates',
+        title: 'Checkout templates theo nhóm sản phẩm',
+        description: 'Mẫu field bắt buộc cho luồng Sale Checkout v1.',
+        fields: [
+          { id: 'sales-checkout-template-ins-code', path: 'checkoutTemplates.INSURANCE.0.code', label: 'INSURANCE - Template code', type: 'text', placeholder: 'INSURANCE_STD' },
+          { id: 'sales-checkout-template-ins-label', path: 'checkoutTemplates.INSURANCE.0.label', label: 'INSURANCE - Nhãn template', type: 'text', placeholder: 'Mẫu bảo hiểm tiêu chuẩn' },
+          { id: 'sales-checkout-template-ins-required', path: 'checkoutTemplates.INSURANCE.0.requiredFields', label: 'INSURANCE - Required fields', type: 'tags', placeholder: 'insuranceType,termDays,requestedEffectiveDate' },
+          { id: 'sales-checkout-template-tel-code', path: 'checkoutTemplates.TELECOM.0.code', label: 'TELECOM - Template code', type: 'text', placeholder: 'TELECOM_STD' },
+          { id: 'sales-checkout-template-tel-label', path: 'checkoutTemplates.TELECOM.0.label', label: 'TELECOM - Nhãn template', type: 'text', placeholder: 'Mẫu viễn thông tiêu chuẩn' },
+          { id: 'sales-checkout-template-tel-required', path: 'checkoutTemplates.TELECOM.0.requiredFields', label: 'TELECOM - Required fields', type: 'tags', placeholder: 'packageCode,billingCycle,servicePhone' },
+          { id: 'sales-checkout-template-dig-code', path: 'checkoutTemplates.DIGITAL.0.code', label: 'DIGITAL - Template code', type: 'text', placeholder: 'DIGITAL_STD' },
+          { id: 'sales-checkout-template-dig-label', path: 'checkoutTemplates.DIGITAL.0.label', label: 'DIGITAL - Nhãn template', type: 'text', placeholder: 'Mẫu dịch vụ số tiêu chuẩn' },
+          { id: 'sales-checkout-template-dig-required', path: 'checkoutTemplates.DIGITAL.0.requiredFields', label: 'DIGITAL - Required fields', type: 'tags', placeholder: 'planCode,termDays,startDate' }
+        ]
+      },
+      {
+        id: 'sales-checkout-payment',
+        title: 'Payment policy',
+        fields: [
+          { id: 'sales-checkout-partial-payment', path: 'paymentPolicy.partialPaymentEnabled', label: 'Cho phép thanh toán một phần', type: 'switch' },
+          { id: 'sales-checkout-override-roles', path: 'paymentPolicy.overrideRoles', label: 'Vai trò được override thanh toán', type: 'multiSelect', options: CHECKOUT_OVERRIDE_ROLE_OPTIONS },
+          { id: 'sales-checkout-callback-tolerance', path: 'paymentPolicy.callbackTolerance', label: 'Tolerance callback', type: 'number', unit: 'giây', min: 10, max: 86400 },
+          { id: 'sales-checkout-reconcile-schedule', path: 'paymentPolicy.reconcileSchedule', label: 'Lịch reconcile (cron)', type: 'text', placeholder: '0 */2 * * *' }
+        ]
+      },
+      {
+        id: 'sales-checkout-invoice',
+        title: 'Invoice automation theo nhóm',
+        fields: [
+          { id: 'sales-checkout-invoice-ins-trigger', path: 'invoiceAutomation.INSURANCE.trigger', label: 'INSURANCE - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
+          { id: 'sales-checkout-invoice-ins-full', path: 'invoiceAutomation.INSURANCE.requireFullPayment', label: 'INSURANCE - Yêu cầu thanh toán đủ', type: 'switch' },
+          { id: 'sales-checkout-invoice-tel-trigger', path: 'invoiceAutomation.TELECOM.trigger', label: 'TELECOM - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
+          { id: 'sales-checkout-invoice-tel-full', path: 'invoiceAutomation.TELECOM.requireFullPayment', label: 'TELECOM - Yêu cầu thanh toán đủ', type: 'switch' },
+          { id: 'sales-checkout-invoice-dig-trigger', path: 'invoiceAutomation.DIGITAL.trigger', label: 'DIGITAL - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
+          { id: 'sales-checkout-invoice-dig-full', path: 'invoiceAutomation.DIGITAL.requireFullPayment', label: 'DIGITAL - Yêu cầu thanh toán đủ', type: 'switch' }
+        ]
+      },
+      {
+        id: 'sales-checkout-activation',
+        title: 'Activation policy theo nhóm',
+        fields: [
+          { id: 'sales-checkout-activation-ins', path: 'activationPolicy.INSURANCE', label: 'INSURANCE - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS },
+          { id: 'sales-checkout-activation-tel', path: 'activationPolicy.TELECOM', label: 'TELECOM - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS },
+          { id: 'sales-checkout-activation-dig', path: 'activationPolicy.DIGITAL', label: 'DIGITAL - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS }
+        ]
+      },
+      {
+        id: 'sales-checkout-effective',
+        title: 'Canonical effective mapping',
+        fields: [
+          { id: 'sales-checkout-effective-ins-from', path: 'effectiveDateMapping.INSURANCE.from', label: 'INSURANCE - Map effective_from', type: 'text', placeholder: 'autoPolicy.policyFromAt|motoPolicy.policyFromAt' },
+          { id: 'sales-checkout-effective-ins-to', path: 'effectiveDateMapping.INSURANCE.to', label: 'INSURANCE - Map effective_to', type: 'text', placeholder: 'autoPolicy.policyToAt|motoPolicy.policyToAt' },
+          { id: 'sales-checkout-effective-tel-from', path: 'effectiveDateMapping.TELECOM.from', label: 'TELECOM - Map effective_from', type: 'text', placeholder: 'activationAt' },
+          { id: 'sales-checkout-effective-tel-to', path: 'effectiveDateMapping.TELECOM.to', label: 'TELECOM - Map effective_to', type: 'text', placeholder: 'telecom.currentExpiryAt' },
+          { id: 'sales-checkout-effective-dig-from', path: 'effectiveDateMapping.DIGITAL.from', label: 'DIGITAL - Map effective_from', type: 'text', placeholder: 'service.startsAt' },
+          { id: 'sales-checkout-effective-dig-to', path: 'effectiveDateMapping.DIGITAL.to', label: 'DIGITAL - Map effective_to', type: 'text', placeholder: 'service.endsAt' }
+        ]
+      },
+      {
+        id: 'sales-checkout-numbering',
+        title: 'Order numbering policy',
+        fields: [
+          { id: 'sales-checkout-number-reset-rule', path: 'orderNumberingPolicy.resetRule', label: 'Reset rule', type: 'select', options: CHECKOUT_ORDER_RESET_RULE_OPTIONS },
+          { id: 'sales-checkout-number-seq-padding', path: 'orderNumberingPolicy.sequencePadding', label: 'Độ dài số thứ tự', type: 'number', min: 3, max: 12 },
+          { id: 'sales-checkout-number-prefix-ins', path: 'orderNumberingPolicy.groupPrefixes.INSURANCE', label: 'INSURANCE - Prefix', type: 'text', placeholder: 'INS' },
+          { id: 'sales-checkout-number-prefix-tel', path: 'orderNumberingPolicy.groupPrefixes.TELECOM', label: 'TELECOM - Prefix', type: 'text', placeholder: 'TEL' },
+          { id: 'sales-checkout-number-prefix-dig', path: 'orderNumberingPolicy.groupPrefixes.DIGITAL', label: 'DIGITAL - Prefix', type: 'text', placeholder: 'DIG' }
         ]
       },
       {
@@ -1111,6 +1262,16 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'int-ai-api-key', path: 'ai.apiKey', label: 'AI API key (nhập trực tiếp)', type: 'secret', helper: 'Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
           { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
           { id: 'int-ai-timeout', path: 'ai.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000, isAdvanced: true }
+        ]
+      },
+      {
+        id: 'integration-payments',
+        title: 'Payments callback',
+        fields: [
+          { id: 'int-payments-enabled', path: 'payments.enabled', label: 'Bật callback thanh toán', type: 'switch' },
+          { id: 'int-payments-secret-ref', path: 'payments.bankWebhookSecretRef', label: 'SecretRef webhook secret', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-payments-skew-seconds', path: 'payments.callbackSkewSeconds', label: 'Clock skew callback', type: 'number', unit: 'giây', min: 10, max: 86400, isAdvanced: true },
+          { id: 'int-payments-reconcile-enabled', path: 'payments.reconcileEnabled', label: 'Bật reconcile định kỳ', type: 'switch' }
         ]
       }
     ]
