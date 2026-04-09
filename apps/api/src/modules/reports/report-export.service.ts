@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
 import path from 'path';
-import { Workbook } from 'exceljs';
+import ExcelJS from 'exceljs';
 import { ReportOutputFormat } from './dto/reports.dto';
 
 type ReportExportInput = {
@@ -85,7 +85,7 @@ export class ReportExportService {
       const csvContent = this.toCsvContent(input.rows);
       await fs.writeFile(absolutePath, csvContent, 'utf8');
     } else if (input.outputFormat === 'XLSX') {
-      const workbook = new Workbook();
+      const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Report');
       const normalizedRows = input.rows.map((row) => this.flattenRow(row));
       const headers = this.collectHeaders(normalizedRows);
