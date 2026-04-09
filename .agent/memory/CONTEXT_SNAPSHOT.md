@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-09 20:32 +07
+- Time: 2026-04-09 21:46 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-09_2032_codex.md`
+- Session Log: `.agent/sessions/2026-04-09_2146_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,34 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-09 21:46 (docker build/runtime hotfix: vitest workspace + exceljs interop)
+- User confirmation:
+  - user yêu cầu fix sạch lỗi build/runtime Docker.
+- Đã xử lý:
+  - fix build `web`:
+    - thêm `vitest` vào `apps/web/package.json` (`devDependencies`) để `vitest.config.ts` resolve được `vitest/config` trong container build stage.
+    - lockfile cập nhật tương ứng (`package-lock.json`).
+  - fix runtime `api`:
+    - sửa import `exceljs` trong `apps/api/src/modules/reports/report-export.service.ts` từ named import sang default import (`ExcelJS.Workbook`) để tương thích ESM + CommonJS.
+  - fix env local để API không fail validation khi dev auth bypass:
+    - bổ sung local-only `.env`:
+      - `DEV_AUTH_BYPASS_ENABLED=true`
+      - `NEXT_PUBLIC_AUTH_ENABLED=false`
+      - `NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=true`
+    - `.env` là local config, không commit.
+  - git delivery:
+    - commit `7010b15` trên `main` và push `origin/main`.
+- Verification:
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `docker compose build` ✅ (`erp-retail-web Built`, `erp-retail-api Built`)
+  - `docker compose up -d` ✅
+  - `docker compose ps api web` ✅ (cả hai service `Up`)
+  - `docker compose logs --tail=120 api` ✅ (Nest app started, không còn lỗi `Workbook`).
+- Notes:
+  - vẫn còn warning không block tại `web` về `NODE_ENV` và `next start` + `output: standalone`.
+  - không phát sinh ADR mới trong batch fix bug này.
 
 ## Update 2026-04-09 20:32 (e2e contract alignment + full web regression green)
 - User confirmation:

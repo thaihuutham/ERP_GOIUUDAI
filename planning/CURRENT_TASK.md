@@ -2,9 +2,40 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-09 20:32 +07
+- Last updated: 2026-04-09 21:46 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-09 21:46 +07 (Docker build/runtime clean fix + GitHub push)
+- User request:
+  - fix sạch lỗi Docker build và đưa code lên GitHub.
+- Đã triển khai:
+  - fix lỗi build `web`:
+    - nguyên nhân: `apps/web/vitest.config.ts` import `vitest/config` nhưng workspace `@erp/web` chưa khai báo `vitest`.
+    - thêm `vitest` vào `apps/web/package.json` và cập nhật `package-lock.json`.
+  - fix lỗi runtime `api`:
+    - nguyên nhân: `exceljs` là CommonJS module, named export `Workbook` không hoạt động khi chạy ESM runtime.
+    - sửa `apps/api/src/modules/reports/report-export.service.ts` sang `import ExcelJS from 'exceljs'` và dùng `new ExcelJS.Workbook()`.
+  - fix local env cho dev bypass:
+    - `.env` local bổ sung:
+      - `DEV_AUTH_BYPASS_ENABLED=true`
+      - `NEXT_PUBLIC_AUTH_ENABLED=false`
+      - `NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=true`
+    - mục tiêu: tránh fail validation khi `AUTH_ENABLED=false` ở môi trường development.
+    - `.env` không commit.
+  - git delivery:
+    - commit: `7010b15` (`fix: resolve docker build/runtime errors for web and api`)
+    - push thành công lên `origin/main`.
+- Verification:
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `docker compose build` ✅ (cả `erp-retail-web` và `erp-retail-api` Built)
+  - `docker compose up -d` ✅
+  - `docker compose ps api web` ✅ (`Up`)
+  - `docker compose logs --tail=120 api` ✅ (Nest app start thành công, không còn lỗi `Workbook`).
+- Notes:
+  - warning không chặn runtime ở web vẫn còn: non-standard `NODE_ENV`, `next start` với `output: standalone`.
+  - không tạo ADR mới vì đây là bugfix kỹ thuật, không đổi quyết định kiến trúc.
 
 ## Session Update 2026-04-09 20:32 +07 (E2E contract alignment: create-flow labels + reports center + settings grouping)
 - User request:
