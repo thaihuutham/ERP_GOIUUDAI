@@ -41,7 +41,7 @@ describe('HR API flow integration', () => {
   });
 
   it('executes HR flow: employee -> attendance -> leave -> payroll', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     const state = {
       employee: {
@@ -206,7 +206,7 @@ describe('HR API flow integration', () => {
   });
 
   it('serves GET /api/v1/hr/attendance/monthly and maps year/month query correctly', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const monthlyPayload = {
       year: 2026,
       month: 4,
@@ -225,7 +225,7 @@ describe('HR API flow integration', () => {
   });
 
   it('serves POST/DELETE /api/v1/hr/attendance/exempt-day and maps payload/query correctly', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const markPayload = {
       id: 'att_exempt_1',
       employeeId: 'emp_api_1',

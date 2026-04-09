@@ -2,7 +2,7 @@ import { sign } from 'jsonwebtoken';
 
 export const TEST_TENANT_ID = 'GOIUUDAI';
 
-type TestRole = 'ADMIN' | 'MANAGER' | 'STAFF';
+type TestRole = 'ADMIN' | 'USER';
 
 export const setupSingleTenantAuthTestEnv = (jwtSecret: string) => {
   process.env.NODE_ENV = 'test';

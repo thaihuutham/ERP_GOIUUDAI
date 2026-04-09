@@ -87,19 +87,19 @@ async function mockWorkflowApis(page: Page, options: WorkflowsMockOptions = {}) 
           {
             id: 'manager_1',
             email: 'manager_1@demo.local',
-            role: 'MANAGER',
+            role: 'USER',
             employee: { fullName: 'Manager 1' }
           },
           {
             id: 'manager_2',
             email: 'manager_2@demo.local',
-            role: 'MANAGER',
+            role: 'USER',
             employee: { fullName: 'Manager 2' }
           },
           {
             id: 'manager_3',
             email: 'manager_3@demo.local',
-            role: 'MANAGER',
+            role: 'USER',
             employee: { fullName: 'Manager 3' }
           }
         ]
@@ -125,7 +125,7 @@ async function mockWorkflowApis(page: Page, options: WorkflowsMockOptions = {}) 
                   approvalMode: 'ALL',
                   minApprovers: 1,
                   slaHours: 24,
-                  approvers: [{ type: 'ROLE', role: 'MANAGER' }],
+                  approvers: [{ type: 'ROLE', role: 'USER' }],
                   transitions: [{ action: 'APPROVE', terminalStatus: 'APPROVED' }]
                 }
               ]

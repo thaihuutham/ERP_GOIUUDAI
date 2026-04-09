@@ -214,13 +214,13 @@ async function mockApi(page: Page) {
 }
 
 test.describe('access policy hardening', () => {
-  test('redirects STAFF and MANAGER away from blocked routes', async ({ page }) => {
+  test('redirects USER away from blocked routes', async ({ page }) => {
     await mockApi(page);
     await page.goto('/');
 
     const roleSelect = page.getByLabel('Vai trò');
 
-    await roleSelect.selectOption('STAFF');
+    await roleSelect.selectOption('USER');
     for (const path of ['/modules/settings', '/modules/finance', '/modules/workflows', '/modules/audit']) {
       await page.goto(path);
       await expect(page).toHaveURL('/');
@@ -229,7 +229,7 @@ test.describe('access policy hardening', () => {
       ).toBeVisible();
     }
 
-    await roleSelect.selectOption('MANAGER');
+    await roleSelect.selectOption('USER');
     await page.goto('/modules/settings');
     await expect(page).toHaveURL('/');
 
@@ -243,7 +243,7 @@ test.describe('access policy hardening', () => {
 
     const roleSelect = page.getByLabel('Vai trò');
 
-    await roleSelect.selectOption('STAFF');
+    await roleSelect.selectOption('USER');
     await page.goto('/modules/crm');
     await expect(page.getByRole('button', { name: 'Khách hàng' })).toHaveCount(0);
     await page.getByRole('cell', { name: 'Khách test quyền' }).click();
@@ -251,7 +251,7 @@ test.describe('access policy hardening', () => {
     await expect(page.getByRole('button', { name: 'Chỉnh sửa hồ sơ' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /^Lưu trữ$/ })).toHaveCount(0);
 
-    await roleSelect.selectOption('MANAGER');
+    await roleSelect.selectOption('USER');
     await page.goto('/modules/crm');
     await expect(page.getByRole('button', { name: 'Khách hàng' })).toBeVisible();
     await page.getByRole('cell', { name: 'Khách test quyền' }).click();

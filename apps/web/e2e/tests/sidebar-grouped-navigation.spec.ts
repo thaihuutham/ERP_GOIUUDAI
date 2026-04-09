@@ -62,7 +62,7 @@ test.describe('AppShell sidebar grouped navigation', () => {
 
     const roleSelect = page.getByLabel('Vai trò');
 
-    await roleSelect.selectOption('STAFF');
+    await roleSelect.selectOption('USER');
     await expect(sideMenu.getByRole('link', { name: 'CRM', exact: true })).toBeVisible();
     await expect(sideMenu.getByRole('link', { name: 'Tin nhắn', exact: true })).toBeVisible();
     await expect(sideMenu.getByRole('link', { name: 'Tài khoản Zalo', exact: true })).toBeVisible();
@@ -75,7 +75,7 @@ test.describe('AppShell sidebar grouped navigation', () => {
     await expect(page).toHaveURL(/\/modules\/zalo-automation\/campaigns$/);
     await expect(page.getByRole('heading', { name: 'Chiến dịch Zalo PERSONAL' })).toBeVisible();
 
-    await roleSelect.selectOption('MANAGER');
+    await roleSelect.selectOption('USER');
     await expect(sideMenu.getByRole('link', { name: 'Quy trình', exact: true })).toBeVisible();
     await expect(sideMenu.getByRole('link', { name: 'Nhật ký hệ thống', exact: true })).toBeVisible();
 

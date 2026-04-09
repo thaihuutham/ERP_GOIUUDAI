@@ -45,7 +45,7 @@ describe('Conversations API flow integration', () => {
   });
 
   it('executes conversations inbox flow: list -> create thread -> list/append messages -> latest evaluation', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(conversationsService, 'listThreads').mockResolvedValue({
       items: [
@@ -166,7 +166,7 @@ describe('Conversations API flow integration', () => {
   });
 
   it('executes OA outbound send route via Zalo API endpoint', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(zaloService, 'sendOaMessage').mockResolvedValue({
       success: true,

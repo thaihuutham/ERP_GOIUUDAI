@@ -54,7 +54,7 @@ describe('Custom Fields Day-1 API flow integration', () => {
   });
 
   it('routes catalog list through custom field query resolver and wrapper', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const serviceResult = [{ id: 'prod_1', name: 'San pham A' }];
     const wrappedResult = {
       items: [
@@ -92,7 +92,7 @@ describe('Custom Fields Day-1 API flow integration', () => {
   });
 
   it('routes sales order create via unified mutation contract and custom field apply', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const parsedMutation = {
       base: {
         customerName: 'Nguyen Van A',
@@ -138,7 +138,7 @@ describe('Custom Fields Day-1 API flow integration', () => {
   });
 
   it('routes workflow definition list through custom field filter resolution', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const listResult = [{ id: 'wf_def_1', name: 'Flow approve order' }];
     const wrappedResult = {
       items: [
@@ -176,7 +176,7 @@ describe('Custom Fields Day-1 API flow integration', () => {
   });
 
   it('routes HR event create via unified mutation contract and HR_EVENT custom field apply', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const parsedMutation = {
       base: {
         eventType: 'TRANSFER',

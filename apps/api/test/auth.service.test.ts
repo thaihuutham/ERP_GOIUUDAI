@@ -11,7 +11,7 @@ describe('AuthService', () => {
       tenant_Id: 'GOIUUDAI',
       email: 'staff@erp.local',
       passwordHash: hashedTempPassword,
-      role: UserRole.STAFF,
+      role: UserRole.USER,
       employeeId: null,
       isActive: true,
       mustChangePassword: true,

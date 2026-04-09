@@ -54,7 +54,7 @@ async function mockAccountsApis(
     }
 
     if (method === 'GET' && path === '/api/v1/settings/permissions/effective') {
-      if (role === 'STAFF' && options?.allowCreateForStaff) {
+      if (role === 'USER' && options?.allowCreateForStaff) {
         return json(route, {
           effective: [
             {
@@ -81,7 +81,7 @@ async function mockAccountsApis(
           {
             id: 'dev_manager',
             email: 'manager@example.com',
-            role: 'MANAGER',
+            role: 'USER',
             employee: { fullName: 'Manager ERP' }
           }
         ],
@@ -324,7 +324,7 @@ test.describe('Zalo Automation Accounts actions', () => {
     ];
 
     await page.addInitScript(() => {
-      window.localStorage.setItem('erp_web_role', 'STAFF');
+      window.localStorage.setItem('erp_web_role', 'USER');
     });
     await mockAccountsApis(page, accounts, { allowCreateForStaff: true });
     await page.goto('/modules/zalo-automation/accounts');

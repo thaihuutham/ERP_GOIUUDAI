@@ -41,7 +41,7 @@ describe('HR recruitment pipeline API flow', () => {
   });
 
   it('exposes pipeline board + metrics + stage/status transitions', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(hrService, 'getRecruitmentPipeline').mockResolvedValue({
       stages: [
@@ -130,7 +130,7 @@ describe('HR recruitment pipeline API flow', () => {
   });
 
   it('supports interview + offer + submit approval + convert employee endpoints', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(hrService, 'createRecruitmentInterview').mockResolvedValue({
       id: 'int_1',

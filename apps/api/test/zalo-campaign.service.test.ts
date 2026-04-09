@@ -143,7 +143,7 @@ describe('ZaloCampaignService', () => {
   it('filters campaign list by operator for non-admin actor', async () => {
     cls.get.mockReturnValue({
       userId: 'staff_1',
-      role: 'STAFF',
+      role: 'USER',
     });
     prisma.client.zaloCampaign.findMany.mockResolvedValue([]);
 
@@ -168,7 +168,7 @@ describe('ZaloCampaignService', () => {
   it('denies campaign detail for actor not assigned as operator', async () => {
     cls.get.mockReturnValue({
       userId: 'staff_2',
-      role: 'STAFF',
+      role: 'USER',
     });
     prisma.client.zaloCampaign.findFirst.mockResolvedValue(
       makeCampaign({
@@ -276,7 +276,7 @@ describe('ZaloCampaignService', () => {
   it('rejects deleting campaign for non-admin actor', async () => {
     cls.get.mockReturnValue({
       userId: 'staff_1',
-      role: 'STAFF',
+      role: 'USER',
     });
 
     await expect(service.deleteCampaign('campaign_1')).rejects.toBeInstanceOf(ForbiddenException);

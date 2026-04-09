@@ -73,7 +73,7 @@ async function mockAssistantApis(page: Page, options: AssistantMockOptions = {})
       includePatterns: ['**/*.md'],
       scopeType: 'department',
       scopeRefIds: ['dept_sales'],
-      allowedRoles: ['MANAGER', 'STAFF'],
+      allowedRoles: ['USER', 'USER'],
       classification: 'internal',
       scheduleRule: null,
       isActive: true,
@@ -170,13 +170,13 @@ async function mockAssistantApis(page: Page, options: AssistantMockOptions = {})
           {
             id: 'manager_1',
             email: 'manager_1@demo.local',
-            role: 'MANAGER',
+            role: 'USER',
             employee: { fullName: 'Manager 1' }
           },
           {
             id: 'staff_1',
             email: 'staff_1@demo.local',
-            role: 'STAFF',
+            role: 'USER',
             employee: { fullName: 'Staff 1' }
           }
         ]
@@ -188,7 +188,7 @@ async function mockAssistantApis(page: Page, options: AssistantMockOptions = {})
         actor: {
           userId: 'manager_1',
           email: 'manager_1@demo.local',
-          role: 'MANAGER',
+          role: 'USER',
           tenantId: 'GOIUUDAI',
           employeeId: 'emp_manager_1',
           positionId: 'pos_manager_1'
@@ -571,7 +571,7 @@ test.describe('Assistant module', () => {
     await page.goto('/modules/assistant/runs');
     await expect(page.locator('article.module-workbench > header.module-header h1', { hasText: 'Trợ lý AI' })).toBeVisible();
 
-    await page.locator('#web-role-select').selectOption('STAFF');
+    await page.locator('#web-role-select').selectOption('USER');
     await expect(page.getByRole('link', { name: 'Phiên chạy AI' }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: 'Phạm vi truy cập' }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: 'Proxy dữ liệu' }).first()).toBeVisible();
@@ -582,7 +582,7 @@ test.describe('Assistant module', () => {
       page.getByText('Trang bạn mở không thuộc phạm vi quyền truy cập. Hệ thống đã chuyển về Tổng quan.')
     ).toBeVisible();
 
-    await page.locator('#web-role-select').selectOption('MANAGER');
+    await page.locator('#web-role-select').selectOption('USER');
     await page.goto('/modules/assistant/knowledge');
     await expect(page.getByRole('heading', { name: 'Kho tri thức quản trị' })).toBeVisible();
 

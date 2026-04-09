@@ -44,7 +44,7 @@ describe('Audit read interceptor integration', () => {
   });
 
   it('emits READ audit log for whitelisted endpoint', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const appendAuditSpy = vi.spyOn(prismaService, 'appendAuditLog').mockResolvedValue();
 
     vi.spyOn(catalogService, 'getProduct').mockResolvedValue({
@@ -73,7 +73,7 @@ describe('Audit read interceptor integration', () => {
   });
 
   it('does not emit READ audit log for non-whitelisted endpoint', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const appendAuditSpy = vi.spyOn(prismaService, 'appendAuditLog').mockResolvedValue();
 
     vi.spyOn(catalogService, 'listProducts').mockResolvedValue({

@@ -41,7 +41,7 @@ describe('HR Regulation API flow', () => {
   });
 
   it('returns regulation metadata payload', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(regulationService, 'getRegulationMetadata').mockResolvedValue({
       viewerScope: 'department',
@@ -105,7 +105,7 @@ describe('HR Regulation API flow', () => {
   });
 
   it('runs appendix submission flow and score recompute endpoints', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(regulationService, 'createAppendixSubmission').mockResolvedValue({
       id: 'sub_flow_1',
@@ -198,7 +198,7 @@ describe('HR Regulation API flow', () => {
   });
 
   it('serves pip endpoints and auto-draft run', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(regulationService, 'runAutoDraftPip').mockResolvedValue({
       scannedEmployees: 2,

@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-09 11:59 +07
+- Time: 2026-04-09 12:43 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-09_1159_codex.md`
+- Session Log: `.agent/sessions/2026-04-09_1243_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,34 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-09 12:43 (admin/user cutover continuation: test/e2e sweep)
+- User confirmation:
+  - tiếp tục theo kế hoạch (`ok, bạn làm tiếp đi`).
+- Đã xử lý:
+  - hoàn tất cleanup role legacy trong test scope:
+    - `apps/api/test/**`: không còn `MANAGER/STAFF`.
+    - `apps/web/e2e/tests/**`: không còn `MANAGER/STAFF`.
+  - cân chỉnh API flow tests theo role model mới:
+    - các flow cần quyền cao dùng token `ADMIN` để tránh false-negative `403`.
+  - ổn định test hybrid search:
+    - assert list theo membership thay vì order cứng để giảm flake.
+  - fix residue sau bulk replace:
+    - loại union type trùng (`'USER' | 'USER'`) ở helper/test.
+- Verification:
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/custom-fields-day1.api-flow.test.ts test/hr-recruitment-pipeline.api-flow.test.ts test/hr-regulation.api-flow.test.ts test/hr-v1.api-flow.test.ts test/hr.api-flow.test.ts test/scm.api-flow.test.ts test/search-hybrid.api-flow.test.ts` ✅ (26 tests)
+  - `npm run test:unit --workspace @erp/web -- lib/__tests__/access-policy.test.ts components/settings-center/__tests__/view-model.test.ts` ✅ (13 tests)
+  - `rg -n "\\b(MANAGER|STAFF)\\b" apps/api/test apps/web/e2e/tests --glob '!**/test-results/**'` ✅
+- Notes:
+  - full `npm run test --workspace @erp/api` vẫn còn một số fail ngoài phạm vi batch test cutover này (mock/runtime mismatch ở bộ test khác).
+  - literal `MANAGER/STAFF` còn lại chủ yếu ở docs/plan/ADR/migration lịch sử; runtime path và test/e2e active scope đã sạch.
 
 ## Update 2026-04-09 11:59 (admin/user cutover continuation: scripts + runtime sweep)
 - User confirmation:

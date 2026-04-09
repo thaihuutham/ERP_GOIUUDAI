@@ -112,7 +112,7 @@ describe('WorkflowsService', () => {
   it('submits workflow and normalizes ROLE approvers to concrete users', async () => {
     const prisma = makePrismaMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const cls = makeClsMock({ userId: 'requester_1', role: UserRole.MANAGER });
+    const cls = makeClsMock({ userId: 'requester_1', role: UserRole.USER });
     const search = makeSearchMock();
 
     prisma.client.workflowDefinition.findFirst.mockResolvedValue({
@@ -125,7 +125,7 @@ describe('WorkflowsService', () => {
           {
             key: 'approval',
             approvalMode: 'ALL',
-            approvers: [{ type: 'ROLE', role: 'MANAGER' }],
+            approvers: [{ type: 'ROLE', role: 'USER' }],
             transitions: [{ action: 'APPROVE', terminalStatus: 'APPROVED' }]
           }
         ]
@@ -194,7 +194,7 @@ describe('WorkflowsService', () => {
   it('blocks self-approval by SoD policy', async () => {
     const prisma = makePrismaMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const cls = makeClsMock({ userId: 'requester_1', role: UserRole.MANAGER });
+    const cls = makeClsMock({ userId: 'requester_1', role: UserRole.USER });
     const search = makeSearchMock();
 
     prisma.client.workflowInstance.findFirst.mockImplementation(async (args: any) => {
@@ -260,7 +260,7 @@ describe('WorkflowsService', () => {
   it('advances step when MIN_N threshold is met and archives remaining pending approvals', async () => {
     const prisma = makePrismaMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const cls = makeClsMock({ userId: 'manager_1', role: UserRole.MANAGER });
+    const cls = makeClsMock({ userId: 'manager_1', role: UserRole.USER });
     const search = makeSearchMock();
 
     prisma.client.workflowDefinition.findFirst.mockResolvedValue({
@@ -274,7 +274,7 @@ describe('WorkflowsService', () => {
             key: 'approval',
             approvalMode: 'MIN_N',
             minApprovers: 2,
-            approvers: [{ type: 'ROLE', role: 'MANAGER' }],
+            approvers: [{ type: 'ROLE', role: 'USER' }],
             transitions: [{ action: 'APPROVE', toStep: 'final_gate' }]
           },
           {
@@ -429,9 +429,9 @@ describe('WorkflowsService', () => {
     const prisma = makePrismaMock();
     const runtimeSettings = makeRuntimeSettingsMock();
     const cls = makeClsMock(
-      { userId: 'staff_1', role: UserRole.STAFF },
+      { userId: 'staff_1', role: UserRole.USER },
       {
-        [AUTH_USER_CONTEXT_KEY]: { userId: 'staff_1', role: UserRole.STAFF },
+        [AUTH_USER_CONTEXT_KEY]: { userId: 'staff_1', role: UserRole.USER },
         [IAM_SCOPE_CONTEXT_KEY]: {
           enabled: true,
           mode: 'ENFORCE',
@@ -479,9 +479,9 @@ describe('WorkflowsService', () => {
     const prisma = makePrismaMock();
     const runtimeSettings = makeRuntimeSettingsMock();
     const cls = makeClsMock(
-      { userId: 'staff_1', role: UserRole.STAFF },
+      { userId: 'staff_1', role: UserRole.USER },
       {
-        [AUTH_USER_CONTEXT_KEY]: { userId: 'staff_1', role: UserRole.STAFF },
+        [AUTH_USER_CONTEXT_KEY]: { userId: 'staff_1', role: UserRole.USER },
         [IAM_SCOPE_CONTEXT_KEY]: {
           enabled: true,
           mode: 'ENFORCE',

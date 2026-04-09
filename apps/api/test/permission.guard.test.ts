@@ -44,7 +44,7 @@ function makeGuard(options?: {
     authUser: {
       userId: 'user_1',
       email: 'staff@erp.local',
-      role: 'STAFF',
+      role: 'USER',
       positionId: 'pos_1',
       employeeId: 'emp_1'
     },

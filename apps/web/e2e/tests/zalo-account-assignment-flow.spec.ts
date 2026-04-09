@@ -79,7 +79,7 @@ function readUserId(request: Request) {
 }
 
 function getAccessibleAccountIds(role: string, userId: string, state: MockState) {
-  if (role === 'ADMIN' || role === 'MANAGER') {
+  if (role === 'ADMIN' || role === 'USER') {
     return ACCOUNTS.map((account) => account.id);
   }
 
@@ -104,7 +104,7 @@ async function mockZaloAssignmentApis(page: Page, state: MockState) {
     }
 
     if (method === 'GET' && path === '/api/v1/settings/permissions/effective') {
-      if (role === 'STAFF') {
+      if (role === 'USER') {
         return json(route, {
           effective: [
             {
@@ -132,7 +132,7 @@ async function mockZaloAssignmentApis(page: Page, state: MockState) {
           {
             id: 'dev_staff',
             email: 'staff@example.com',
-            role: 'STAFF',
+            role: 'USER',
             employee: { fullName: 'Nhân viên CSKH' }
           }
         ],
@@ -144,11 +144,11 @@ async function mockZaloAssignmentApis(page: Page, state: MockState) {
     if (method === 'GET' && path === '/api/v1/zalo/accounts') {
       const accessibleAccountIds = getAccessibleAccountIds(role, userId, state);
       const rows = ACCOUNTS
-        .filter((account) => role === 'ADMIN' || role === 'MANAGER' || accessibleAccountIds.includes(account.id))
+        .filter((account) => role === 'ADMIN' || role === 'USER' || accessibleAccountIds.includes(account.id))
         .map((account) => ({
           ...account,
           currentPermissionLevel:
-            role === 'ADMIN' || role === 'MANAGER'
+            role === 'ADMIN' || role === 'USER'
               ? 'ADMIN'
               : state.assignments[account.id]?.[userId] ?? null
         }));
@@ -215,7 +215,7 @@ async function mockZaloAssignmentApis(page: Page, state: MockState) {
     if (method === 'GET' && path === '/api/v1/conversations/threads') {
       const accessibleAccountIds = getAccessibleAccountIds(role, userId, state);
       const items = THREADS.filter(
-        (thread) => role === 'ADMIN' || role === 'MANAGER' || accessibleAccountIds.includes(thread.channelAccountId)
+        (thread) => role === 'ADMIN' || role === 'USER' || accessibleAccountIds.includes(thread.channelAccountId)
       );
       return json(route, {
         items,
@@ -307,7 +307,7 @@ test.describe('Zalo account assignment flow', () => {
 
     const staffPage = await page.context().newPage();
     await staffPage.addInitScript(() => {
-      window.localStorage.setItem('erp_web_role', 'STAFF');
+      window.localStorage.setItem('erp_web_role', 'USER');
     });
     await staffPage.goto('/modules/zalo-automation/messages');
 

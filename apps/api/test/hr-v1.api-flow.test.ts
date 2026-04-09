@@ -41,7 +41,7 @@ describe('HR v1 API flow (PIT + Goals + Employee Info)', () => {
   });
 
   it('supports PIT profile/record CRUD and generate flow', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(hrService, 'listPersonalIncomeTaxProfiles').mockResolvedValue([
       {
@@ -137,7 +137,7 @@ describe('HR v1 API flow (PIT + Goals + Employee Info)', () => {
   });
 
   it('supports goals CRUD/progress and employee-info list/detail/update flow', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(hrService, 'listGoals').mockResolvedValue([
       {
@@ -244,7 +244,7 @@ describe('HR v1 API flow (PIT + Goals + Employee Info)', () => {
   });
 
   it('supports goals tracker workflow endpoints (tracker/overview/timeline/submit/recompute)', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(hrService, 'getGoalsTracker').mockResolvedValue({
       scope: 'team',

@@ -140,7 +140,7 @@ describe('ZaloService OA outbound', () => {
   it('creates account with owner bound to current non-admin user', async () => {
     cls.get.mockReturnValue({
       userId: 'staff_erp_1',
-      role: 'STAFF'
+      role: 'USER'
     });
     prisma.client.zaloAccount.create.mockResolvedValue({
       id: 'zalo_account_created_1'

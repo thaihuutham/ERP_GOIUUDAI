@@ -61,7 +61,7 @@ describe('SCM API flow integration', () => {
   });
 
   it('executes PO lifecycle flow: create -> submit -> approve -> receive -> close', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     vi.spyOn(runtimeSettings, 'isModuleEnabled').mockResolvedValue(true);
 
     const state = {
@@ -171,7 +171,7 @@ describe('SCM API flow integration', () => {
   });
 
   it('executes shipment lifecycle flow: create -> ship -> deliver', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     vi.spyOn(runtimeSettings, 'isModuleEnabled').mockResolvedValue(true);
 
     const shipment = {

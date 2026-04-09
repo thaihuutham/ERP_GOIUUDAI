@@ -372,7 +372,7 @@ test.describe('HR Attendance board', () => {
     };
 
     await page.addInitScript(() => {
-      window.localStorage.setItem('erp_web_role', 'MANAGER');
+      window.localStorage.setItem('erp_web_role', 'USER');
     });
     await mockAttendanceApis(page, state);
 

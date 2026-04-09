@@ -64,8 +64,8 @@ describe('API smoke', () => {
     );
   });
 
-  it('PUT /api/v1/settings/config should return 403 for STAFF role', async () => {
-    const staffToken = makeAuthToken('STAFF');
+  it('PUT /api/v1/settings/config should return 403 for USER role', async () => {
+    const staffToken = makeAuthToken('USER');
     const res = await request(app.getHttpServer())
       .put('/api/v1/settings/config')
       .set('authorization', `Bearer ${staffToken}`)
@@ -109,7 +109,7 @@ describe('API smoke', () => {
   });
 
   it('GET /api/v1/crm/customers should return 401 when token tenant mismatches single-tenant runtime', async () => {
-    const mismatchedTenantToken = makeAuthToken('MANAGER', { tenantId: 'tenant_demo_company' });
+    const mismatchedTenantToken = makeAuthToken('USER', { tenantId: 'tenant_demo_company' });
 
     const res = await request(app.getHttpServer())
       .get('/api/v1/crm/customers')

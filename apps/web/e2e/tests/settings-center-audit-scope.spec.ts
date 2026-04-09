@@ -88,8 +88,7 @@ const ACCESS_SECURITY_DOMAIN = {
     settingsEditorPolicy: {
       domainRoleMap: {
         ADMIN: [],
-        MANAGER: [],
-        STAFF: []
+        USER: []
       },
       userDomainMap: {}
     }
@@ -169,7 +168,7 @@ test.describe('Settings Center audit scope matrix', () => {
             {
               id: 'user_1',
               email: 'manager@erp.vn',
-              role: 'MANAGER',
+              role: 'USER',
               employee: {
                 id: 'emp_1',
                 fullName: 'Manager ERP'
@@ -216,7 +215,7 @@ test.describe('Settings Center audit scope matrix', () => {
     await expect(page.getByLabel('Giám đốc: xem toàn công ty')).toBeChecked();
     await expect(page.getByLabel('Trưởng chi nhánh: xem trong phạm vi chi nhánh')).toBeChecked();
     await expect(page.getByLabel('Trưởng phòng: xem trong phạm vi phòng ban')).toBeChecked();
-    await expect(page.getByLabel('Chặn MANAGER chưa được gán vào đơn vị tổ chức')).toBeChecked();
+    await expect(page.getByLabel('Chặn USER chưa được gán vào đơn vị tổ chức')).toBeChecked();
 
     await page.getByRole('tab', { name: 'Ma trận quyền hạn' }).click();
     await expect(page.getByRole('cell', { name: 'audit' }).first()).toBeVisible();

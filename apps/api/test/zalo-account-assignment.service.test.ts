@@ -29,7 +29,7 @@ function makeService(options?: {
   const cls = {
     get: vi.fn((key: string) => {
       if (key === 'authUser') {
-        return options?.authUser ?? { userId: 'staff_1', role: 'STAFF' };
+        return options?.authUser ?? { userId: 'staff_1', role: 'USER' };
       }
       return undefined;
     })
@@ -53,7 +53,7 @@ describe('ZaloAccountAssignmentService', () => {
 
   it('denies staff chat when no active assignment', async () => {
     const { service } = makeService({
-      authUser: { userId: 'staff_1', role: 'STAFF' },
+      authUser: { userId: 'staff_1', role: 'USER' },
       assignment: null
     });
 
@@ -62,7 +62,7 @@ describe('ZaloAccountAssignmentService', () => {
 
   it('allows staff chat when assignment permission is CHAT', async () => {
     const { service } = makeService({
-      authUser: { userId: 'staff_1', role: 'STAFF' },
+      authUser: { userId: 'staff_1', role: 'USER' },
       assignment: { permissionLevel: ZaloAccountPermissionLevel.CHAT }
     });
 
@@ -72,7 +72,7 @@ describe('ZaloAccountAssignmentService', () => {
 
   it('returns staff-scoped accessible account ids', async () => {
     const { service, prisma } = makeService({
-      authUser: { userId: 'staff_1', role: 'STAFF' }
+      authUser: { userId: 'staff_1', role: 'USER' }
     });
 
     prisma.client.zaloAccountAssignment.findMany.mockResolvedValue([
@@ -107,7 +107,7 @@ describe('ZaloAccountAssignmentService', () => {
 
   it('denies manager role from managing assignments', async () => {
     const { service } = makeService({
-      authUser: { userId: 'manager_1', role: 'MANAGER' }
+      authUser: { userId: 'manager_1', role: 'USER' }
     });
 
     await expect(
@@ -117,7 +117,7 @@ describe('ZaloAccountAssignmentService', () => {
 
   it('denies staff role from viewing operational metrics', async () => {
     const { service } = makeService({
-      authUser: { userId: 'staff_1', role: 'STAFF' }
+      authUser: { userId: 'staff_1', role: 'USER' }
     });
 
     await expect(service.assertCanViewOperationalMetrics()).rejects.toBeInstanceOf(ForbiddenException);

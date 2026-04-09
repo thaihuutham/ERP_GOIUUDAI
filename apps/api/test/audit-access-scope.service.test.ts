@@ -72,7 +72,7 @@ describe('AuditAccessScopeService', () => {
   it('returns company scope for director when managing COMPANY org unit', async () => {
     cls.get.mockReturnValue({
       userId: 'user_director',
-      role: 'MANAGER',
+      role: 'USER',
       employeeId: 'emp_director'
     });
 
@@ -89,7 +89,7 @@ describe('AuditAccessScopeService', () => {
   it('returns branch scope with descendants for branch manager', async () => {
     cls.get.mockReturnValue({
       userId: 'user_branch_manager',
-      role: 'MANAGER',
+      role: 'USER',
       employeeId: 'emp_branch_manager'
     });
 
@@ -122,7 +122,7 @@ describe('AuditAccessScopeService', () => {
   it('denies manager when ungrouped and denyIfUngroupedManager is enabled', async () => {
     cls.get.mockReturnValue({
       userId: 'user_manager',
-      role: 'MANAGER',
+      role: 'USER',
       employeeId: 'emp_manager'
     });
 
@@ -134,7 +134,7 @@ describe('AuditAccessScopeService', () => {
   it('denies branch manager when BRANCH_MANAGER group is disabled', async () => {
     cls.get.mockReturnValue({
       userId: 'user_branch_manager',
-      role: 'MANAGER',
+      role: 'USER',
       employeeId: 'emp_branch_manager'
     });
     runtimeSettings.getAccessSecurityRuntime.mockResolvedValue({

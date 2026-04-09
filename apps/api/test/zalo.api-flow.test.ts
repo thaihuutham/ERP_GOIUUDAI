@@ -41,7 +41,7 @@ describe('Zalo API flow integration', () => {
   });
 
   it('executes sync-contacts endpoint', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     vi.spyOn(zaloService, 'syncContacts').mockResolvedValue({
       success: true,
       accountId: 'acc_personal_1',
@@ -66,7 +66,7 @@ describe('Zalo API flow integration', () => {
   });
 
   it('executes soft-delete endpoint', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     vi.spyOn(zaloService, 'softDeleteAccount').mockResolvedValue({
       success: true,
       message: 'Đã xóa mềm tài khoản Zalo và giữ nguyên dữ liệu hội thoại.',

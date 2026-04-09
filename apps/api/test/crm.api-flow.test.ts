@@ -41,7 +41,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('executes CRM flow: customer -> interaction -> payment request -> mark paid', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     const state = {
       customer: {
@@ -154,7 +154,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('executes customer merge flow', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(crmService, 'mergeCustomers').mockImplementation(async (body: any) => ({
       message: 'Đã gộp hồ sơ khách hàng thành công.',
@@ -185,7 +185,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('returns runtime CRM customer taxonomy', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(crmService, 'getCustomerTaxonomy').mockResolvedValue({
       customerTaxonomy: {
@@ -204,7 +204,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('forwards customFilter query to listCustomers service for server-side filtering', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
     const customFilter = JSON.stringify({
       logic: 'AND',
       conditions: [
@@ -243,7 +243,7 @@ describe('CRM API flow integration', () => {
   });
 
   it('supports customer saved filters endpoints', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(crmService, 'listCustomerSavedFilters').mockResolvedValue({
       items: [],

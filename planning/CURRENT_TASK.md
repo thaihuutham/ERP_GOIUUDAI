@@ -2,9 +2,38 @@
 
 ## Trạng thái tổng quan
 - Phase: Workflow ERP Hardening + Global Audit Log Hardening + HR/Sales/Finance stabilization + Attendance multi-method + HR Regulation 2026
-- Last updated: 2026-04-09 11:59 +07
+- Last updated: 2026-04-09 12:43 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+
+## Session Update 2026-04-09 12:43 +07 (Admin/User cutover continuation: test/e2e sweep)
+- User request:
+  - tiếp tục theo kế hoạch (`ok, bạn làm tiếp đi`).
+- Đã triển khai:
+  - cleanup toàn bộ literal `MANAGER/STAFF` trong:
+    - `apps/api/test/**`
+    - `apps/web/e2e/tests/**`
+  - chuẩn hóa token quyền trong API flow tests:
+    - các flow nghiệp vụ cần quyền cao đổi sang token `ADMIN`,
+    - giữ case test deny theo `USER` ở smoke/guard assertions liên quan.
+  - ổn định `search-hybrid.api-flow.test.ts`:
+    - bỏ phụ thuộc thứ tự cứng khi assert kết quả list, dùng `arrayContaining` + `length`.
+  - fix cleanup residue:
+    - loại union type trùng (`'USER' | 'USER'`) trong helper/test.
+- Verification:
+  - `docker ps --format 'table {{.Names}}\\t{{.Status}}'` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api -- test/crm.api-flow.test.ts test/custom-fields-day1.api-flow.test.ts test/hr-recruitment-pipeline.api-flow.test.ts test/hr-regulation.api-flow.test.ts test/hr-v1.api-flow.test.ts test/hr.api-flow.test.ts test/scm.api-flow.test.ts test/search-hybrid.api-flow.test.ts` ✅ (`26 passed`)
+  - `npm run test:unit --workspace @erp/web -- lib/__tests__/access-policy.test.ts components/settings-center/__tests__/view-model.test.ts` ✅ (`13 passed`)
+  - `rg -n "\\b(MANAGER|STAFF)\\b" apps/api/test apps/web/e2e/tests --glob '!**/test-results/**'` ✅ (không còn kết quả)
+- Notes:
+  - `npm run test --workspace @erp/api` full-suite vẫn còn fail ngoài phạm vi batch này (mock/runtime mismatch cũ), không thuộc các file test/e2e vừa cutover.
+  - literal `MANAGER/STAFF` còn lại chủ yếu ở docs/ADR/plans/migration lịch sử.
 
 ## Session Update 2026-04-09 11:59 +07 (Admin/User cutover continuation: scripts/runtime sweep)
 - User request:

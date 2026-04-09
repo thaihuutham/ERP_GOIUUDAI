@@ -538,7 +538,7 @@ describe('HrRegulationService', () => {
     const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
     const cls = {
       get: vi.fn().mockReturnValue({
-        role: 'STAFF',
+        role: 'USER',
         employeeId: 'emp_self',
         userId: 'user_staff'
       })
@@ -633,7 +633,7 @@ describe('HrRegulationService', () => {
     const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
     const cls = {
       get: vi.fn().mockReturnValue({
-        role: 'STAFF',
+        role: 'USER',
         employeeId: 'emp_self',
         userId: 'user_staff'
       })
@@ -659,7 +659,7 @@ describe('HrRegulationService', () => {
     const config = { get: vi.fn().mockImplementation((key: string, fallback: string) => (key === 'AUTH_ENABLED' ? 'true' : fallback)) };
     const cls = {
       get: vi.fn().mockReturnValue({
-        role: 'STAFF',
+        role: 'USER',
         employeeId: 'emp_self',
         userId: 'user_staff'
       })

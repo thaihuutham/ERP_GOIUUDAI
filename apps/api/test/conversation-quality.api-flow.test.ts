@@ -41,7 +41,7 @@ describe('Conversation quality API flow integration', () => {
   });
 
   it('executes quality job flow: list/create/update -> run now -> list/get runs', async () => {
-    const managerToken = makeAuthToken('MANAGER');
+    const managerToken = makeAuthToken('ADMIN');
 
     vi.spyOn(conversationQualityService, 'listJobs').mockResolvedValue([
       {

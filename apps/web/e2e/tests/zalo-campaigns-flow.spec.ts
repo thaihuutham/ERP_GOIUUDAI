@@ -94,7 +94,7 @@ async function mockCampaignApis(page: Page) {
     {
       id: 'staff_1',
       email: 'staff@local.erp',
-      role: 'STAFF',
+      role: 'USER',
       employee: { fullName: 'Staff ERP' },
     },
   ];

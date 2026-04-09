@@ -105,7 +105,7 @@ describe('SettingsEnterpriseService permission override guardrails', () => {
 
     const cls = makeCls({
       userId: 'manager_1',
-      role: UserRole.MANAGER,
+      role: UserRole.USER,
       email: 'manager@example.com'
     });
     const service = new SettingsEnterpriseService(prisma as any, cls as any);
@@ -128,12 +128,12 @@ describe('SettingsEnterpriseService permission override guardrails', () => {
     const prisma = makePrismaForOverrides();
     prisma.client.user.findFirst.mockResolvedValue({
       id: 'manager_1',
-      role: UserRole.MANAGER
+      role: UserRole.USER
     });
 
     const cls = makeCls({
       userId: 'manager_1',
-      role: UserRole.MANAGER,
+      role: UserRole.USER,
       email: 'manager@example.com'
     });
     const service = new SettingsEnterpriseService(prisma as any, cls as any);
@@ -158,7 +158,7 @@ describe('SettingsEnterpriseService IAM scope admin APIs', () => {
     const prisma = makePrismaForScopeApis();
     prisma.client.user.findFirst.mockResolvedValue({
       id: 'user_scope_1',
-      role: UserRole.MANAGER
+      role: UserRole.USER
     });
     prisma.client.orgUnit.findFirst.mockResolvedValue({
       id: 'org_1',

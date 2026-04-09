@@ -172,7 +172,7 @@ describe('CrmService', () => {
         key === AUTH_USER_CONTEXT_KEY
           ? {
               userId: 'manager_1',
-              role: UserRole.MANAGER,
+              role: UserRole.USER,
             }
           : undefined),
     };
@@ -201,7 +201,7 @@ describe('CrmService', () => {
         key === AUTH_USER_CONTEXT_KEY
           ? {
               userId: 'manager_1',
-              role: UserRole.MANAGER,
+              role: UserRole.USER,
             }
           : undefined),
     };
@@ -384,7 +384,7 @@ describe('CrmService', () => {
         key === AUTH_USER_CONTEXT_KEY
           ? {
               userId: 'staff_42',
-              role: UserRole.STAFF,
+              role: UserRole.USER,
               email: 'staff42@local.erp',
             }
           : undefined),
@@ -434,7 +434,7 @@ describe('CrmService', () => {
         key === AUTH_USER_CONTEXT_KEY
           ? {
               userId: 'manager_1',
-              role: UserRole.MANAGER,
+              role: UserRole.USER,
               email: 'manager_1@local.erp',
             }
           : undefined),

@@ -86,7 +86,7 @@ function buildDomainPayload(domain: string) {
           cutoffDay: 25
         },
         approverChain: {
-          leaveApproverRole: 'MANAGER',
+          leaveApproverRole: 'USER',
           payrollApproverRole: 'ADMIN'
         },
         appendixFieldCatalog: {
@@ -123,7 +123,7 @@ function buildDomainPayload(domain: string) {
           {
             module: 'reports',
             minAmount: 0,
-            approverRole: 'MANAGER',
+            approverRole: 'USER',
             approverDepartment: ''
           }
         ],
@@ -509,14 +509,14 @@ test.describe('Settings Center reports alignment', () => {
           items: [
             {
               id: 'user_1',
-              role: 'MANAGER',
+              role: 'USER',
               email: 'manager_1@erp.vn',
               employee: { fullName: 'Manager 1' },
               isActive: true
             },
             {
               id: 'user_2',
-              role: 'STAFF',
+              role: 'USER',
               email: 'staff_1@erp.vn',
               employee: { fullName: 'Staff 1' },
               isActive: true
@@ -580,7 +580,7 @@ test.describe('Settings Center reports alignment', () => {
 
   test('advanced mode defaults to OFF for manager and reveals technical fields on demand', async ({ page }) => {
     await page.addInitScript(() => {
-      window.localStorage.setItem('erp_web_role', 'MANAGER');
+      window.localStorage.setItem('erp_web_role', 'USER');
     });
 
     await page.route('**/api/v1/**', async (route) => {
@@ -825,8 +825,7 @@ test.describe('Settings Center reports alignment', () => {
           advancedMode: {
             defaultByRole: {
               ADMIN: false,
-              MANAGER: false,
-              STAFF: false
+              USER: false
             },
             scope: 'section_and_field'
           },

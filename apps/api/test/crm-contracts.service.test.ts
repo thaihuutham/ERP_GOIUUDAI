@@ -173,7 +173,7 @@ describe('CrmContractsService', () => {
       makeRuntimeSettingsMock() as any,
       makeConfigMock() as any,
       makeNotificationsMock() as any,
-      makeClsMock({ role: 'MANAGER', userId: 'dev_manager' }) as any
+      makeClsMock({ role: 'USER', userId: 'dev_manager' }) as any
     );
 
     await expect(
@@ -286,7 +286,7 @@ describe('CrmContractsService', () => {
       makeRuntimeSettingsMock() as any,
       makeConfigMock() as any,
       makeNotificationsMock() as any,
-      makeClsMock({ role: 'MANAGER', userId: 'dev_manager' }) as any
+      makeClsMock({ role: 'USER', userId: 'dev_manager' }) as any
     );
 
     await expect(
