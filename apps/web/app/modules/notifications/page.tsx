@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { NotificationsOperationsBoard } from '../../../components/notifications-operations-board';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="notifications" />;
+  return <NotificationsOperationsBoard />;
 }

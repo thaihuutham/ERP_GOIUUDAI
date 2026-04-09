@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { ProjectsOperationsBoard } from '../../../components/projects-operations-board';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="projects" />;
+  return <ProjectsOperationsBoard />;
 }

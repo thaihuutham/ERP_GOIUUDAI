@@ -70,7 +70,13 @@ type TodayAttendanceState = {
   openSessionStartedAt: string | null;
 };
 
-const REMOTE_IDLE_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS ?? 6 * 60 * 1000);
+const DEFAULT_REMOTE_IDLE_TIMEOUT_MS = process.env.NODE_ENV === 'production' ? 6 * 60 * 1000 : 6_000;
+const REMOTE_IDLE_TIMEOUT_MS_VALUE = Number(
+  process.env.NEXT_PUBLIC_REMOTE_IDLE_TIMEOUT_MS ?? DEFAULT_REMOTE_IDLE_TIMEOUT_MS
+);
+const REMOTE_IDLE_TIMEOUT_MS = Number.isFinite(REMOTE_IDLE_TIMEOUT_MS_VALUE) && REMOTE_IDLE_TIMEOUT_MS_VALUE > 0
+  ? REMOTE_IDLE_TIMEOUT_MS_VALUE
+  : DEFAULT_REMOTE_IDLE_TIMEOUT_MS;
 
 function createYearOptions(centerYear: number, span = 5) {
   return Array.from({ length: span * 2 + 1 }, (_, index) => centerYear - span + index);

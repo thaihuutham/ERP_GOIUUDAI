@@ -16,6 +16,76 @@ const ATTENDANCE_METHOD_OPTIONS = [
   { label: 'Miễn chấm công', value: 'EXEMPT' }
 ];
 
+const PRODUCT_TYPE_OPTIONS = [
+  { label: 'Hàng hóa', value: 'PRODUCT' },
+  { label: 'Dịch vụ', value: 'SERVICE' }
+];
+
+const ASSET_LIFECYCLE_OPTIONS = [
+  { label: 'Mua sắm', value: 'PROCURE' },
+  { label: 'Đang sử dụng', value: 'IN_USE' },
+  { label: 'Bảo trì', value: 'MAINTENANCE' },
+  { label: 'Ngừng sử dụng', value: 'RETIRED' }
+];
+
+const ASSET_LIFECYCLE_ACTION_OPTIONS = [
+  { label: 'Kích hoạt sử dụng', value: 'ACTIVATE' },
+  { label: 'Chuyển bảo trì', value: 'SEND_MAINTENANCE' },
+  { label: 'Kết thúc bảo trì', value: 'RETURN_MAINTENANCE' },
+  { label: 'Ngừng sử dụng', value: 'RETIRE' }
+];
+
+const ASSET_DEPRECIATION_METHOD_OPTIONS = [
+  { label: 'Đường thẳng', value: 'STRAIGHT_LINE' },
+  { label: 'Số dư giảm dần', value: 'DECLINING_BALANCE' }
+];
+
+const PROJECT_RESOURCE_TYPE_OPTIONS = [
+  { label: 'Nhân sự', value: 'NHAN_SU' },
+  { label: 'Thiết bị', value: 'THIET_BI' },
+  { label: 'Phần mềm', value: 'PHAN_MEM' },
+  { label: 'Dịch vụ ngoài', value: 'DICH_VU_NGOAI' }
+];
+
+const PROJECT_BUDGET_TYPE_OPTIONS = [
+  { label: 'Kế hoạch', value: 'PLAN' },
+  { label: 'Thực tế', value: 'ACTUAL' },
+  { label: 'Dự phòng', value: 'RESERVE' }
+];
+
+const PROJECT_TASK_STATUS_OPTIONS = [{ label: 'Tất cả', value: 'ALL' }, ...STATUS_OPTIONS];
+
+const REPORT_MODULE_OPTIONS = [
+  { label: 'Bán hàng', value: 'sales' },
+  { label: 'CRM', value: 'crm' },
+  { label: 'Danh mục', value: 'catalog' },
+  { label: 'Nhân sự', value: 'hr' },
+  { label: 'Tài chính', value: 'finance' },
+  { label: 'Chuỗi cung ứng', value: 'scm' },
+  { label: 'Dự án', value: 'projects' },
+  { label: 'Tài sản', value: 'assets' },
+  { label: 'Quy trình', value: 'workflows' }
+];
+
+const REPORT_OUTPUT_FORMAT_OPTIONS = [
+  { label: 'JSON', value: 'JSON' },
+  { label: 'CSV', value: 'CSV' },
+  { label: 'Excel (XLSX)', value: 'XLSX' },
+  { label: 'PDF', value: 'PDF' }
+];
+
+const REPORT_SCHEDULE_RULE_OPTIONS = [
+  { label: 'Theo giờ (1h)', value: 'HOURLY:1' },
+  { label: 'Hàng ngày', value: 'DAILY:1' },
+  { label: 'Hàng tuần', value: 'WEEKLY:1' }
+];
+
+const REPORT_GROUP_BY_OPTIONS = [
+  { label: 'Ngày', value: 'day' },
+  { label: 'Tuần', value: 'week' },
+  { label: 'Tháng', value: 'month' }
+];
+
 export const moduleDefinitions: Record<string, ModuleDefinition> = {
   crm: {
     key: 'crm',
@@ -256,15 +326,34 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   catalog: {
     key: 'catalog',
     title: 'Danh mục',
-    summary: 'Danh mục sản phẩm số và dịch vụ số phục vụ toàn hệ thống.',
-    highlights: ['Chuẩn hóa sản phẩm', 'Quản lý giá chuẩn', 'Kiểm soát trạng thái sản phẩm'],
+    summary: 'Board danh mục chuyên sâu: chuẩn hóa sản phẩm, chính sách giá và vòng đời lưu trữ.',
+    highlights: ['Danh mục sản phẩm chuẩn', 'Policy giá tập trung', 'Bulk archive theo lô'],
     features: [
       {
-        key: 'products',
+        key: 'product-catalog',
         title: 'Danh mục sản phẩm',
-        description: 'Danh sách sản phẩm và dịch vụ theo chuẩn vận hành.',
+        description: 'Danh sách sản phẩm/dịch vụ, hỗ trợ filter và thao tác hàng loạt.',
         listEndpoint: '/catalog/products',
-        columns: ['id', 'sku', 'name', 'productType', 'unitPrice', 'status'],
+        columns: ['id', 'sku', 'name', 'productType', 'categoryPath', 'pricePolicyCode', 'unitPrice', 'status', 'createdAt'],
+        filters: [
+          {
+            key: 'status',
+            label: 'Trạng thái',
+            type: 'select',
+            options: STATUS_OPTIONS
+          },
+          {
+            key: 'category',
+            label: 'Nhóm danh mục',
+            placeholder: 'Nhập mã/chuỗi danh mục'
+          },
+          {
+            key: 'includeArchived',
+            label: 'Gồm bản ghi đã lưu trữ',
+            type: 'checkbox',
+            includeInQuery: true
+          }
+        ],
         actions: [
           {
             key: 'create-product',
@@ -279,11 +368,20 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
                 label: 'Loại sản phẩm',
                 type: 'select',
                 required: true,
-                options: [
-                  { label: 'Hàng hóa', value: 'PRODUCT' },
-                  { label: 'Dịch vụ', value: 'SERVICE' }
-                ],
+                options: PRODUCT_TYPE_OPTIONS,
                 defaultValue: 'PRODUCT'
+              },
+              { name: 'categoryPath', label: 'Nhóm danh mục', placeholder: 'laptop/business' },
+              {
+                name: 'pricePolicyCode',
+                label: 'Chính sách giá',
+                type: 'select',
+                options: [
+                  { label: 'Bán lẻ chuẩn', value: 'RET-STD' },
+                  { label: 'Bán sỉ chuẩn', value: 'WSL-STD' },
+                  { label: 'Khuyến mại', value: 'PROMO' }
+                ],
+                defaultValue: 'RET-STD'
               },
               { name: 'unitPrice', label: 'Đơn giá', type: 'number', required: true, placeholder: '15000000' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'ACTIVE' }
@@ -302,9 +400,17 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
                 name: 'productType',
                 label: 'Loại',
                 type: 'select',
+                options: PRODUCT_TYPE_OPTIONS
+              },
+              { name: 'categoryPath', label: 'Nhóm danh mục' },
+              {
+                name: 'pricePolicyCode',
+                label: 'Chính sách giá',
+                type: 'select',
                 options: [
-                  { label: 'Hàng hóa', value: 'PRODUCT' },
-                  { label: 'Dịch vụ', value: 'SERVICE' }
+                  { label: 'Bán lẻ chuẩn', value: 'RET-STD' },
+                  { label: 'Bán sỉ chuẩn', value: 'WSL-STD' },
+                  { label: 'Khuyến mại', value: 'PROMO' }
                 ]
               },
               { name: 'unitPrice', label: 'Đơn giá', type: 'number' },
@@ -312,11 +418,60 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             ]
           },
           {
-            key: 'delete-product',
-            label: 'Xóa sản phẩm',
-            method: 'DELETE',
-            endpoint: '/catalog/products/:id',
-            fields: [{ name: 'id', label: 'Mã sản phẩm', required: true }]
+            key: 'archive-product',
+            label: 'Lưu trữ sản phẩm',
+            method: 'POST',
+            endpoint: '/catalog/products/:id/archive',
+            fields: [
+              { name: 'id', label: 'Mã sản phẩm', required: true },
+              {
+                name: 'reason',
+                label: 'Lý do lưu trữ',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Ngừng kinh doanh', value: 'DISCONTINUED' },
+                  { label: 'SKU trùng/đã gộp', value: 'MERGED_DUPLICATE' },
+                  { label: 'Không còn hiệu lực', value: 'OBSOLETE' }
+                ],
+                defaultValue: 'DISCONTINUED'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', placeholder: 'CAT-ARCH-001' }
+            ]
+          },
+          {
+            key: 'set-product-price-policy',
+            label: 'Áp chính sách giá',
+            method: 'POST',
+            endpoint: '/catalog/products/:id/price-policy',
+            fields: [
+              { name: 'id', label: 'Mã sản phẩm', required: true },
+              {
+                name: 'policyCode',
+                label: 'Chính sách giá',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Bán lẻ chuẩn', value: 'RET-STD' },
+                  { label: 'Bán sỉ chuẩn', value: 'WSL-STD' },
+                  { label: 'Khuyến mại', value: 'PROMO' }
+                ],
+                defaultValue: 'RET-STD'
+              },
+              { name: 'unitPrice', label: 'Đơn giá override', type: 'number' },
+              {
+                name: 'reason',
+                label: 'Lý do override',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Điều chỉnh theo chương trình giá', value: 'PRICE_CAMPAIGN' },
+                  { label: 'Điều chỉnh khẩn', value: 'URGENT_OVERRIDE' }
+                ],
+                defaultValue: 'PRICE_CAMPAIGN'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'PRICE-REF-001' }
+            ]
           }
         ]
       }
@@ -1572,15 +1727,29 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   assets: {
     key: 'assets',
     title: 'Tài sản',
-    summary: 'Quản lý tài sản, cấp phát và thu hồi theo vòng đời sử dụng.',
-    highlights: ['Kho tài sản', 'Cấp phát và thu hồi', 'Lịch sử cấp phát'],
+    summary: 'Board tài sản chuyên sâu: theo dõi vòng đời, cấp phát/thu hồi và khấu hao.',
+    highlights: ['Kho tài sản', 'Lifecycle transition', 'Bulk cấp phát/thu hồi'],
     features: [
       {
         key: 'asset-inventory',
         title: 'Kho tài sản',
-        description: 'Danh sách tài sản và thông tin giá trị.',
+        description: 'Quản lý danh sách tài sản với bộ lọc trạng thái và vòng đời.',
         listEndpoint: '/assets',
-        columns: ['id', 'assetCode', 'name', 'category', 'value', 'status', 'purchaseAt'],
+        columns: ['id', 'assetCode', 'name', 'category', 'lifecycleStatus', 'value', 'status', 'purchaseAt', 'createdAt'],
+        filters: [
+          {
+            key: 'status',
+            label: 'Trạng thái',
+            type: 'select',
+            options: STATUS_OPTIONS
+          },
+          {
+            key: 'lifecycleStatus',
+            label: 'Vòng đời',
+            type: 'select',
+            options: ASSET_LIFECYCLE_OPTIONS
+          }
+        ],
         actions: [
           {
             key: 'create-asset',
@@ -1593,6 +1762,23 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'category', label: 'Nhóm tài sản' },
               { name: 'purchaseAt', label: 'Ngày mua', type: 'date' },
               { name: 'value', label: 'Giá trị', type: 'number' },
+              {
+                name: 'lifecycleStatus',
+                label: 'Vòng đời',
+                type: 'select',
+                options: ASSET_LIFECYCLE_OPTIONS,
+                defaultValue: 'PROCURE'
+              },
+              {
+                name: 'depreciationMethod',
+                label: 'Phương pháp khấu hao',
+                type: 'select',
+                options: ASSET_DEPRECIATION_METHOD_OPTIONS,
+                defaultValue: 'STRAIGHT_LINE'
+              },
+              { name: 'usefulLifeMonths', label: 'Thời gian sử dụng (tháng)', type: 'number' },
+              { name: 'salvageValue', label: 'Giá trị thu hồi', type: 'number' },
+              { name: 'depreciationStartAt', label: 'Ngày bắt đầu khấu hao', type: 'date' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'ACTIVE' }
             ]
           },
@@ -1605,8 +1791,48 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'id', label: 'Mã tài sản', required: true },
               { name: 'name', label: 'Tên mới' },
               { name: 'category', label: 'Nhóm' },
+              { name: 'purchaseAt', label: 'Ngày mua', type: 'date' },
               { name: 'value', label: 'Giá trị', type: 'number' },
+              {
+                name: 'lifecycleStatus',
+                label: 'Vòng đời',
+                type: 'select',
+                options: ASSET_LIFECYCLE_OPTIONS
+              },
+              {
+                name: 'depreciationMethod',
+                label: 'Phương pháp khấu hao',
+                type: 'select',
+                options: ASSET_DEPRECIATION_METHOD_OPTIONS
+              },
+              { name: 'usefulLifeMonths', label: 'Thời gian sử dụng (tháng)', type: 'number' },
+              { name: 'salvageValue', label: 'Giá trị thu hồi', type: 'number' },
+              { name: 'depreciationStartAt', label: 'Ngày bắt đầu khấu hao', type: 'date' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
+            ]
+          },
+          {
+            key: 'transition-asset-lifecycle',
+            label: 'Chuyển vòng đời',
+            method: 'POST',
+            endpoint: '/assets/:id/lifecycle',
+            fields: [
+              { name: 'id', label: 'Mã tài sản', required: true },
+              {
+                name: 'action',
+                label: 'Thao tác vòng đời',
+                type: 'select',
+                required: true,
+                options: ASSET_LIFECYCLE_ACTION_OPTIONS,
+                defaultValue: 'ACTIVATE'
+              },
+              { name: 'reason', label: 'Lý do', type: 'select', required: true, options: [
+                { label: 'Điều chuyển nội bộ', value: 'INTERNAL_TRANSFER' },
+                { label: 'Sự cố kỹ thuật', value: 'TECHNICAL_ISSUE' },
+                { label: 'Ngừng khai thác', value: 'RETIREMENT' }
+              ], defaultValue: 'INTERNAL_TRANSFER' },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'AST-LFC-001' },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
             ]
           },
           {
@@ -1616,7 +1842,19 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             endpoint: '/assets/:id/allocate',
             fields: [
               { name: 'id', label: 'Mã tài sản', required: true },
-              { name: 'employeeId', label: 'Mã nhân viên', required: true }
+              {
+                name: 'employeeId',
+                label: 'Nhân viên nhận tài sản',
+                type: 'select',
+                required: true,
+                optionSource: {
+                  endpoint: '/hr/employees',
+                  valueField: 'id',
+                  labelField: 'fullName',
+                  limit: 100
+                }
+              },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
             ]
           },
           {
@@ -1626,7 +1864,44 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             endpoint: '/assets/:id/return',
             fields: [
               { name: 'id', label: 'Mã tài sản', required: true },
+              {
+                name: 'reason',
+                label: 'Lý do thu hồi',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Hết nhu cầu sử dụng', value: 'NO_LONGER_NEEDED' },
+                  { label: 'Luân chuyển tài sản', value: 'REASSIGNMENT' },
+                  { label: 'Thiết bị lỗi/bảo trì', value: 'MAINTENANCE_REQUIRED' }
+                ],
+                defaultValue: 'NO_LONGER_NEEDED'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'AST-RET-001' },
               { name: 'notes', label: 'Ghi chú', type: 'textarea' }
+            ]
+          },
+          {
+            key: 'post-asset-depreciation',
+            label: 'Ghi nhận khấu hao',
+            method: 'POST',
+            endpoint: '/assets/:id/depreciation/post',
+            fields: [
+              { name: 'id', label: 'Mã tài sản', required: true },
+              { name: 'period', label: 'Kỳ ghi nhận (YYYY-MM)', placeholder: '2026-04' },
+              { name: 'amount', label: 'Số tiền khấu hao', type: 'number' },
+              {
+                name: 'reason',
+                label: 'Lý do override',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Ghi nhận định kỳ', value: 'PERIODIC_POSTING' },
+                  { label: 'Điều chỉnh thủ công', value: 'MANUAL_ADJUSTMENT' }
+                ],
+                defaultValue: 'PERIODIC_POSTING'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'AST-DEP-001' },
+              { name: 'note', label: 'Ghi chú', type: 'textarea' }
             ]
           }
         ]
@@ -1637,6 +1912,19 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         description: 'Lịch sử cấp phát và hoàn trả.',
         listEndpoint: '/assets/allocations',
         columns: ['id', 'assetId', 'employeeId', 'allocatedAt', 'returnedAt', 'status'],
+        filters: [
+          {
+            key: 'assetId',
+            label: 'Tài sản',
+            type: 'select',
+            optionSource: {
+              endpoint: '/assets',
+              valueField: 'id',
+              labelField: 'name',
+              limit: 100
+            }
+          }
+        ],
         actions: []
       }
     ]
@@ -1644,15 +1932,23 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   projects: {
     key: 'projects',
     title: 'Dự án',
-    summary: 'Điều phối dự án, công việc, nguồn lực, ngân sách và bảng công.',
-    highlights: ['Danh mục dự án', 'Trạng thái công việc', 'Ngân sách và giờ công'],
+    summary: 'Board dự án chuyên sâu: điều phối tiến độ, nguồn lực, ngân sách và giờ công.',
+    highlights: ['Danh mục dự án', 'Task pipeline', 'Nguồn lực và ngân sách'],
     features: [
       {
         key: 'project-list',
         title: 'Danh mục dự án',
         description: 'Tạo và cập nhật danh mục dự án.',
         listEndpoint: '/projects',
-        columns: ['id', 'code', 'name', 'status', 'startAt', 'endAt'],
+        columns: ['id', 'code', 'name', 'status', 'plannedBudget', 'actualBudget', 'forecastPercent', 'startAt', 'endAt'],
+        filters: [
+          {
+            key: 'status',
+            label: 'Trạng thái',
+            type: 'select',
+            options: STATUS_OPTIONS
+          }
+        ],
         actions: [
           {
             key: 'create-project',
@@ -1663,8 +1959,11 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'code', label: 'Mã dự án' },
               { name: 'name', label: 'Tên dự án', required: true },
               { name: 'description', label: 'Mô tả', type: 'textarea' },
-              { name: 'startDate', label: 'Bắt đầu', type: 'date' },
-              { name: 'endDate', label: 'Kết thúc', type: 'date' },
+              { name: 'startAt', label: 'Bắt đầu', type: 'date' },
+              { name: 'endAt', label: 'Kết thúc', type: 'date' },
+              { name: 'plannedBudget', label: 'Ngân sách kế hoạch', type: 'number' },
+              { name: 'actualBudget', label: 'Ngân sách thực tế', type: 'number' },
+              { name: 'forecastPercent', label: 'Forecast (%)', type: 'number' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'PENDING' }
             ]
           },
@@ -1677,7 +1976,36 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
               { name: 'id', label: 'Mã dự án', required: true },
               { name: 'name', label: 'Tên mới' },
               { name: 'description', label: 'Mô tả', type: 'textarea' },
+              { name: 'startAt', label: 'Bắt đầu', type: 'date' },
+              { name: 'endAt', label: 'Kết thúc', type: 'date' },
+              { name: 'plannedBudget', label: 'Ngân sách kế hoạch', type: 'number' },
+              { name: 'actualBudget', label: 'Ngân sách thực tế', type: 'number' },
+              { name: 'forecastPercent', label: 'Forecast (%)', type: 'number' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
+            ]
+          },
+          {
+            key: 'update-project-forecast',
+            label: 'Cập nhật forecast',
+            method: 'PATCH',
+            endpoint: '/projects/:id/forecast',
+            fields: [
+              { name: 'id', label: 'Mã dự án', required: true },
+              { name: 'forecastPercent', label: 'Forecast (%)', type: 'number', required: true },
+              { name: 'actualBudget', label: 'Ngân sách thực tế', type: 'number' },
+              {
+                name: 'reason',
+                label: 'Lý do cập nhật',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Cập nhật định kỳ', value: 'PERIODIC_REVIEW' },
+                  { label: 'Điều chỉnh kế hoạch', value: 'PLAN_ADJUSTMENT' },
+                  { label: 'Biến động nguồn lực', value: 'RESOURCE_CHANGE' }
+                ],
+                defaultValue: 'PERIODIC_REVIEW'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'PRJ-FC-001' }
             ]
           }
         ]
@@ -1688,6 +2016,27 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         description: 'Quản lý công việc theo từng dự án.',
         listEndpoint: '/projects/tasks',
         columns: ['id', 'projectId', 'title', 'assignedTo', 'status', 'dueAt'],
+        filters: [
+          {
+            key: 'projectId',
+            label: 'Dự án',
+            type: 'select',
+            queryParam: 'projectId',
+            optionSource: {
+              endpoint: '/projects',
+              valueField: 'id',
+              labelField: 'name',
+              limit: 100
+            }
+          },
+          {
+            key: 'status',
+            label: 'Trạng thái',
+            type: 'select',
+            options: PROJECT_TASK_STATUS_OPTIONS,
+            queryParam: 'status'
+          }
+        ],
         actions: [
           {
             key: 'create-task',
@@ -1695,9 +2044,30 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/projects/tasks',
             fields: [
-              { name: 'projectId', label: 'Mã dự án', required: true },
+              {
+                name: 'projectId',
+                label: 'Dự án',
+                type: 'select',
+                required: true,
+                optionSource: {
+                  endpoint: '/projects',
+                  valueField: 'id',
+                  labelField: 'name',
+                  limit: 100
+                }
+              },
               { name: 'title', label: 'Tiêu đề công việc', required: true },
-              { name: 'assignedTo', label: 'Mã người phụ trách' },
+              {
+                name: 'assignedTo',
+                label: 'Người phụ trách',
+                type: 'select',
+                optionSource: {
+                  endpoint: '/hr/employees',
+                  valueField: 'id',
+                  labelField: 'fullName',
+                  limit: 100
+                }
+              },
               { name: 'dueAt', label: 'Hạn hoàn thành', type: 'date' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'PENDING' }
             ]
@@ -1720,6 +2090,20 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         description: 'Phân bổ nguồn lực theo dự án.',
         listEndpoint: '/projects/resources',
         columns: ['id', 'projectId', 'resourceType', 'resourceRef', 'quantity'],
+        filters: [
+          {
+            key: 'projectId',
+            label: 'Dự án',
+            type: 'select',
+            queryParam: 'projectId',
+            optionSource: {
+              endpoint: '/projects',
+              valueField: 'id',
+              labelField: 'name',
+              limit: 100
+            }
+          }
+        ],
         actions: [
           {
             key: 'create-resource',
@@ -1727,8 +2111,19 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/projects/resources',
             fields: [
-              { name: 'projectId', label: 'Mã dự án', required: true },
-              { name: 'resourceType', label: 'Loại nguồn lực', required: true, placeholder: 'nhan_vien/thiet_bi' },
+              {
+                name: 'projectId',
+                label: 'Dự án',
+                type: 'select',
+                required: true,
+                optionSource: {
+                  endpoint: '/projects',
+                  valueField: 'id',
+                  labelField: 'name',
+                  limit: 100
+                }
+              },
+              { name: 'resourceType', label: 'Loại nguồn lực', type: 'select', required: true, options: PROJECT_RESOURCE_TYPE_OPTIONS },
               { name: 'resourceRef', label: 'Mã tham chiếu nguồn lực' },
               { name: 'quantity', label: 'Số lượng', type: 'number' }
             ]
@@ -1741,6 +2136,20 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         description: 'Quản lý ngân sách chi tiết theo dự án.',
         listEndpoint: '/projects/budgets',
         columns: ['id', 'projectId', 'budgetType', 'amount'],
+        filters: [
+          {
+            key: 'projectId',
+            label: 'Dự án',
+            type: 'select',
+            queryParam: 'projectId',
+            optionSource: {
+              endpoint: '/projects',
+              valueField: 'id',
+              labelField: 'name',
+              limit: 100
+            }
+          }
+        ],
         actions: [
           {
             key: 'create-project-budget',
@@ -1748,8 +2157,19 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/projects/budgets',
             fields: [
-              { name: 'projectId', label: 'Mã dự án', required: true },
-              { name: 'budgetType', label: 'Loại ngân sách', required: true },
+              {
+                name: 'projectId',
+                label: 'Dự án',
+                type: 'select',
+                required: true,
+                optionSource: {
+                  endpoint: '/projects',
+                  valueField: 'id',
+                  labelField: 'name',
+                  limit: 100
+                }
+              },
+              { name: 'budgetType', label: 'Loại ngân sách', type: 'select', required: true, options: PROJECT_BUDGET_TYPE_OPTIONS },
               { name: 'amount', label: 'Số tiền', type: 'number', required: true }
             ]
           }
@@ -1761,6 +2181,20 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         description: 'Theo dõi giờ công nhân sự theo dự án.',
         listEndpoint: '/projects/time-entries',
         columns: ['id', 'projectId', 'employeeId', 'workDate', 'hours', 'note'],
+        filters: [
+          {
+            key: 'projectId',
+            label: 'Dự án',
+            type: 'select',
+            queryParam: 'projectId',
+            optionSource: {
+              endpoint: '/projects',
+              valueField: 'id',
+              labelField: 'name',
+              limit: 100
+            }
+          }
+        ],
         actions: [
           {
             key: 'create-time-entry',
@@ -1768,8 +2202,29 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/projects/time-entries',
             fields: [
-              { name: 'projectId', label: 'Mã dự án' },
-              { name: 'employeeId', label: 'Mã nhân viên', required: true },
+              {
+                name: 'projectId',
+                label: 'Dự án',
+                type: 'select',
+                optionSource: {
+                  endpoint: '/projects',
+                  valueField: 'id',
+                  labelField: 'name',
+                  limit: 100
+                }
+              },
+              {
+                name: 'employeeId',
+                label: 'Nhân viên',
+                type: 'select',
+                required: true,
+                optionSource: {
+                  endpoint: '/hr/employees',
+                  valueField: 'id',
+                  labelField: 'fullName',
+                  limit: 100
+                }
+              },
               { name: 'workDate', label: 'Ngày làm', type: 'date', required: true },
               { name: 'hours', label: 'Số giờ', type: 'number', required: true },
               { name: 'note', label: 'Ghi chú', type: 'textarea' }
@@ -1880,8 +2335,8 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   reports: {
     key: 'reports',
     title: 'Báo cáo',
-    summary: 'Tổng hợp KPI đa phân hệ và quản lý mẫu báo cáo.',
-    highlights: ['KPI tổng quan', 'Dữ liệu theo phân hệ', 'Mẫu báo cáo dùng lại'],
+    summary: 'Board báo cáo chuyên sâu: KPI điều hành, snapshot theo phân hệ và quản lý report definition.',
+    highlights: ['KPI tổng quan', 'Snapshot theo phân hệ', 'Generate report hàng loạt'],
     features: [
       {
         key: 'overview',
@@ -1894,29 +2349,32 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'module-snapshot',
         title: 'Dữ liệu theo phân hệ',
-        description: 'Tải dữ liệu theo phân hệ mục tiêu.',
-        listEndpoint: '/reports/module?name=sales',
+        description: 'Snapshot dữ liệu theo phân hệ với filter và phân trang server-side.',
+        listEndpoint: '/reports/module',
         columns: ['id', 'status', 'createdAt'],
+        filters: [
+          {
+            key: 'name',
+            label: 'Phân hệ',
+            type: 'select',
+            queryParam: 'name',
+            options: REPORT_MODULE_OPTIONS,
+            defaultValue: 'sales'
+          }
+        ],
         actions: [
           {
             key: 'load-module-data',
             label: 'Tải dữ liệu phân hệ',
             method: 'GET',
-            endpoint: '/reports/module?name=:moduleName',
+            endpoint: '/reports/module?name=:name',
             fields: [
               {
-                name: 'moduleName',
+                name: 'name',
                 label: 'Tên phân hệ',
                 type: 'select',
                 required: true,
-                options: [
-                  { label: 'Bán hàng', value: 'sales' },
-                  { label: 'Nhân sự', value: 'hr' },
-                  { label: 'Tài chính', value: 'finance' },
-                  { label: 'Chuỗi cung ứng', value: 'scm' },
-                  { label: 'Dự án', value: 'projects' },
-                  { label: 'Tài sản', value: 'assets' }
-                ],
+                options: REPORT_MODULE_OPTIONS,
                 defaultValue: 'sales'
               }
             ]
@@ -1926,7 +2384,23 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
       {
         key: 'report-definitions',
         title: 'Mẫu báo cáo',
-        description: 'Lưu cấu hình mẫu báo cáo.',
+        description: 'Danh sách và cấu hình các report definition có thể chạy tự động.',
+        listEndpoint: '/reports',
+        columns: ['id', 'name', 'reportType', 'moduleName', 'outputFormat', 'status', 'nextRunAt', 'lastRunAt'],
+        filters: [
+          {
+            key: 'moduleName',
+            label: 'Phân hệ',
+            type: 'select',
+            options: REPORT_MODULE_OPTIONS
+          },
+          {
+            key: 'status',
+            label: 'Trạng thái',
+            type: 'select',
+            options: STATUS_OPTIONS
+          }
+        ],
         actions: [
           {
             key: 'create-report-definition',
@@ -1934,35 +2408,126 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/reports',
             fields: [
-              { name: 'reportType', label: 'Loại báo cáo', required: true, placeholder: 'tong_hop' },
+              {
+                name: 'reportType',
+                label: 'Loại báo cáo',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Tổng hợp', value: 'TONG_HOP' },
+                  { label: 'Vận hành', value: 'VAN_HANH' },
+                  { label: 'Tài chính', value: 'TAI_CHINH' },
+                  { label: 'Nhân sự', value: 'NHAN_SU' }
+                ],
+                defaultValue: 'TONG_HOP'
+              },
               { name: 'name', label: 'Tên báo cáo', required: true },
               {
                 name: 'moduleName',
                 label: 'Phân hệ nguồn dữ liệu',
                 type: 'select',
-                options: [
-                  { label: 'Bán hàng', value: 'sales' },
-                  { label: 'Nhân sự', value: 'hr' },
-                  { label: 'Tài chính', value: 'finance' },
-                  { label: 'Chuỗi cung ứng', value: 'scm' },
-                  { label: 'Dự án', value: 'projects' },
-                  { label: 'Tài sản', value: 'assets' }
-                ],
+                options: REPORT_MODULE_OPTIONS,
                 defaultValue: 'sales'
               },
               {
-                name: 'groupBy',
-                label: 'Nhóm dữ liệu theo',
+                name: 'templateCode',
+                label: 'Template code',
                 type: 'select',
-                options: [
-                  { label: 'Ngày', value: 'day' },
-                  { label: 'Tuần', value: 'week' },
-                  { label: 'Tháng', value: 'month' }
-                ],
+                options: REPORT_GROUP_BY_OPTIONS,
                 defaultValue: 'day'
               },
-              { name: 'limit', label: 'Số bản ghi tối đa', type: 'number', defaultValue: 50 },
-              { name: 'generatedAt', label: 'Thời điểm tạo', type: 'datetime-local' }
+              {
+                name: 'outputFormat',
+                label: 'Định dạng đầu ra',
+                type: 'select',
+                options: REPORT_OUTPUT_FORMAT_OPTIONS,
+                defaultValue: 'JSON'
+              },
+              {
+                name: 'scheduleRule',
+                label: 'Lịch chạy',
+                type: 'select',
+                options: REPORT_SCHEDULE_RULE_OPTIONS
+              },
+              { name: 'nextRunAt', label: 'Lần chạy tiếp theo', type: 'datetime-local' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'ACTIVE' }
+            ]
+          },
+          {
+            key: 'update-report-definition',
+            label: 'Cập nhật mẫu báo cáo',
+            method: 'PATCH',
+            endpoint: '/reports/:id',
+            fields: [
+              { name: 'id', label: 'Mã mẫu báo cáo', required: true },
+              {
+                name: 'reportType',
+                label: 'Loại báo cáo',
+                type: 'select',
+                options: [
+                  { label: 'Tổng hợp', value: 'TONG_HOP' },
+                  { label: 'Vận hành', value: 'VAN_HANH' },
+                  { label: 'Tài chính', value: 'TAI_CHINH' },
+                  { label: 'Nhân sự', value: 'NHAN_SU' }
+                ]
+              },
+              { name: 'name', label: 'Tên báo cáo' },
+              {
+                name: 'moduleName',
+                label: 'Phân hệ nguồn dữ liệu',
+                type: 'select',
+                options: REPORT_MODULE_OPTIONS
+              },
+              {
+                name: 'templateCode',
+                label: 'Template code',
+                type: 'select',
+                options: REPORT_GROUP_BY_OPTIONS
+              },
+              {
+                name: 'outputFormat',
+                label: 'Định dạng đầu ra',
+                type: 'select',
+                options: REPORT_OUTPUT_FORMAT_OPTIONS
+              },
+              {
+                name: 'scheduleRule',
+                label: 'Lịch chạy',
+                type: 'select',
+                options: REPORT_SCHEDULE_RULE_OPTIONS
+              },
+              { name: 'nextRunAt', label: 'Lần chạy tiếp theo', type: 'datetime-local' },
+              { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS }
+            ]
+          },
+          {
+            key: 'generate-report-now',
+            label: 'Chạy báo cáo ngay',
+            method: 'POST',
+            endpoint: '/reports/:id/generate',
+            fields: [
+              { name: 'id', label: 'Mã mẫu báo cáo', required: true },
+              {
+                name: 'outputFormat',
+                label: 'Định dạng đầu ra',
+                type: 'select',
+                options: REPORT_OUTPUT_FORMAT_OPTIONS,
+                defaultValue: 'JSON'
+              },
+              { name: 'limit', label: 'Giới hạn bản ghi', type: 'number', defaultValue: 100 },
+              {
+                name: 'reason',
+                label: 'Lý do chạy thủ công',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Yêu cầu vận hành', value: 'OPS_REQUEST' },
+                  { label: 'Kiểm tra dữ liệu', value: 'DATA_VALIDATION' },
+                  { label: 'Khẩn cấp', value: 'URGENT' }
+                ],
+                defaultValue: 'OPS_REQUEST'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'RPT-RUN-001' }
             ]
           }
         ]
@@ -2053,8 +2618,8 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
   notifications: {
     key: 'notifications',
     title: 'Thông báo',
-    summary: 'Trung tâm thông báo nội bộ cho các tác vụ quan trọng.',
-    highlights: ['Danh sách thông báo', 'Tạo thông báo nhanh', 'Đánh dấu đã đọc'],
+    summary: 'Board thông báo chuyên sâu: gửi thông báo nội bộ, vận hành dispatch và cập nhật trạng thái đọc.',
+    highlights: ['Inbox thông báo', 'Dispatch theo lịch', 'Bulk đánh dấu đã đọc'],
     features: [
       {
         key: 'notification-center',
@@ -2062,6 +2627,25 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
         description: 'Danh sách thông báo và trạng thái đã đọc/chưa đọc.',
         listEndpoint: '/notifications',
         columns: ['id', 'userId', 'title', 'content', 'isRead', 'createdAt'],
+        filters: [
+          {
+            key: 'userId',
+            label: 'Người nhận',
+            type: 'select',
+            optionSource: {
+              endpoint: '/hr/employees',
+              valueField: 'id',
+              labelField: 'fullName',
+              limit: 100
+            }
+          },
+          {
+            key: 'unreadOnly',
+            label: 'Chỉ chưa đọc',
+            type: 'checkbox',
+            includeInQuery: true
+          }
+        ],
         actions: [
           {
             key: 'create-notification',
@@ -2069,9 +2653,40 @@ export const moduleDefinitions: Record<string, ModuleDefinition> = {
             method: 'POST',
             endpoint: '/notifications',
             fields: [
-              { name: 'userId', label: 'Mã người dùng (không bắt buộc)' },
+              {
+                name: 'userId',
+                label: 'Người nhận (để trống = broadcast)',
+                type: 'select',
+                optionSource: {
+                  endpoint: '/hr/employees',
+                  valueField: 'id',
+                  labelField: 'fullName',
+                  limit: 100
+                }
+              },
               { name: 'title', label: 'Tiêu đề', required: true },
               { name: 'content', label: 'Nội dung', type: 'textarea' }
+            ]
+          },
+          {
+            key: 'run-notification-dispatch',
+            label: 'Chạy dispatch đến hạn',
+            method: 'POST',
+            endpoint: '/notifications/dispatch/run-due',
+            fields: [
+              { name: 'limit', label: 'Số bản ghi xử lý', type: 'number', defaultValue: 100 },
+              {
+                name: 'reason',
+                label: 'Lý do chạy thủ công',
+                type: 'select',
+                required: true,
+                options: [
+                  { label: 'Kiểm tra vận hành', value: 'OPS_CHECK' },
+                  { label: 'Bù job thất bại', value: 'RETRY_RECOVERY' }
+                ],
+                defaultValue: 'OPS_CHECK'
+              },
+              { name: 'reference', label: 'Mã tham chiếu', required: true, placeholder: 'NTF-DISPATCH-001' }
             ]
           },
           {

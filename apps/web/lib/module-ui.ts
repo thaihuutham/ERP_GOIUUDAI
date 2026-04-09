@@ -9,11 +9,20 @@ export type FieldType =
   | 'datetime-local'
   | 'textarea'
   | 'select'
+  | 'autocomplete'
   | 'checkbox';
 
 export type SelectOption = {
   label: string;
   value: string;
+};
+
+export type OptionSource = {
+  endpoint: string;
+  valueField?: string;
+  labelField?: string;
+  query?: Record<string, string | number | boolean>;
+  limit?: number;
 };
 
 export type FormField = {
@@ -25,6 +34,7 @@ export type FormField = {
   description?: string;
   defaultValue?: FieldValue;
   options?: SelectOption[];
+  optionSource?: OptionSource;
 };
 
 export type ActionPreset = {
@@ -62,6 +72,7 @@ export type FeatureFilter = {
   targetField?: string;
   behavior?: FilterBehavior;
   includeInQuery?: boolean;
+  optionSource?: OptionSource;
 };
 
 export type ModuleFeature = {

@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-09 12:43 +07
+- Time: 2026-04-09 16:07 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-09_1243_codex.md`
+- Session Log: `.agent/sessions/2026-04-09_1607_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,162 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+
+## Update 2026-04-09 16:07 (reports page loading hardening: API timeout guard)
+- User confirmation:
+  - user báo `http://localhost:3000/modules/reports` bị treo load.
+- Đã xử lý:
+  - tái hiện/điều tra tại local:
+    - endpoint `reports` chính phản hồi bình thường (`/reports/overview`, `/reports/module`, `/reports`),
+    - E2E reports board pass.
+  - harden tầng web API client để ngăn loading treo vô hạn khi request bị kẹt:
+    - `apps/web/lib/api-client.ts`:
+      - thêm timeout cho `apiRequest` bằng `AbortController`,
+      - timeout mặc định `15000ms`,
+      - hỗ trợ override `NEXT_PUBLIC_API_TIMEOUT_MS`,
+      - trả lỗi thân thiện khi timeout/mất kết nối.
+  - hoàn tất handoff bắt buộc:
+    - cập nhật `planning/CURRENT_TASK.md`,
+    - cập nhật `.agent/memory/CONTEXT_SNAPSHOT.md`,
+    - thêm `.agent/sessions/2026-04-09_1607_codex.md`.
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test:e2e:web -- --grep "reports board supports create definition and run-now bulk action"` ✅
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+- Notes:
+  - không đổi business logic ERP; fix tập trung network resilience phía web để không kẹt spinner khi backend chậm/treo.
+
+## Update 2026-04-09 14:56 (ui wave-2/3 continuation: access fallback + ux harmonization + regression baseline)
+- User confirmation:
+  - tiếp tục triển khai theo kế hoạch, dùng các kỹ năng cần thiết.
+- Đã xử lý:
+  - chuẩn hóa fallback chặn truy cập module:
+    - thêm `apps/web/components/module-access-blocked.tsx`,
+    - `apps/web/components/domain-module-board.tsx` và `apps/web/components/module-screen.tsx` render fallback rõ ràng thay vì `return null`.
+  - nâng chất lượng UX cho `ModuleWorkbench`:
+    - hỗ trợ thông điệp loading/empty qua `StandardDataTable`,
+    - hiển thị số lượng filter đang bật + reset filter nhanh,
+    - cảnh báo action bị deny bởi policy hiện tại,
+    - trạng thái cảnh báo cho nguồn option động bị lỗi.
+  - đồng bộ style:
+    - bổ sung `.banner-info` trong `apps/web/app/styles/components.css`.
+  - hoàn tất Wave 3 baseline + architecture decision:
+    - `docs/specs/WAVE3_DOMAIN_MODULES_REGRESSION_BASELINE.md`,
+    - `docs/decisions/ADR-063-WAVE2-UX-HARMONIZATION-AND-WAVE3-REGRESSION-BASELINE.md`.
+  - bổ sung assertion UX filter/reset trong:
+    - `apps/web/e2e/tests/domain-modules-wave1.spec.ts`.
+  - hoàn tất handoff bắt buộc cuối session:
+    - cập nhật `planning/CURRENT_TASK.md`,
+    - cập nhật `.agent/memory/CONTEXT_SNAPSHOT.md`,
+    - tạo `.agent/sessions/2026-04-09_1456_codex.md`.
+- Verification:
+  - Carry-over verification của batch Wave 2/3:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run phase3:form-guard` ✅
+    - `npm run test:e2e:web -- --grep "Wave 1 domain modules board"` ✅
+    - `npm run test:e2e:web` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api` ✅ (`58 files`, `290 passed`)
+  - Quick gate session hiện tại:
+    - `docker ps` ✅ (`erp-postgres` Up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+- Notes:
+  - không thay đổi business logic ERP backend.
+  - scope tập trung vào UX consistency, policy-aware fallback, và baseline regression cho 5 module Wave 1.
+
+## Update 2026-04-09 14:34 (ui wave-1 execution: domain boards + dynamic option source + module coverage)
+- User confirmation:
+  - tiếp tục triển khai kế hoạch UI theo wave.
+- Đã xử lý:
+  - thay route-level `ModuleScreen` bằng domain board cho:
+    - `catalog`, `assets`, `projects`, `reports`, `notifications`.
+  - thêm base component `DomainModuleBoard` và 5 operation boards theo module.
+  - mở rộng UI schema:
+    - `module-ui.ts` hỗ trợ `optionSource` trên field/filter và thêm `autocomplete`.
+  - nâng `ModuleWorkbench`:
+    - fetch option động từ API theo `optionSource`,
+    - merge + dedupe option cho form và filters.
+  - chuẩn hóa schema nghiệp vụ trong `module-definitions.ts` cho 5 module:
+    - thêm filters server-side,
+    - align endpoint/action theo API thực tế,
+    - chuẩn hóa nhiều field mã nghiệp vụ bắt buộc sang select/autocomplete.
+  - thêm E2E trực tiếp cho 5 module Wave 1:
+    - `apps/web/e2e/tests/domain-modules-wave1.spec.ts` (5 flow chính).
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run phase3:form-guard` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run test --workspace @erp/api` ✅ (`58 files`, `290 passed`)
+  - `npm run test:e2e:web -- --grep "Wave 1 domain modules board"` ✅ (`5 passed`)
+  - `npm run test:e2e:web` ✅ (`59 passed`)
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+- Notes:
+  - không thay đổi business logic backend ERP; tập trung UI behavior/schema wiring/E2E coverage.
+  - quyết định kiến trúc được ghi tại `docs/decisions/ADR-062-WAVE1-DOMAIN-BOARD-AND-DYNAMIC-OPTION-SOURCE.md`.
+  - Wave 2 và Wave 3 chưa triển khai trong batch này.
+
+## Update 2026-04-09 14:00 (ui wave-0 closure: e2e stabilization + deterministic route-policy assertions)
+- User confirmation:
+  - triển khai kế hoạch hoàn thiện UI ERP; ưu tiên đóng lỗi E2E còn fail và chạy full gate.
+- Đã xử lý:
+  - fix `zalo-account-assignment-flow`:
+    - mock assignment đổi sang semantics runtime (`ADMIN` full-access, `USER` theo assignment).
+  - fix `crm-sales-finance-core-flow`:
+    - `SidePanel` overlay/container không chặn pointer khi exit để tránh click intercept/detach khi đóng panel.
+  - điều chỉnh route-policy runtime:
+    - `decideModuleAccess` chỉ deny `POLICY_LOADING` ở module nhạy cảm khi không phải `ADMIN`.
+  - harden E2E assertions khỏi race loading:
+    - cập nhật `access-policy-hardening.spec.ts`,
+    - cập nhật `assistant-module.spec.ts`,
+    - cập nhật selector điều hướng ở `settings-center-reports.spec.ts` theo `href` để tránh chọn nhầm link cùng tên.
+- Verification:
+  - `npm run phase3:form-guard` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test --workspace @erp/api` ✅ (`58 files`, `290 passed`)
+  - `npm run test:e2e:web` ✅ (`54 passed`)
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+- Notes:
+  - không thay đổi business logic backend ERP; thay đổi tập trung UI behavior/policy wiring và test stability.
+  - wave 1/2/3 feature expansion chưa thực hiện trong session này.
+
+## Update 2026-04-09 12:53 (api full-suite stabilization: test mock/runtime alignment)
+- User confirmation:
+  - xử lý các test fail còn lại khi chạy `npm run test --workspace @erp/api` full-suite.
+- Đã xử lý:
+  - `apps/api/test/permission.guard.test.ts`:
+    - bổ sung mock `prisma.client.userPositionAssignment.findMany` để khớp `PermissionGuard.resolveUserPositionAssignments`.
+  - `apps/api/test/zalo.service.test.ts`:
+    - thêm mock `runtimeSettings.getSalesCrmPolicyRuntime`,
+    - trả về taxonomy runtime tối thiểu (`customerTaxonomy.stages/sources`) cho `syncContacts`.
+  - `apps/api/test/conversations.realtime.test.ts`:
+    - thêm mock `runtimeSettings.getSalesCrmPolicyRuntime`,
+    - truyền `runtimeSettings` vào constructor `ConversationsService` (dependency mới).
+- Verification:
+  - `npm run test --workspace @erp/api -- test/permission.guard.test.ts test/zalo.service.test.ts test/conversations.realtime.test.ts` ✅ (21 tests)
+  - `npm run test --workspace @erp/api` ✅ (58 files, 290 tests)
+  - `docker ps` ✅ (`erp-postgres` Up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `set -a; source .env; set +a; npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+- Notes:
+  - toàn bộ API full-suite đã pass sau khi đồng bộ mock/runtime.
+  - không có thay đổi logic nghiệp vụ, chỉ sửa test harness.
 
 ## Update 2026-04-09 12:43 (admin/user cutover continuation: test/e2e sweep)
 - User confirmation:

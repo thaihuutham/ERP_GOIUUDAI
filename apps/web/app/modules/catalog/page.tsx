@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { CatalogOperationsBoard } from '../../../components/catalog-operations-board';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="catalog" />;
+  return <CatalogOperationsBoard />;
 }

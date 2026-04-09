@@ -31,15 +31,15 @@ export function SidePanel({ isOpen, onClose, title, children }: SidePanelProps) 
           <motion.div
             className="side-panel-overlay"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            animate={{ opacity: 1, pointerEvents: 'auto' }}
+            exit={{ opacity: 0, pointerEvents: 'none' }}
             onClick={onClose}
           />
           <motion.div
             className="side-panel-container"
             initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
+            animate={{ x: 0, pointerEvents: 'auto' }}
+            exit={{ x: '100%', pointerEvents: 'none' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
           >
             <div className="side-panel-header">

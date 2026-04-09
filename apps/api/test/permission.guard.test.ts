@@ -84,6 +84,9 @@ function makeGuard(options?: {
       userPermissionOverride: {
         findMany: vi.fn().mockResolvedValue(options?.overrides ?? [])
       },
+      userPositionAssignment: {
+        findMany: vi.fn().mockResolvedValue([])
+      },
       employee: {
         findFirst: vi.fn().mockResolvedValue(null)
       }

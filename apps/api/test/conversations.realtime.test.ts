@@ -41,6 +41,9 @@ describe('ConversationsService realtime emission', () => {
   const zaloRealtime = {
     emitScoped: vi.fn()
   } as any;
+  const runtimeSettings = {
+    getSalesCrmPolicyRuntime: vi.fn()
+  } as any;
   const cls = {
     get: vi.fn(() => ({}))
   } as any;
@@ -70,9 +73,16 @@ describe('ConversationsService realtime emission', () => {
     zaloAssignment.assertCanReadAccount.mockReset();
     zaloAssignment.assertCanChatAccount.mockReset();
     zaloRealtime.emitScoped.mockReset();
+    runtimeSettings.getSalesCrmPolicyRuntime.mockReset();
+    runtimeSettings.getSalesCrmPolicyRuntime.mockResolvedValue({
+      customerTaxonomy: {
+        stages: ['MOI_CHUA_TU_VAN'],
+        sources: ['ZALO', 'ONLINE']
+      }
+    });
     cls.get.mockReset();
     cls.get.mockReturnValue({});
-    service = new ConversationsService(prisma, cls, zaloAssignment, zaloRealtime);
+    service = new ConversationsService(prisma, cls, zaloAssignment, zaloRealtime, runtimeSettings);
   });
 
   it('emits chat:message for zalo channels', async () => {

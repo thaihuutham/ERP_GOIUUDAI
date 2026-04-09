@@ -6,7 +6,7 @@ import { useAccessPolicy } from './access-policy-context';
 import { ModuleAccessBlocked } from './module-access-blocked';
 import { ModuleWorkbench } from './module-workbench';
 
-export function ModuleScreen({ moduleKey }: { moduleKey: string }) {
+export function DomainModuleBoard({ moduleKey }: { moduleKey: string }) {
   const { snapshot } = useAccessPolicy();
   const module = getModuleDefinition(moduleKey);
   const moduleDecision = decideModuleAccess(snapshot, moduleKey);

@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { ReportsOperationsBoard } from '../../../components/reports-operations-board';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="reports" />;
+  return <ReportsOperationsBoard />;
 }

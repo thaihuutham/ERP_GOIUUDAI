@@ -622,6 +622,8 @@ export function FinanceOperationsBoard() {
               <button
                 className="btn btn-primary"
                 onClick={() => {
+                  setSelectedInvoice(null);
+                  setPaymentForm(buildInitialPaymentForm());
                   setIsCreatePanelOpen(true);
                 }}
               >

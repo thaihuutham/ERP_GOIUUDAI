@@ -41,7 +41,6 @@ export type AccessPolicySnapshot = {
 
 const APPROVAL_PATH_MARKERS = ['/approve', '/reject', '/submit', '/escalate', '/delegate', '/restore', '/reindex', '/pay'];
 
-const USER_WRITE_MODULES = new Set<string>(['notifications']);
 const SENSITIVE_MODULES = new Set<string>(['settings', 'finance', 'workflows', 'audit']);
 const RUNTIME_TOGGLABLE_MODULES = new Set<string>(ERP_MODULES.filter((moduleKey) => moduleKey !== 'settings') as string[]);
 
@@ -88,13 +87,12 @@ function createBaselineMatrix(accessRole: AccessRole, moduleKey: string): Module
     };
   }
 
-  const canWrite = USER_WRITE_MODULES.has(normalizedModule);
   return {
     VIEW: true,
-    CREATE: canWrite,
-    UPDATE: canWrite,
-    DELETE: canWrite,
-    APPROVE: canWrite
+    CREATE: true,
+    UPDATE: true,
+    DELETE: false,
+    APPROVE: true
   };
 }
 
@@ -307,7 +305,7 @@ export function decideModuleAccess(snapshot: AccessPolicySnapshot, moduleKeyRaw:
     };
   }
 
-  if (!snapshot.isReady && SENSITIVE_MODULES.has(moduleKey)) {
+  if (!snapshot.isReady && SENSITIVE_MODULES.has(moduleKey) && snapshot.accessRole !== 'ADMIN') {
     return {
       allowed: false,
       reason: 'POLICY_LOADING'
@@ -392,6 +390,17 @@ const assistantSubRouteRule: RoutePolicyRule = {
       return {
         allowed: true,
         reason: 'ASSISTANT_ROUTE_DEFAULT'
+      };
+    }
+
+    if (
+      snapshot.role === 'USER'
+      && !snapshot.isReady
+      && (routeKey === 'knowledge' || routeKey === 'channels')
+    ) {
+      return {
+        allowed: false,
+        reason: 'ASSISTANT_ROUTE_POLICY_LOADING'
       };
     }
 

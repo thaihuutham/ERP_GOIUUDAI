@@ -311,7 +311,7 @@ test.describe('Settings Center reports alignment', () => {
     await page.getByRole('tab', { name: 'Ma trận quyền hạn' }).click();
     await expect(page.locator('[data-testid="iam-scope-override-editor"]')).toBeVisible();
 
-    await page.getByRole('link', { name: 'Manager' }).click();
+    await page.locator('a[href="/modules/settings/positions/position_1"]').first().click();
     await expect(page).toHaveURL(/\/modules\/settings\/positions\/position_1$/);
     await expect(page.getByRole('heading', { name: 'Chi tiết vị trí công việc' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Chi tiết quyền' })).toBeVisible();

@@ -60,7 +60,8 @@ describe('ZaloService OA outbound', () => {
     sendTextMessage: vi.fn()
   } as any;
   const runtimeSettings = {
-    getIntegrationRuntime: vi.fn()
+    getIntegrationRuntime: vi.fn(),
+    getSalesCrmPolicyRuntime: vi.fn()
   } as any;
   const zaloRealtime = {
     emitScoped: vi.fn()
@@ -121,6 +122,13 @@ describe('ZaloService OA outbound', () => {
         apiBaseUrl: 'https://openapi.zalo.me/v3.0/oa',
         outboundTimeoutMs: 20000,
         accessToken: 'token_runtime'
+      }
+    });
+    runtimeSettings.getSalesCrmPolicyRuntime.mockReset();
+    runtimeSettings.getSalesCrmPolicyRuntime.mockResolvedValue({
+      customerTaxonomy: {
+        stages: ['MOI_CHUA_TU_VAN'],
+        sources: ['ZALO', 'ONLINE']
       }
     });
 

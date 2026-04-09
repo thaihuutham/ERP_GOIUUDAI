@@ -1471,6 +1471,7 @@ export function CrmOperationsBoard() {
                 <button
                   type="button"
                   className="btn btn-primary"
+                  aria-label="Khách hàng"
                   onClick={() => {
                     const target = document.getElementById('crm-create-name');
                     target?.scrollIntoView({ behavior: 'smooth', block: 'center' });

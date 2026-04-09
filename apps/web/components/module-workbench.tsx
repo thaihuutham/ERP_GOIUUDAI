@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, RefreshCw, Filter, FileText, LayoutDashboard, ChevronRight, Database, Edit2, Trash2, CheckCircle2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, Search, RefreshCw, Filter, FileText, LayoutDashboard, ChevronRight, Database, Edit2, Trash2, CheckCircle2, ShieldAlert } from 'lucide-react';
 import {
   apiRequest,
+  normalizeListPayload,
   normalizePagedListPayload,
   type ApiListPageInfo,
   type ApiListSortMeta
@@ -23,9 +24,9 @@ import type {
   FieldValue,
   FormField,
   ModuleDefinition,
-  ModuleFeature
+  ModuleFeature,
+  SelectOption
 } from '../lib/module-ui';
-import { useUserRole } from './user-role-context';
 import { useAccessPolicy } from './access-policy-context';
 import {
   StandardDataTable,
@@ -237,6 +238,82 @@ function createDefaultFilterValues(filters: FeatureFilter[]): FilterValues {
   }, {});
 }
 
+function countActiveFilters(filters: FeatureFilter[], values: FilterValues, search: string) {
+  let count = search.trim() ? 1 : 0;
+  for (const filter of filters) {
+    const value = values[filter.key];
+    const isEmpty = value === undefined || value === null || value === '';
+    if (isEmpty) continue;
+    if (typeof value === 'boolean' && value === false) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function describeDeniedActions(actionLabels: string[]) {
+  if (actionLabels.length === 0) {
+    return null;
+  }
+  if (actionLabels.length <= 3) {
+    return actionLabels.join(', ');
+  }
+  const preview = actionLabels.slice(0, 3).join(', ');
+  return `${preview} (+${actionLabels.length - 3} thao tác khác)`;
+}
+
+function readRecordValueByPath(row: Record<string, unknown>, path: string) {
+  if (!path.includes('.')) {
+    return row[path];
+  }
+
+  const segments = path.split('.');
+  let current: unknown = row;
+  for (const segment of segments) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function dedupeSelectOptions(options: SelectOption[]) {
+  const seen = new Set<string>();
+  const result: SelectOption[] = [];
+  for (const option of options) {
+    const value = String(option.value ?? '').trim();
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push({
+      value,
+      label: String(option.label ?? value).trim() || value
+    });
+  }
+  return result;
+}
+
+function toSelectOptions(rows: Record<string, unknown>[], valueField = 'id', labelField = 'name') {
+  return rows
+    .map<SelectOption | null>((row) => {
+      const valueRaw = readRecordValueByPath(row, valueField);
+      if (valueRaw === undefined || valueRaw === null || valueRaw === '') {
+        return null;
+      }
+      const labelRaw = readRecordValueByPath(row, labelField);
+      const value = String(valueRaw);
+      const label = labelRaw !== undefined && labelRaw !== null && labelRaw !== ''
+        ? String(labelRaw)
+        : value;
+      return {
+        value,
+        label
+      };
+    })
+    .filter((item): item is SelectOption => item !== null);
+}
+
 function parseFormPayload(action: FeatureAction, formValues: FormValues) {
   const body: Record<string, unknown> = {};
   for (const field of action.fields) {
@@ -320,14 +397,16 @@ function ActionForm({
   onCancel,
   initialValues,
   hiddenFieldNames = [],
-  isSubmitting = false
+  isSubmitting = false,
+  fieldOptionsByName = {}
 }: {
   action: FeatureAction, 
   onSubmit: (values: FormValues) => void,
   onCancel: () => void,
   initialValues?: FormValues,
   hiddenFieldNames?: string[],
-  isSubmitting?: boolean
+  isSubmitting?: boolean,
+  fieldOptionsByName?: Record<string, SelectOption[]>
 }) {
   const [values, setValues] = useState<FormValues>(initialValues ?? createDefaultFormValues(action));
   const hiddenSet = useMemo(() => new Set(hiddenFieldNames), [hiddenFieldNames]);
@@ -345,26 +424,53 @@ function ActionForm({
   return (
     <form className="form-grid" onSubmit={(e) => { e.preventDefault(); onSubmit(values); }}>
       <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1.5rem', color: 'var(--primary)' }}>{action.label}</h3>
-      {visibleFields.map(field => (
-        <div className="field" key={field.name}>
-          <label>{field.label}</label>
-          {field.type === 'textarea' ? (
-            <textarea value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)} />
-          ) : field.type === 'select' ? (
-            <select value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)}>
-              {!field.required && <option value="">-- chọn --</option>}
-              {(field.options ?? []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          ) : field.type === 'checkbox' ? (
-            <div className="checkbox-wrap">
-              <input type="checkbox" checked={Boolean(values[field.name])} onChange={(e) => updateValue(field.name, e.target.checked)} />
-              <span>Bật</span>
-            </div>
-          ) : (
-            <input type={field.type ?? 'text'} value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)} />
-          )}
-        </div>
-      ))}
+      {visibleFields.map((field) => {
+        const resolvedOptions = dedupeSelectOptions([
+          ...(field.options ?? []),
+          ...(fieldOptionsByName[field.name] ?? [])
+        ]);
+
+        return (
+          <div className="field" key={field.name}>
+            <label>{field.label}</label>
+            {field.type === 'textarea' ? (
+              <textarea value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)} />
+            ) : field.type === 'select' ? (
+              <select value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)}>
+                {!field.required && <option value="">-- chọn --</option>}
+                {resolvedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : field.type === 'autocomplete' ? (
+              <>
+                <input
+                  list={`autocomplete-${action.key}-${field.name}`}
+                  value={String(values[field.name] ?? '')}
+                  required={field.required}
+                  onChange={(e) => updateValue(field.name, e.target.value)}
+                />
+                <datalist id={`autocomplete-${action.key}-${field.name}`}>
+                  {resolvedOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </datalist>
+              </>
+            ) : field.type === 'checkbox' ? (
+              <div className="checkbox-wrap">
+                <input type="checkbox" checked={Boolean(values[field.name])} onChange={(e) => updateValue(field.name, e.target.checked)} />
+                <span>Bật</span>
+              </div>
+            ) : (
+              <input type={field.type ?? 'text'} value={String(values[field.name] ?? '')} required={field.required} onChange={(e) => updateValue(field.name, e.target.value)} />
+            )}
+          </div>
+        );
+      })}
       {visibleFields.length === 0 && (
         <p className="banner banner-info" style={{ margin: 0 }}>
           Không cần nhập thêm dữ liệu. Nhấn xác nhận để áp dụng cho toàn bộ bản ghi đã chọn.
@@ -404,7 +510,15 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
   const [pendingBulkAction, setPendingBulkAction] = useState<PendingBulkActionContext | null>(null);
   const [isRunningBulkAction, setIsRunningBulkAction] = useState(false);
+  const [actionFieldOptionMap, setActionFieldOptionMap] = useState<Record<string, Record<string, SelectOption[]>>>({});
+  const [filterOptionMap, setFilterOptionMap] = useState<Record<string, SelectOption[]>>({});
+  const [isHydratingOptions, setIsHydratingOptions] = useState(false);
+  const [optionLoadWarnings, setOptionLoadWarnings] = useState<string[]>([]);
   const featureFilters = feature.filters ?? [];
+  const activeFilterCount = useMemo(
+    () => countActiveFilters(featureFilters, filterValues, search),
+    [featureFilters, filterValues, search]
+  );
   const tableFingerprint = useMemo(
     () =>
       JSON.stringify({
@@ -418,6 +532,25 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
     [feature.key, filterValues, search, tablePageSize, tableSortBy, tableSortDir]
   );
   const tablePager = useCursorTableState(tableFingerprint);
+
+  const loadOptionsFromSource = useCallback(async (
+    source: NonNullable<FormField['optionSource'] | FeatureFilter['optionSource']>
+  ) => {
+    const query: Record<string, string | number | boolean> = {
+      ...(source.query ?? {})
+    };
+    if (source.limit && Number.isFinite(source.limit) && source.limit > 0 && query.limit === undefined) {
+      query.limit = Math.trunc(source.limit);
+    }
+    if (query.limit === undefined) {
+      query.limit = 100;
+    }
+
+    const payload = await apiRequest(source.endpoint, { query });
+    const rows = normalizeListPayload(payload);
+    const options = toSelectOptions(rows, source.valueField ?? 'id', source.labelField ?? 'name');
+    return dedupeSelectOptions(options);
+  }, []);
 
   const loadData = async () => {
     if (!feature.listEndpoint) return;
@@ -464,6 +597,11 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
     }
   };
 
+  const resetSearchAndFilters = () => {
+    setSearch('');
+    setFilterValues(createDefaultFilterValues(featureFilters));
+  };
+
   useEffect(() => {
     setFilterValues(createDefaultFilterValues(featureFilters));
     setSelectedRowIds([]);
@@ -476,6 +614,85 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
       return null;
     });
   }, [feature.key]);
+
+  useEffect(() => {
+    let active = true;
+    setIsHydratingOptions(true);
+    setOptionLoadWarnings([]);
+    setActionFieldOptionMap({});
+    setFilterOptionMap({});
+
+    const sourceCache = new Map<string, Promise<SelectOption[]>>();
+    const sourceWarningSet = new Set<string>();
+    const sourceKey = (source: NonNullable<FormField['optionSource'] | FeatureFilter['optionSource']>) =>
+      JSON.stringify({
+        endpoint: source.endpoint,
+        valueField: source.valueField ?? 'id',
+        labelField: source.labelField ?? 'name',
+        query: source.query ?? {},
+        limit: source.limit ?? 100
+      });
+
+    const getSourceOptions = (source: NonNullable<FormField['optionSource'] | FeatureFilter['optionSource']>) => {
+      const key = sourceKey(source);
+      const cached = sourceCache.get(key);
+      if (cached) {
+        return cached;
+      }
+      const request = loadOptionsFromSource(source).catch(() => {
+        sourceWarningSet.add(source.endpoint);
+        return [];
+      });
+      sourceCache.set(key, request);
+      return request;
+    };
+
+    const hydrate = async () => {
+      try {
+        const actionEntries = await Promise.all(
+          feature.actions.map(async (action) => {
+            const fieldEntries = await Promise.all(
+              action.fields.map(async (field) => {
+                if (!field.optionSource) {
+                  return [field.name, []] as const;
+                }
+                const options = await getSourceOptions(field.optionSource);
+                return [field.name, options] as const;
+              })
+            );
+            return [action.key, Object.fromEntries(fieldEntries)] as const;
+          })
+        );
+
+        const filterEntries = await Promise.all(
+          featureFilters.map(async (filter) => {
+            if (!filter.optionSource) {
+              return [filter.key, []] as const;
+            }
+            const options = await getSourceOptions(filter.optionSource);
+            return [filter.key, options] as const;
+          })
+        );
+
+        if (!active) {
+          return;
+        }
+
+        setActionFieldOptionMap(Object.fromEntries(actionEntries));
+        setFilterOptionMap(Object.fromEntries(filterEntries));
+        setOptionLoadWarnings(Array.from(sourceWarningSet.values()));
+      } finally {
+        if (active) {
+          setIsHydratingOptions(false);
+        }
+      }
+    };
+
+    void hydrate();
+    return () => {
+      active = false;
+    };
+  }, [feature.actions, feature.key, featureFilters, loadOptionsFromSource]);
 
   useEffect(() => {
     let active = true;
@@ -529,10 +746,32 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   const canExecuteFeatureAction = (action: FeatureAction) =>
     canAction(moduleKey, inferPermissionActionFromRequest(action.method, action.endpoint));
 
-  const updateAction = feature.actions.find((action) =>
+  const allowedActions = useMemo(
+    () =>
+      feature.actions.filter((action) =>
+        canAction(moduleKey, inferPermissionActionFromRequest(action.method, action.endpoint))
+      ),
+    [feature.actions, canAction, moduleKey]
+  );
+  const deniedActions = useMemo(
+    () =>
+      feature.actions.filter(
+        (action) => !canAction(moduleKey, inferPermissionActionFromRequest(action.method, action.endpoint))
+      ),
+    [feature.actions, canAction, moduleKey]
+  );
+  const deniedActionSummary = useMemo(
+    () => describeDeniedActions(deniedActions.map((action) => action.label)),
+    [deniedActions]
+  );
+  const createActionCandidate = feature.actions.find((action) => action.method === 'POST' && !action.endpoint.includes(':id'));
+  const createAction = createActionCandidate && canExecuteFeatureAction(createActionCandidate)
+    ? createActionCandidate
+    : undefined;
+
+  const updateAction = allowedActions.find((action) =>
     (action.method === 'PATCH' || action.method === 'PUT') &&
-    (action.endpoint.includes(':id') || action.endpoint.includes(':code')) &&
-    canExecuteFeatureAction(action)
+    (action.endpoint.includes(':id') || action.endpoint.includes(':code'))
   );
 
   const tableRows = useMemo(() => {
@@ -558,10 +797,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
     });
   }, [feature.columns, rows, updateAction, recordIdDisplayConfig]);
 
-  const createAction = feature.actions.find((action) => action.method === 'POST' && !action.endpoint.includes(':id'));
-  const rowActions = feature.actions.filter(
-    (action) => action !== createAction && canExecuteFeatureAction(action)
-  );
+  const rowActions = allowedActions.filter((action) => action !== createAction);
 
   const bulkActionCandidates = useMemo(
     () =>
@@ -730,6 +966,9 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
           <div style={{ padding: '0.5rem 1rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Database size={14} color="var(--primary)" /> <strong>{rows.length}</strong> Bản ghi
           </div>
+          <div style={{ padding: '0.5rem 1rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Filter size={14} color="var(--primary)" /> <strong>{activeFilterCount}</strong> Bộ lọc đang bật
+          </div>
           {feature.listEndpoint && (
             <button className="btn btn-ghost" onClick={() => loadData()}><RefreshCw size={14} /> Refresh</button>
           )}
@@ -738,11 +977,29 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
 
       {errorMessage && <div className="banner banner-error" style={{ marginBottom: '1rem' }}>{errorMessage}</div>}
       {resultMessage && <div className="banner banner-success" style={{ marginBottom: '1rem' }}>{resultMessage}</div>}
+      {isHydratingOptions && (
+        <div className="banner banner-info" style={{ marginBottom: '1rem' }}>
+          Đang đồng bộ danh mục lựa chọn cho biểu mẫu và bộ lọc...
+        </div>
+      )}
+      {optionLoadWarnings.length > 0 && (
+        <div className="banner banner-warning" style={{ marginBottom: '1rem' }}>
+          Một số danh mục chưa tải được ({optionLoadWarnings.length} nguồn). Bạn vẫn có thể thao tác với dữ liệu đã có sẵn.
+        </div>
+      )}
+      {deniedActions.length > 0 && deniedActionSummary && (
+        <div className="banner banner-warning" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+          <ShieldAlert size={14} />
+          Một số thao tác đang bị giới hạn theo quyền hiện tại: {deniedActionSummary}.
+        </div>
+      )}
 
       <StandardDataTable
         data={tableRows}
         columns={columns}
         isLoading={isLoading}
+        loadingMessage={`Đang tải ${feature.title.toLowerCase()}...`}
+        emptyMessage={feature.emptyMessage ?? `Chưa có dữ liệu cho ${feature.title.toLowerCase()}.`}
         toolbarLeftContent={(
           <>
             <div className="field" style={{ width: '320px' }}>
@@ -759,11 +1016,15 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
             {featureFilters.length > 0 ? (
               <>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.76rem', color: 'var(--muted)' }}>
-                  <Filter size={14} /> Bộ lọc
+                  <Filter size={14} /> Bộ lọc ({activeFilterCount})
                 </span>
                 {featureFilters.map((filter) => {
                   const value = filterValues[filter.key];
                   if (filter.type === 'select') {
+                    const resolvedFilterOptions = dedupeSelectOptions([
+                      ...(filter.options ?? []),
+                      ...(filterOptionMap[filter.key] ?? [])
+                    ]);
                     return (
                       <select
                         key={filter.key}
@@ -777,7 +1038,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
                         }
                       >
                         <option value="">{filter.placeholder ?? filter.label}</option>
-                        {(filter.options ?? []).map((option) => (
+                        {resolvedFilterOptions.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -820,16 +1081,27 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
                     />
                   );
                 })}
+                {activeFilterCount > 0 && (
+                  <button type="button" className="btn btn-ghost" onClick={resetSearchAndFilters}>
+                    Xóa bộ lọc
+                  </button>
+                )}
               </>
             ) : null}
           </>
         )}
         toolbarRightContent={(
           <>
-            {createAction && canExecuteFeatureAction(createAction) && (
+            {createAction && (
               <button className="btn btn-primary" onClick={() => setActiveAction(createAction)}>
                 <Plus size={16} /> {createAction.label}
               </button>
+            )}
+            {!createAction && createActionCandidate && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: 'var(--muted)' }}>
+                <ShieldAlert size={13} />
+                Không có quyền tạo mới
+              </span>
             )}
           </>
         )}
@@ -912,6 +1184,11 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
                   </div>
                </div>
              )}
+             {rowActions.length === 0 && (
+               <p className="banner banner-info" style={{ marginTop: '1rem' }}>
+                 Bạn đang ở chế độ chỉ xem cho bản ghi này.
+               </p>
+             )}
           </div>
         )}
       </SidePanel>
@@ -926,6 +1203,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
             action={pendingBulkAction.action}
             initialValues={createDefaultFormValues(pendingBulkAction.action)}
             hiddenFieldNames={pendingBulkHiddenFieldNames}
+            fieldOptionsByName={actionFieldOptionMap[pendingBulkAction.action.key]}
             isSubmitting={isRunningBulkAction}
             onCancel={closePendingBulkAction}
             onSubmit={(vals) => void submitPendingBulkAction(vals)}
@@ -948,6 +1226,7 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
           <ActionForm 
             action={activeAction} 
             initialValues={selectedRow ? { ...createDefaultFormValues(activeAction), ...selectedRow } as FormValues : undefined}
+            fieldOptionsByName={actionFieldOptionMap[activeAction.key]}
             onCancel={() => setActiveAction(null)}
             onSubmit={(vals) => handleAction(activeAction, vals)}
           />

@@ -2,7 +2,15 @@ import type { HttpMethod } from './module-ui';
 import { readStoredAuthSession } from './auth-session';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1').replace(/\/$/, '');
+const API_REQUEST_TIMEOUT_MS = (() => {
+  const parsed = Number.parseInt(String(process.env.NEXT_PUBLIC_API_TIMEOUT_MS ?? ''), 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return 15000;
+})();
 const WEB_ROLE_STORAGE_KEY = 'erp_web_role';
+const WEB_USER_ID_STORAGE_KEY = 'erp_web_user_id';
 const DEV_ROLES = new Set(['USER', 'ADMIN']);
 
 export type ApiListPageInfo = {
@@ -73,18 +81,41 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
 
   const devIdentityHeaders = resolveDevIdentityHeaders();
 
-  const res = await fetch(buildUrl(path, options.query), {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...tenantHeaders,
-      ...authHeaders,
-      ...devIdentityHeaders,
-      ...(options.headers ?? {})
-    },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    cache: 'no-store'
-  });
+  const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutHandle: ReturnType<typeof setTimeout> | null = abortController
+    ? setTimeout(() => {
+        abortController.abort();
+      }, API_REQUEST_TIMEOUT_MS)
+    : null;
+
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...tenantHeaders,
+        ...authHeaders,
+        ...devIdentityHeaders,
+        ...(options.headers ?? {})
+      },
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      cache: 'no-store',
+      signal: abortController?.signal
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error(`Yêu cầu API quá thời gian ${Math.ceil(API_REQUEST_TIMEOUT_MS / 1000)} giây.`);
+    }
+    if (error instanceof Error && error.message.trim().length > 0) {
+      throw new Error(`Không thể kết nối API: ${error.message}`);
+    }
+    throw new Error('Không thể kết nối API.');
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 
   const text = await res.text();
   const payload = text ? safeJsonParse(text) : null;
@@ -95,6 +126,13 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   }
 
   return payload as T;
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    (error instanceof DOMException && error.name === 'AbortError') ||
+      (error instanceof Error && error.name === 'AbortError')
+  );
 }
 
 function resolveDevIdentityHeaders(): Record<string, string> {
@@ -112,7 +150,13 @@ function resolveDevIdentityHeaders(): Record<string, string> {
     }
   }
 
-  const userId = `dev_${role.toLowerCase()}`;
+  let userId = role === 'ADMIN' ? 'dev_admin' : 'dev_staff';
+  if (typeof window !== 'undefined') {
+    const storedUserId = String(window.localStorage.getItem(WEB_USER_ID_STORAGE_KEY) ?? '').trim();
+    if (storedUserId) {
+      userId = storedUserId;
+    }
+  }
   const employeeId = String(authSession?.user?.employeeId ?? '').trim() || userId;
   return {
     'x-erp-dev-role': role,

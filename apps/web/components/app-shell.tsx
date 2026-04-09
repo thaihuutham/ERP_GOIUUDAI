@@ -175,7 +175,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     logout,
     changePassword
   } = useUserRole();
-  const { canModule, canRoute, isReady: accessPolicyReady } = useAccessPolicy();
+  const { canModule, canRoute } = useAccessPolicy();
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -496,7 +496,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [ready, authEnabled, isAuthenticated]);
 
   useEffect(() => {
-    if (!accessPolicyReady) return;
     if (canRoute(pathname)) return;
     if (pathname === '/') return;
 
@@ -505,7 +504,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.sessionStorage.setItem(ACCESS_REDIRECT_NOTICE_KEY, message);
     }
     router.replace('/');
-  }, [accessPolicyReady, canRoute, pathname, router]);
+  }, [canRoute, pathname, router]);
 
   if (authEnabled && !ready) {
     return (

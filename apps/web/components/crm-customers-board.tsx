@@ -18,7 +18,7 @@ import {
   Filter,
   Save,
 } from 'lucide-react';
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { readStoredAuthSession } from '../lib/auth-session';
 import {
   apiRequest,
@@ -842,6 +842,10 @@ export function CrmCustomersBoard() {
   const [initialCustomerId, setInitialCustomerId] = useState('');
   const [hasAppliedInitialCustomerId, setHasAppliedInitialCustomerId] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedCustomerPermissionSnapshot, setSelectedCustomerPermissionSnapshot] = useState({
+    canUpdate: false,
+    canDelete: false
+  });
   const [customerDetail, setCustomerDetail] = useState<CustomerDetailPayload | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [selectedRowIds, setSelectedRowIds] = useState<BulkRowId[]>([]);
@@ -897,6 +901,17 @@ export function CrmCustomersBoard() {
     conditions: [createDefaultFilterCondition(customerFilterFieldConfigs)],
   });
   const [hasInitializedDefaultFilter, setHasInitializedDefaultFilter] = useState(false);
+
+  const selectCustomer = useCallback(
+    (customer: Customer | null) => {
+      setSelectedCustomer(customer);
+      setSelectedCustomerPermissionSnapshot({
+        canUpdate: Boolean(customer) && canCreate && canUpdate,
+        canDelete: Boolean(customer) && canDelete
+      });
+    },
+    [canCreate, canDelete, canUpdate]
+  );
   const appliedSavedFilter = useMemo(
     () => savedCustomerFilters.find((item) => item.id === appliedSavedFilterId) ?? null,
     [appliedSavedFilterId, savedCustomerFilters]
@@ -1428,7 +1443,7 @@ export function CrmCustomersBoard() {
       });
       setResultMessage(`Đã chuyển khách hàng ${selectedCustomer.fullName || selectedCustomer.id} sang trạng thái BỎ QUA/Xóa.`);
       setErrorMessage(null);
-      setSelectedCustomer(null);
+      selectCustomer(null);
       setCustomerDetail(null);
       setIsDetailEditing(false);
       setDetailForm(buildDetailForm(null));
@@ -1558,7 +1573,7 @@ export function CrmCustomersBoard() {
 
     const matchedRow = customers.find((item) => item.id === initialCustomerId);
     if (matchedRow) {
-      setSelectedCustomer(matchedRow);
+      selectCustomer(matchedRow);
       setHasAppliedInitialCustomerId(true);
       return;
     }
@@ -1572,7 +1587,7 @@ export function CrmCustomersBoard() {
         }
         const normalizedCustomer = normalizeObjectPayload(payload.customer) as Customer | null;
         if (normalizedCustomer) {
-          setSelectedCustomer(normalizedCustomer);
+          selectCustomer(normalizedCustomer);
         }
       } catch {
         // ignore invalid customerId in URL to avoid breaking normal page flow
@@ -2275,7 +2290,7 @@ export function CrmCustomersBoard() {
           setTableSortBy(sortBy);
           setTableSortDir(sortDir);
         }}
-        onRowClick={(c) => setSelectedCustomer(c)}
+        onRowClick={(c) => selectCustomer(c)}
         editableKeys={canUpdate ? ['fullName', 'phone', 'email', 'customerStage', 'status', 'zaloNickType'] : []}
         onSaveRow={handleSaveCustomer}
         enableRowSelection
@@ -2551,7 +2566,7 @@ export function CrmCustomersBoard() {
       <SidePanel
         isOpen={!!selectedCustomer}
         onClose={() => {
-          setSelectedCustomer(null);
+          selectCustomer(null);
           setCustomerDetail(null);
           setIsDetailEditing(false);
           setDetailForm(buildDetailForm(null));
@@ -2971,7 +2986,7 @@ export function CrmCustomersBoard() {
                 </>
               ) : (
                 <>
-                  {canUpdate && (
+                  {selectedCustomerPermissionSnapshot.canUpdate && (
                     <button
                       className="btn btn-primary"
                       style={{ flex: 1 }}
@@ -2986,14 +3001,14 @@ export function CrmCustomersBoard() {
                   <button className="btn btn-ghost" style={{ flex: 1 }} disabled>
                     Gửi thông báo
                   </button>
-                  {canDelete && String(detailCustomer?.status || '').toUpperCase() !== 'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA' && (
+                  {selectedCustomerPermissionSnapshot.canDelete && String(detailCustomer?.status || '').toUpperCase() !== 'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA' && (
                     <button
                       className="btn btn-danger"
                       style={{ flex: 1 }}
                       onClick={handleSoftSkipCustomer}
                       disabled={isSoftSkippingCustomer}
                     >
-                      <Trash2 size={16} /> {isSoftSkippingCustomer ? 'Đang cập nhật...' : 'BỎ QUA/Xóa'}
+                      <Trash2 size={16} /> {isSoftSkippingCustomer ? 'Đang cập nhật...' : 'Lưu trữ'}
                     </button>
                   )}
                 </>

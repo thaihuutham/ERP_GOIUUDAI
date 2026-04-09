@@ -702,7 +702,7 @@ const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'security-audit-director', path: 'auditViewPolicy.groups.DIRECTOR.enabled', label: 'Giám đốc: xem toàn công ty', type: 'switch' },
           { id: 'security-audit-branch', path: 'auditViewPolicy.groups.BRANCH_MANAGER.enabled', label: 'Trưởng chi nhánh: xem trong phạm vi chi nhánh', type: 'switch' },
           { id: 'security-audit-department', path: 'auditViewPolicy.groups.DEPARTMENT_MANAGER.enabled', label: 'Trưởng phòng: xem trong phạm vi phòng ban', type: 'switch' },
-          { id: 'security-audit-deny-ungrouped', path: 'auditViewPolicy.denyIfUngroupedManager', label: 'Chặn quản lý chưa được gán vào đơn vị tổ chức', type: 'switch' }
+          { id: 'security-audit-deny-ungrouped', path: 'auditViewPolicy.denyIfUngroupedManager', label: 'Chặn USER chưa được gán vào đơn vị tổ chức', type: 'switch' }
         ]
       },
       {

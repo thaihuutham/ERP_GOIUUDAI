@@ -83,6 +83,8 @@ interface StandardDataTableProps<T> {
   toolbarRightContent?: ReactNode;
   onRowClick?: (item: T) => void;
   isLoading?: boolean;
+  loadingMessage?: string;
+  emptyMessage?: string;
   editableKeys?: string[];
   onSaveRow?: (id: string | number, values: Partial<T>) => Promise<void>;
   enableRowSelection?: boolean;
@@ -189,6 +191,8 @@ export function StandardDataTable<T extends { id: string | number }>({
   toolbarRightContent,
   onRowClick,
   isLoading,
+  loadingMessage = 'Đang tải dữ liệu...',
+  emptyMessage,
   editableKeys = [],
   onSaveRow,
   enableRowSelection = false,
@@ -561,7 +565,7 @@ export function StandardDataTable<T extends { id: string | number }>({
   if (isLoading) {
     return (
       <div className="standard-table-empty-state">
-        Đang tải dữ liệu...
+        {loadingMessage}
       </div>
     );
   }
@@ -583,7 +587,8 @@ export function StandardDataTable<T extends { id: string | number }>({
   const currentPage = pageInfo?.currentPage ? Math.max(1, Math.round(pageInfo.currentPage)) : 1;
   const showPagingControls = Boolean(pageInfo && (onPageNext || onPagePrev || onJumpVisitedPage));
   const isArchivedMode = hideArchivedRows && archiveViewMode === 'archived';
-  const emptyMessage = isArchivedMode ? 'Không có dữ liệu đã xóa' : 'Không có dữ liệu';
+  const defaultEmptyMessage = isArchivedMode ? 'Không có dữ liệu đã xóa' : 'Không có dữ liệu';
+  const resolvedEmptyMessage = emptyMessage ?? defaultEmptyMessage;
   const hasBulkModalControls = enableRowSelection
     && (bulkActions.length > 0 || showDefaultBulkUtilities || Boolean(renderBulkModalContent));
   const bulkModalContext: StandardTableBulkModalRenderContext<T> = {
@@ -857,7 +862,7 @@ export function StandardDataTable<T extends { id: string | number }>({
             {tableData.length === 0 ? (
               <tr>
                 <td colSpan={orderedColumns.length + (canEdit ? 1 : 0) + (enableRowSelection ? 1 : 0)} className="standard-table-empty-row">
-                  {emptyMessage}
+                  {resolvedEmptyMessage}
                 </td>
               </tr>
             ) : (

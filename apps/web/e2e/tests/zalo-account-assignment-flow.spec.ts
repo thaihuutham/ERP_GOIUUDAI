@@ -79,7 +79,7 @@ function readUserId(request: Request) {
 }
 
 function getAccessibleAccountIds(role: string, userId: string, state: MockState) {
-  if (role === 'ADMIN' || role === 'USER') {
+  if (role === 'ADMIN') {
     return ACCOUNTS.map((account) => account.id);
   }
 
@@ -144,11 +144,11 @@ async function mockZaloAssignmentApis(page: Page, state: MockState) {
     if (method === 'GET' && path === '/api/v1/zalo/accounts') {
       const accessibleAccountIds = getAccessibleAccountIds(role, userId, state);
       const rows = ACCOUNTS
-        .filter((account) => role === 'ADMIN' || role === 'USER' || accessibleAccountIds.includes(account.id))
+        .filter((account) => role === 'ADMIN' || accessibleAccountIds.includes(account.id))
         .map((account) => ({
           ...account,
           currentPermissionLevel:
-            role === 'ADMIN' || role === 'USER'
+            role === 'ADMIN'
               ? 'ADMIN'
               : state.assignments[account.id]?.[userId] ?? null
         }));
@@ -215,7 +215,7 @@ async function mockZaloAssignmentApis(page: Page, state: MockState) {
     if (method === 'GET' && path === '/api/v1/conversations/threads') {
       const accessibleAccountIds = getAccessibleAccountIds(role, userId, state);
       const items = THREADS.filter(
-        (thread) => role === 'ADMIN' || role === 'USER' || accessibleAccountIds.includes(thread.channelAccountId)
+        (thread) => role === 'ADMIN' || accessibleAccountIds.includes(thread.channelAccountId)
       );
       return json(route, {
         items,

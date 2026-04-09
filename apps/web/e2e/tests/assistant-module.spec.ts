@@ -577,14 +577,10 @@ test.describe('Assistant module', () => {
     await expect(page.getByRole('link', { name: 'Proxy dữ liệu' }).first()).toBeVisible();
 
     await page.goto('/modules/assistant/knowledge');
-    await expect(page.getByRole('heading', { name: 'Tổng quan' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Kho tri thức quản trị' })).toBeVisible();
     await expect(
       page.getByText('Trang bạn mở không thuộc phạm vi quyền truy cập. Hệ thống đã chuyển về Tổng quan.')
-    ).toBeVisible();
-
-    await page.locator('#web-role-select').selectOption('USER');
-    await page.goto('/modules/assistant/knowledge');
-    await expect(page.getByRole('heading', { name: 'Kho tri thức quản trị' })).toBeVisible();
+    ).toHaveCount(0);
 
     await page.goto('/modules/assistant/proxy');
     await page.reload();

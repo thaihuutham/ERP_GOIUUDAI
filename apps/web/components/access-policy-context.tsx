@@ -38,6 +38,7 @@ type AccessPolicyCachePayload = {
 
 const CACHE_KEY_PREFIX = 'erp_access_policy_cache_v1:';
 const CACHE_TTL_MS = 30_000;
+const POLICY_LOADING_STABILIZATION_MS = 2200;
 
 const AccessPolicyContext = createContext<AccessPolicyContextValue | undefined>(undefined);
 
@@ -147,11 +148,17 @@ export function AccessPolicyProvider({ children }: { children: ReactNode }) {
     }
 
     const load = async () => {
+      const loadStartedAt = Date.now();
       const [runtimeResult, effectiveResult, accessSecurityResult] = await Promise.allSettled([
         apiRequest('/settings/runtime'),
         apiRequest('/settings/permissions/effective'),
         apiRequest('/settings/domains/access_security')
       ]);
+
+      const elapsed = Date.now() - loadStartedAt;
+      if (elapsed < POLICY_LOADING_STABILIZATION_MS) {
+        await new Promise((resolve) => setTimeout(resolve, POLICY_LOADING_STABILIZATION_MS - elapsed));
+      }
 
       if (!mounted) {
         return;

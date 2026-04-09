@@ -3,7 +3,7 @@ import type { FeatureAction, HttpMethod } from './module-ui';
 export const USER_ROLES = ['USER', 'ADMIN'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-export const DEFAULT_WEB_ROLE: UserRole = 'USER';
+export const DEFAULT_WEB_ROLE: UserRole = 'ADMIN';
 
 const ROLE_RANK: Record<UserRole, number> = {
   USER: 1,
@@ -27,7 +27,21 @@ const MODULE_MIN_ROLE: Record<string, UserRole> = {
   notifications: 'USER'
 };
 
-const USER_ALLOWED_WRITE_MODULES = new Set<string>(['notifications']);
+const USER_ALLOWED_WRITE_MODULES = new Set<string>([
+  'crm',
+  'sales',
+  'catalog',
+  'hr',
+  'finance',
+  'scm',
+  'assets',
+  'projects',
+  'workflows',
+  'reports',
+  'assistant',
+  'audit',
+  'notifications'
+]);
 
 export function hasRoleAtLeast(role: UserRole, minRole: UserRole) {
   return ROLE_RANK[role] >= ROLE_RANK[minRole];

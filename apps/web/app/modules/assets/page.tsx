@@ -1,5 +1,5 @@
-import { ModuleScreen } from '../../../components/module-screen';
+import { AssetsOperationsBoard } from '../../../components/assets-operations-board';
 
 export default function ModulePage() {
-  return <ModuleScreen moduleKey="assets" />;
+  return <AssetsOperationsBoard />;
 }
