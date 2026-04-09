@@ -7,6 +7,7 @@ export type IamActorContext = {
   email?: string;
   employeeId?: string;
   positionId?: string;
+  positionIds?: string[];
   orgUnitId?: string;
 };
 

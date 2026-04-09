@@ -176,7 +176,11 @@ export class IamScopeService {
   }
 
   private async resolvePositionTitle(tenantId: string, actor: IamActorContext) {
-    let positionId = this.cleanString(actor.positionId);
+    const actorPositionIds = this.uniqueStrings([
+      this.cleanString(actor.positionId),
+      ...this.toStringArray(actor.positionIds)
+    ]);
+    let positionId = actorPositionIds[0] ?? '';
 
     if (!positionId) {
       const employeeId = this.cleanString(actor.employeeId);
@@ -384,5 +388,12 @@ export class IamScopeService {
 
   private cleanString(value: unknown) {
     return String(value ?? '').trim();
+  }
+
+  private toStringArray(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map((item) => this.cleanString(item)).filter(Boolean);
   }
 }

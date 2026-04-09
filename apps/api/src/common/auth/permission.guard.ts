@@ -93,7 +93,7 @@ export class PermissionGuard implements CanActivate {
     const authUser = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY)) as AuthUser;
     const userId = this.cleanString(authUser.userId ?? authUser.sub);
     const email = this.cleanString(authUser.email).toLowerCase();
-    const role = this.cleanString(authUser.role).toUpperCase();
+    const role = this.normalizeAccessRole(authUser.role);
     if (!userId) {
       // JwtAuthGuard + @Roles will handle authorization fallback.
       this.setIamScopeContext(null);
@@ -127,11 +127,11 @@ export class PermissionGuard implements CanActivate {
     }
 
     const action = resolvePermissionActionFromRequest(request.method, path);
-    const positionId = await this.resolvePositionId(authUser);
+    const { primaryPositionId, positionIds } = await this.resolvePositionContext(authUser);
     const legacyDecision = await this.resolveLegacyDecision({
       policy,
       userId,
-      positionId,
+      positionIds,
       moduleKey,
       action
     });
@@ -145,7 +145,8 @@ export class PermissionGuard implements CanActivate {
           role,
           email,
           employeeId: this.cleanString(authUser.employeeId),
-          positionId
+          positionId: primaryPositionId,
+          positionIds
         },
         moduleKey,
         action
@@ -162,7 +163,8 @@ export class PermissionGuard implements CanActivate {
           role,
           email,
           employeeId: this.cleanString(authUser.employeeId),
-          positionId
+          positionId: primaryPositionId,
+          positionIds
         });
         this.setIamScopeContext({
           enabled: true,
@@ -198,21 +200,56 @@ export class PermissionGuard implements CanActivate {
     return true;
   }
 
-  private async resolvePositionId(authUser: AuthUser) {
+  private async resolvePositionContext(authUser: AuthUser) {
+    const userId = this.cleanString(authUser.userId ?? authUser.sub);
     const fromToken = this.cleanString(authUser.positionId);
-    if (fromToken) {
-      return fromToken;
-    }
+    const fromAssignments = await this.resolveUserPositionAssignments(userId);
 
     const employeeId = this.cleanString(authUser.employeeId);
-    if (!employeeId) {
-      return '';
-    }
+    const fromEmployee = employeeId
+      ? this.cleanString(
+          (
+            await this.prisma.client.employee.findFirst({
+              where: { id: employeeId },
+              select: { positionId: true }
+            })
+          )?.positionId
+        )
+      : '';
 
-    const employee = await this.prisma.client.employee.findFirst({
-      where: { id: employeeId }
+    const positionIds = this.uniqueStrings([fromToken, ...fromAssignments, fromEmployee]);
+    return {
+      primaryPositionId: positionIds[0] ?? '',
+      positionIds
+    };
+  }
+
+  private async resolveUserPositionAssignments(userId: string) {
+    if (!userId) {
+      return [];
+    }
+    const now = new Date();
+    const rows = await this.prisma.client.userPositionAssignment.findMany({
+      where: {
+        userId,
+        status: 'ACTIVE',
+        AND: [
+          {
+            OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }]
+          },
+          {
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }]
+          }
+        ]
+      },
+      select: {
+        positionId: true,
+        isPrimary: true,
+        createdAt: true
+      },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }]
     });
-    return this.cleanString(employee?.positionId);
+    return rows.map((row) => this.cleanString(row.positionId)).filter(Boolean);
   }
 
   private async getPermissionPolicy(tenantId: string): Promise<PermissionPolicyRuntime> {
@@ -288,7 +325,7 @@ export class PermissionGuard implements CanActivate {
   private async resolveLegacyDecision(params: {
     policy: PermissionPolicyRuntime;
     userId: string;
-    positionId: string;
+    positionIds: string[];
     moduleKey: string;
     action: PermissionAction;
   }): Promise<LegacyPermissionDecision> {
@@ -300,10 +337,12 @@ export class PermissionGuard implements CanActivate {
     }
 
     const [positionRules, userOverrides] = await Promise.all([
-      params.positionId
+      params.positionIds.length > 0
         ? this.prisma.client.positionPermissionRule.findMany({
             where: {
-              positionId: params.positionId,
+              positionId: {
+                in: params.positionIds
+              },
               moduleKey: params.moduleKey,
               action: params.action
             }
@@ -373,11 +412,27 @@ export class PermissionGuard implements CanActivate {
     return String(value ?? '').trim();
   }
 
+  private normalizeAccessRole(value: unknown): 'ADMIN' | 'USER' {
+    const normalized = this.cleanString(value).toUpperCase();
+    if (normalized === 'ADMIN') {
+      return 'ADMIN';
+    }
+    if (normalized === 'USER') {
+      return 'USER';
+    }
+    // Legacy collapse for cutover: MANAGER/STAFF are mapped to USER.
+    return 'USER';
+  }
+
   private toStringArray(value: unknown) {
     if (!Array.isArray(value)) {
       return [];
     }
     return value.map((item) => String(item ?? '').trim()).filter(Boolean);
+  }
+
+  private uniqueStrings(values: string[]) {
+    return Array.from(new Set(values.map((item) => this.cleanString(item)).filter(Boolean)));
   }
 
   private toBool(value: unknown, fallback: boolean) {

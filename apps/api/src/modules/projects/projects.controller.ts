@@ -24,7 +24,7 @@ export class ProjectsController {
   ) {}
 
   @Get()
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async listProjects(@Query() query: ProjectsListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
     const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.PROJECT, req?.query);
     const result = await this.projectsService.listProjects(query, entityIds);
@@ -32,7 +32,7 @@ export class ProjectsController {
   }
 
   @Post()
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async createProject(@Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
     const project = await this.projectsService.createProject(mutation.base as unknown as CreateProjectDto);
@@ -41,7 +41,7 @@ export class ProjectsController {
   }
 
   @Get('tasks')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listTasks(
     @Query() query: PaginationQueryDto,
     @Query('projectId') projectId?: string,
@@ -51,74 +51,74 @@ export class ProjectsController {
   }
 
   @Post('tasks')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createTask(@Body() body: CreateProjectTaskDto) {
     return this.projectsService.createTask(body);
   }
 
   @Post('tasks/:id/status')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   updateTaskStatus(@Param('id') id: string, @Body() body: UpdateTaskStatusDto) {
     return this.projectsService.updateTaskStatus(id, body.status);
   }
 
   @Get('resources')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listResources(@Query() query: PaginationQueryDto, @Query('projectId') projectId?: string) {
     return this.projectsService.listResources(projectId, query);
   }
 
   @Post('resources')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createResource(@Body() body: CreateProjectResourceDto) {
     return this.projectsService.createResource(body);
   }
 
   @Get('budgets')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listBudgets(@Query() query: PaginationQueryDto, @Query('projectId') projectId?: string) {
     return this.projectsService.listBudgets(projectId, query);
   }
 
   @Post('budgets')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createBudget(@Body() body: CreateProjectBudgetDto) {
     return this.projectsService.createBudget(body);
   }
 
   @Get('time-entries')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listTimeEntries(@Query() query: PaginationQueryDto, @Query('projectId') projectId?: string) {
     return this.projectsService.listTimeEntries(projectId, query);
   }
 
   @Post('time-entries')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createTimeEntry(@Body() body: CreateProjectTimeEntryDto) {
     return this.projectsService.createTimeEntry(body);
   }
 
   @Get(':id/metrics')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   metrics(@Param('id') id: string) {
     return this.projectsService.getProjectMetrics(id);
   }
 
   @Patch(':id/forecast')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   updateForecast(@Param('id') id: string, @Body() body: ProjectForecastDto) {
     return this.projectsService.updateForecast(id, body);
   }
 
   @Get(':id')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async getProject(@Param('id') id: string) {
     const project = await this.projectsService.getProject(id);
     return this.customFields.wrapEntity(CustomFieldEntityType.PROJECT, project);
   }
 
   @Patch(':id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async updateProject(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
     const project = await this.projectsService.updateProject(id, mutation.base as unknown as UpdateProjectDto);

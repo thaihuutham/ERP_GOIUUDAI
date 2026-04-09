@@ -182,13 +182,15 @@ export class AssistantAuthzService {
       return result;
     }
 
-    const positionId = args.positionId || (await this.resolvePositionId(args.employeeId));
+    const positionIds = await this.resolveUserPositionIds(args.userId, args.employeeId, args.positionId);
 
     const [positionRules, userOverrides] = await Promise.all([
-      positionId
+      positionIds.length > 0
         ? this.prisma.client.positionPermissionRule.findMany({
             where: {
-              positionId,
+              positionId: {
+                in: positionIds
+              },
               moduleKey: { in: modules },
               action: { in: PERMISSION_ACTIONS }
             }
@@ -250,7 +252,7 @@ export class AssistantAuthzService {
       return this.buildCompanyScope();
     }
 
-    if (args.role === UserRole.STAFF || args.requestedScope === 'self') {
+    if (args.requestedScope === 'self') {
       return this.buildSelfScope(args.userId, args.employeeId);
     }
 
@@ -260,7 +262,7 @@ export class AssistantAuthzService {
         return this.buildCompanyScope();
       }
       if (args.denyIfNoScope) {
-        throw new ForbiddenException('Tài khoản MANAGER chưa gắn employeeId nên không resolve được scope AI.');
+        throw new ForbiddenException('Tài khoản USER chưa gắn employeeId nên không resolve được scope AI.');
       }
       return this.buildCompanyScope();
     }
@@ -293,7 +295,7 @@ export class AssistantAuthzService {
         return this.buildCompanyScope();
       }
       if (args.denyIfNoScope) {
-        throw new ForbiddenException('Không resolve được scope tổ chức phù hợp cho tài khoản MANAGER khi dùng AI.');
+        throw new ForbiddenException('Không resolve được scope tổ chức phù hợp cho tài khoản USER khi dùng AI.');
       }
       return this.buildCompanyScope();
     }
@@ -368,15 +370,48 @@ export class AssistantAuthzService {
     return this.cleanString(user?.employeeId);
   }
 
-  private async resolvePositionId(employeeId: string) {
-    if (!employeeId) {
-      return '';
-    }
-    const employee = await this.prisma.client.employee.findFirst({
-      where: { id: employeeId },
-      select: { positionId: true }
-    });
-    return this.cleanString(employee?.positionId);
+  private async resolveUserPositionIds(userIdRaw: string, employeeIdRaw: string, tokenPositionIdRaw: string) {
+    const userId = this.cleanString(userIdRaw);
+    const employeeId = this.cleanString(employeeIdRaw);
+    const tokenPositionId = this.cleanString(tokenPositionIdRaw);
+    const now = new Date();
+
+    const assignmentRows = userId
+      ? await this.prisma.client.userPositionAssignment.findMany({
+          where: {
+            userId,
+            status: 'ACTIVE',
+            AND: [
+              {
+                OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }]
+              },
+              {
+                OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }]
+              }
+            ]
+          },
+          select: {
+            positionId: true,
+            isPrimary: true,
+            createdAt: true
+          },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }]
+        })
+      : [];
+    const assignmentIds = assignmentRows.map((row) => this.cleanString(row.positionId)).filter(Boolean);
+
+    const employeePositionId = employeeId
+      ? this.cleanString(
+          (
+            await this.prisma.client.employee.findFirst({
+              where: { id: employeeId },
+              select: { positionId: true }
+            })
+          )?.positionId
+        )
+      : '';
+
+    return Array.from(new Set([tokenPositionId, ...assignmentIds, employeePositionId].filter(Boolean)));
   }
 
   private collectDescendantOrgUnitIds(rootIds: string[], rows: Array<{ id: string; parentId: string | null }>) {
@@ -411,12 +446,12 @@ export class AssistantAuthzService {
   private normalizeAssistantPolicy(value: unknown) {
     const policy = this.ensureRecord(value);
     const roleScopeDefaults = this.ensureRecord(policy.roleScopeDefaults);
+    const userScope = roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF;
     return {
       enabled: this.toBool(policy.enabled, false),
       roleScopeDefaults: {
         ADMIN: this.normalizeScope(roleScopeDefaults.ADMIN, 'company'),
-        MANAGER: this.normalizeScope(roleScopeDefaults.MANAGER, 'department'),
-        STAFF: this.normalizeScope(roleScopeDefaults.STAFF, 'self')
+        USER: this.normalizeScope(userScope, 'department')
       } as Record<UserRole, AssistantScopeType>,
       enforcePermissionEngine: this.toBool(policy.enforcePermissionEngine, true),
       denyIfNoScope: this.toBool(policy.denyIfNoScope, true),
@@ -486,9 +521,11 @@ export class AssistantAuthzService {
   private readAuthContext() {
     const auth = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
     const roleRaw = this.cleanString(auth.role).toUpperCase();
-    const role = (Object.values(UserRole) as string[]).includes(roleRaw)
-      ? (roleRaw as UserRole)
-      : null;
+    const role = roleRaw === UserRole.ADMIN
+      ? UserRole.ADMIN
+      : roleRaw === UserRole.USER || roleRaw === 'MANAGER' || roleRaw === 'STAFF'
+        ? UserRole.USER
+        : null;
 
     return {
       userId: this.cleanString(auth.userId ?? auth.sub),

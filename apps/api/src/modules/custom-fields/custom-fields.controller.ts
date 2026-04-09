@@ -8,7 +8,7 @@ export class CustomFieldsController {
   constructor(@Inject(CustomFieldsService) private readonly customFields: CustomFieldsService) {}
 
   @Get('entities/:entityType/schema')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   getSchema(@Param('entityType') entityType: string) {
     return this.customFields.getSchema(entityType);
   }
@@ -26,19 +26,19 @@ export class CustomFieldsController {
   }
 
   @Get('entities/:entityType/history')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   history(@Param('entityType') entityType: string, @Query('limit') limit?: string) {
     return this.customFields.history(entityType, limit);
   }
 
   @Post('reports/query')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   queryReport(@Body() body: Record<string, unknown>) {
     return this.customFields.queryReport(body);
   }
 
   @Post('reports/widgets')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   saveOrQueryWidget(@Body() body: Record<string, unknown>) {
     return this.customFields.saveOrQueryWidget(body);
   }

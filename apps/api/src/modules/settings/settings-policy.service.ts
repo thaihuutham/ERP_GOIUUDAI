@@ -79,8 +79,7 @@ type AssistantAccessPolicy = {
   enabled: boolean;
   roleScopeDefaults: {
     ADMIN: AssistantScopeType;
-    MANAGER: AssistantScopeType;
-    STAFF: AssistantScopeType;
+    USER: AssistantScopeType;
   };
   enforcePermissionEngine: boolean;
   denyIfNoScope: boolean;
@@ -812,7 +811,7 @@ export class SettingsPolicyService {
 
   private resolveAuthContext(): AuthContext {
     const authUser = this.ensureRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
-    const role = this.cleanString(authUser.role).toUpperCase();
+    const role = this.normalizeAccessRole(authUser.role);
     const userId = this.cleanString(authUser.userId);
     const email = this.cleanString(authUser.email).toLowerCase();
     const sub = this.cleanString(authUser.sub).toLowerCase();
@@ -831,11 +830,11 @@ export class SettingsPolicyService {
     const policy = this.ensureRecord(value);
     const roleMapRaw = this.ensureRecord(policy.domainRoleMap);
     const userMapRaw = this.ensureRecord(policy.userDomainMap);
+    const legacyUserDomains = roleMapRaw.USER ?? roleMapRaw.MANAGER ?? roleMapRaw.STAFF;
 
     const normalizedRoleMap: Record<string, SettingsDomain[]> = {
       ADMIN: this.normalizeDomainList(roleMapRaw.ADMIN),
-      MANAGER: this.normalizeDomainList(roleMapRaw.MANAGER),
-      STAFF: this.normalizeDomainList(roleMapRaw.STAFF)
+      USER: this.normalizeDomainList(legacyUserDomains)
     };
 
     const normalizedUserMap: Record<string, SettingsDomain[]> = {};
@@ -889,8 +888,10 @@ export class SettingsPolicyService {
       enabled: this.toBool(policy.enabled, false),
       roleScopeDefaults: {
         ADMIN: this.normalizeAssistantScope(roleScopeDefaults.ADMIN, 'company'),
-        MANAGER: this.normalizeAssistantScope(roleScopeDefaults.MANAGER, 'department'),
-        STAFF: this.normalizeAssistantScope(roleScopeDefaults.STAFF, 'self')
+        USER: this.normalizeAssistantScope(
+          roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF,
+          'department'
+        )
       },
       enforcePermissionEngine: this.toBool(policy.enforcePermissionEngine, true),
       denyIfNoScope: this.toBool(policy.denyIfNoScope, true),
@@ -1392,9 +1393,9 @@ export class SettingsPolicyService {
       const productLeadDays = this.ensureRecord(renewalReminder.productLeadDays);
       const normalizedOverrideRoles = this.toStringArray(paymentPolicy.overrideRoles)
         .map((item) => this.cleanString(item).toUpperCase())
-        .filter((item) => item === 'ADMIN' || item === 'MANAGER')
+        .filter((item) => item === 'ADMIN')
         .filter((item, index, list) => list.indexOf(item) === index);
-      const overrideRoles = normalizedOverrideRoles.length > 0 ? normalizedOverrideRoles : ['ADMIN', 'MANAGER'];
+      const overrideRoles = normalizedOverrideRoles.length > 0 ? normalizedOverrideRoles : ['ADMIN'];
       return {
         ...sales,
         orderSettings: {
@@ -1461,7 +1462,7 @@ export class SettingsPolicyService {
           cutoffDay: this.toInt(payroll.cutoffDay, 25, 1, 31)
         },
         approverChain: {
-          leaveApproverRole: this.cleanString(approverChain.leaveApproverRole).toUpperCase() || 'MANAGER',
+          leaveApproverRole: this.cleanString(approverChain.leaveApproverRole).toUpperCase() || 'USER',
           payrollApproverRole: this.cleanString(approverChain.payrollApproverRole).toUpperCase() || 'ADMIN'
         },
         appendixFieldCatalog,
@@ -1678,8 +1679,10 @@ export class SettingsPolicyService {
 
       const assistantAccessPolicy = this.ensureRecord(value.assistantAccessPolicy);
       const roleScopeDefaults = this.ensureRecord(assistantAccessPolicy.roleScopeDefaults);
-      for (const role of ['ADMIN', 'MANAGER', 'STAFF']) {
-        const scope = this.cleanString(roleScopeDefaults[role]).toLowerCase();
+      const legacyUserScope = roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF;
+      for (const role of ['ADMIN', 'USER']) {
+        const rawScope = role === 'USER' ? legacyUserScope : roleScopeDefaults[role];
+        const scope = this.cleanString(rawScope).toLowerCase();
         if (!scope || !['company', 'branch', 'department', 'self'].includes(scope)) {
           errors.push(`assistantAccessPolicy.roleScopeDefaults.${role} phải là company|branch|department|self.`);
         }
@@ -1701,8 +1704,9 @@ export class SettingsPolicyService {
       const domainRoleMap = this.ensureRecord(policy.domainRoleMap);
       const userDomainMap = this.ensureRecord(policy.userDomainMap);
 
-      for (const role of ['ADMIN', 'MANAGER', 'STAFF']) {
-        const domains = this.toStringArray(domainRoleMap[role]);
+      const legacyUserDomains = domainRoleMap.USER ?? domainRoleMap.MANAGER ?? domainRoleMap.STAFF;
+      for (const role of ['ADMIN', 'USER']) {
+        const domains = this.toStringArray(role === 'USER' ? legacyUserDomains : domainRoleMap[role]);
         const invalid = domains.filter((item) => !SETTINGS_DOMAIN_SET.has(item as SettingsDomain));
         if (invalid.length > 0) {
           errors.push(`settingsEditorPolicy.domainRoleMap.${role} có domain không hợp lệ: ${invalid.join(', ')}.`);
@@ -2149,6 +2153,17 @@ export class SettingsPolicyService {
       return '';
     }
     return String(value).trim();
+  }
+
+  private normalizeAccessRole(value: unknown) {
+    const normalized = this.cleanString(value).toUpperCase();
+    if (normalized === 'ADMIN') {
+      return 'ADMIN';
+    }
+    if (normalized === 'USER' || normalized === 'MANAGER' || normalized === 'STAFF') {
+      return 'USER';
+    }
+    return '';
   }
 
   private readOptionalPositiveInt(value: unknown, min: number, max: number): number | null {

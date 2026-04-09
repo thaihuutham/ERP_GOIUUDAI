@@ -56,7 +56,7 @@ export class AuditAccessScopeService {
       };
     }
 
-    if (auth.role !== UserRole.MANAGER) {
+    if (auth.role !== UserRole.USER) {
       throw new ForbiddenException('Bạn không có quyền xem audit log.');
     }
 
@@ -73,7 +73,7 @@ export class AuditAccessScopeService {
     const employeeId = await this.resolveEmployeeId(auth);
     if (!employeeId) {
       if (policy.denyIfUngroupedManager) {
-        throw new ForbiddenException('Tài khoản MANAGER chưa được gán nhóm quản lý để xem audit log.');
+        throw new ForbiddenException('Tài khoản USER chưa được gán nhóm quản lý để xem audit log.');
       }
       return {
         accessScope: 'company',

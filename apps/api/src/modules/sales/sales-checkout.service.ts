@@ -405,7 +405,7 @@ export class SalesCheckoutService {
 
     const actor = this.resolveActorContext();
     const paymentPolicy = (await this.runtimeSettings.getSalesCrmPolicyRuntime()).paymentPolicy;
-    const allowedRoles = paymentPolicy.overrideRoles.length > 0 ? paymentPolicy.overrideRoles : ['ADMIN', 'MANAGER'];
+    const allowedRoles = paymentPolicy.overrideRoles.length > 0 ? paymentPolicy.overrideRoles : ['ADMIN'];
     if (!allowedRoles.includes(actor.role)) {
       throw new ForbiddenException('Vai trò hiện tại không được phép override thanh toán.');
     }
@@ -1185,10 +1185,7 @@ export class SalesCheckoutService {
 
   private resolveActorContext(): ActorContext {
     const auth = this.ensureRecord(this.cls?.get(AUTH_USER_CONTEXT_KEY));
-    const roleRaw = this.cleanString(auth.role).toUpperCase();
-    const role = (Object.values(UserRole) as string[]).includes(roleRaw)
-      ? roleRaw
-      : '';
+    const role = this.normalizeAccessRole(auth.role);
     const sub = this.cleanString(auth.sub);
     const email = this.cleanString(auth.email);
     const userId = this.cleanString(auth.userId) || sub || email;
@@ -1227,6 +1224,17 @@ export class SalesCheckoutService {
     }
     const target = Array.isArray(error.meta?.target) ? error.meta?.target.join(',') : String(error.meta?.target ?? '');
     return target.includes('tenant_Id') && target.includes('orderNo');
+  }
+
+  private normalizeAccessRole(roleRaw: unknown): string {
+    const normalized = this.cleanString(roleRaw).toUpperCase();
+    if (normalized === UserRole.ADMIN) {
+      return UserRole.ADMIN;
+    }
+    if (normalized === UserRole.USER || normalized === 'MANAGER' || normalized === 'STAFF') {
+      return UserRole.USER;
+    }
+    return UserRole.USER;
   }
 
   private decimal(value: number | string | Prisma.Decimal) {

@@ -20,7 +20,7 @@ export class CatalogController {
   ) {}
 
   @Get()
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async list(@Query() query: CatalogListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
     const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.PRODUCT, req?.query);
     const result = await this.catalogService.listProducts(query, entityIds);
@@ -28,7 +28,7 @@ export class CatalogController {
   }
 
   @Get(':id')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditRead({ action: 'READ_PRODUCT_DETAIL', entityType: 'Product', entityIdParam: 'id' })
   async getDetail(@Param('id') id: string) {
     const product = await this.catalogService.getProduct(id);
@@ -36,13 +36,13 @@ export class CatalogController {
   }
 
   @Get(':id/variants')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listVariants(@Param('id') id: string) {
     return this.catalogService.listVariants(id);
   }
 
   @Post()
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'CREATE_PRODUCT', entityType: 'Product' })
   async create(@Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
@@ -52,7 +52,7 @@ export class CatalogController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'UPDATE_PRODUCT', entityType: 'Product', entityIdParam: 'id' })
   async update(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
@@ -62,7 +62,7 @@ export class CatalogController {
   }
 
   @Post(':id/archive')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'ARCHIVE_PRODUCT', entityType: 'Product', entityIdParam: 'id' })
   async archive(@Param('id') id: string, @Body() body: ArchiveProductDto) {
     const product = await this.catalogService.archiveProduct(id, body);
@@ -70,7 +70,7 @@ export class CatalogController {
   }
 
   @Post(':id/price-policy')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'SET_PRODUCT_PRICE_POLICY', entityType: 'Product', entityIdParam: 'id' })
   async setPricePolicy(@Param('id') id: string, @Body() body: SetPricePolicyDto) {
     const product = await this.catalogService.setPricePolicy(id, body);

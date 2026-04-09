@@ -1099,10 +1099,10 @@ export class CrmService {
       throw new NotFoundException('Không tìm thấy yêu cầu thanh toán.');
     }
     const actor = this.resolveCustomerActor();
-    if (!actor.role || actor.role === UserRole.STAFF) {
+    if (!actor.role || actor.role === UserRole.USER) {
       throw new ForbiddenException('Sale/Staff không được phép mark paid thủ công. Vui lòng dùng webhook hoặc kế toán/admin override.');
     }
-    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.MANAGER) {
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.USER) {
       throw new ForbiddenException('Chỉ kế toán/admin (vai trò quản lý) được phép mark paid thủ công.');
     }
     const reason = this.cleanString(payload.reason);

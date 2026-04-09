@@ -18,7 +18,7 @@ const HR_APPENDIX_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] 
 const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as const;
 const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
 const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
-const CHECKOUT_OVERRIDE_ROLE_ALLOWLIST = new Set(['ADMIN', 'MANAGER']);
+const CHECKOUT_OVERRIDE_ROLE_ALLOWLIST = new Set(['ADMIN']);
 
 type CacheEntry = {
   value: Record<string, unknown>;
@@ -291,8 +291,7 @@ export class RuntimeSettingsService {
         enabled: this.toBool(assistantAccessPolicy.enabled, false),
         roleScopeDefaults: {
           ADMIN: normalizeAssistantScope(roleScopeDefaults.ADMIN, 'company'),
-          MANAGER: normalizeAssistantScope(roleScopeDefaults.MANAGER, 'department'),
-          STAFF: normalizeAssistantScope(roleScopeDefaults.STAFF, 'self')
+          USER: normalizeAssistantScope(roleScopeDefaults.USER ?? roleScopeDefaults.MANAGER ?? roleScopeDefaults.STAFF, 'department')
         },
         enforcePermissionEngine: this.toBool(assistantAccessPolicy.enforcePermissionEngine, true),
         denyIfNoScope: this.toBool(assistantAccessPolicy.denyIfNoScope, true),
@@ -315,7 +314,7 @@ export class RuntimeSettingsService {
       .map((rule) => ({
         module: this.readString(rule.module).toLowerCase(),
         minAmount: this.toNumber(rule.minAmount, 0),
-        approverRole: this.readString(rule.approverRole, 'MANAGER').toUpperCase(),
+        approverRole: this.readString(rule.approverRole, 'USER').toUpperCase(),
         approverDepartment: this.readString(rule.approverDepartment)
       }))
       .sort((left, right) => left.minAmount - right.minAmount);
@@ -424,7 +423,7 @@ export class RuntimeSettingsService {
       .map((item) => item.toUpperCase())
       .filter((item) => CHECKOUT_OVERRIDE_ROLE_ALLOWLIST.has(item))
       .filter((item, index, list) => list.indexOf(item) === index);
-    const checkoutOverrideRoles = normalizedOverrideRoles.length > 0 ? normalizedOverrideRoles : ['ADMIN', 'MANAGER'];
+    const checkoutOverrideRoles = normalizedOverrideRoles.length > 0 ? normalizedOverrideRoles : ['ADMIN'];
 
     return {
       orderSettings: {
@@ -554,7 +553,7 @@ export class RuntimeSettingsService {
         cutoffDay: this.toInt(payroll.cutoffDay, 25, 1, 31)
       },
       approverChain: {
-        leaveApproverRole: this.readString(approverChain.leaveApproverRole, 'MANAGER').toUpperCase(),
+        leaveApproverRole: this.readString(approverChain.leaveApproverRole, 'USER').toUpperCase(),
         payrollApproverRole: this.readString(approverChain.payrollApproverRole, 'ADMIN').toUpperCase()
       },
       appendixFieldCatalog,

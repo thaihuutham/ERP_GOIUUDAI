@@ -9,8 +9,7 @@ datasource db {
 
 enum UserRole {
   ADMIN
-  MANAGER
-  STAFF
+  USER
 }
 
 enum PermissionAction {
@@ -449,7 +448,7 @@ model User {
   tenant_Id    String
   email        String
   passwordHash String?
-  role         UserRole @default(STAFF)
+  role         UserRole @default(USER)
   employeeId   String?
   isActive     Boolean  @default(true)
   mustChangePassword Boolean @default(false)
@@ -467,6 +466,27 @@ model User {
   @@unique([tenant_Id, email])
   @@index([tenant_Id])
   @@index([tenant_Id, employeeId])
+}
+
+model UserPositionAssignment {
+  id           String        @id @default(cuid())
+  tenant_Id    String
+  userId       String
+  positionId   String
+  isPrimary    Boolean       @default(false)
+  status       GenericStatus @default(ACTIVE)
+  effectiveFrom DateTime?
+  effectiveTo  DateTime?
+  note         String?
+  createdBy    String?
+  updatedBy    String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([tenant_Id, userId, positionId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, userId, status])
+  @@index([tenant_Id, positionId, status])
 }
 
 model Employee {

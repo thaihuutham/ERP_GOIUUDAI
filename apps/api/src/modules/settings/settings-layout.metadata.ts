@@ -23,8 +23,7 @@ export type SettingsLayoutMetadata = {
   advancedMode: {
     defaultByRole: {
       ADMIN: boolean;
-      MANAGER: boolean;
-      STAFF: boolean;
+      USER: boolean;
     };
     scope: 'section_and_field';
   };
@@ -148,8 +147,7 @@ export function buildSettingsLayoutMetadata(): SettingsLayoutMetadata {
     advancedMode: {
       defaultByRole: {
         ADMIN: true,
-        MANAGER: false,
-        STAFF: false
+        USER: false
       },
       scope: 'section_and_field'
     },

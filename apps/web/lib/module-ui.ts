@@ -1,6 +1,6 @@
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 export type FieldValue = string | number | boolean;
-export type UserRole = 'STAFF' | 'MANAGER' | 'ADMIN';
+export type UserRole = 'USER' | 'ADMIN';
 
 export type FieldType =
   | 'text'

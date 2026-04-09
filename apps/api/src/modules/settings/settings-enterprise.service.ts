@@ -976,18 +976,19 @@ export class SettingsEnterpriseService {
       throw new NotFoundException('Không tìm thấy user.');
     }
 
-    let positionId = '';
-    if (user.employeeId) {
-      const employee = await this.prisma.client.employee.findFirst({
-        where: { id: user.employeeId }
-      });
-      positionId = this.cleanString(employee?.positionId);
-    }
+    const assignmentPositionIds = await this.resolveUserPositionAssignments(user.id);
+    const employeePositionId = await this.resolveUserEmployeePositionId(user.employeeId ?? null);
+    const positionIds = this.uniqueStrings([...assignmentPositionIds, employeePositionId]);
+    const primaryPositionId = positionIds[0] ?? '';
 
     const [positionRules, overrides] = await Promise.all([
-      positionId
+      positionIds.length > 0
         ? this.prisma.client.positionPermissionRule.findMany({
-            where: { positionId }
+            where: {
+              positionId: {
+                in: positionIds
+              }
+            }
           })
         : Promise.resolve([]),
       this.prisma.client.userPermissionOverride.findMany({
@@ -1021,7 +1022,8 @@ export class SettingsEnterpriseService {
 
     return {
       userId,
-      positionId: positionId || null,
+      positionId: primaryPositionId || null,
+      positionIds,
       positionRules,
       overrides,
       effective: Array.from(matrix.entries()).map(([moduleKey, actions]) => ({
@@ -1029,6 +1031,47 @@ export class SettingsEnterpriseService {
         actions: Object.fromEntries(actions.entries())
       }))
     };
+  }
+
+  private async resolveUserEmployeePositionId(employeeIdRaw: string | null) {
+    const employeeId = this.cleanString(employeeIdRaw);
+    if (!employeeId) {
+      return '';
+    }
+    const employee = await this.prisma.client.employee.findFirst({
+      where: { id: employeeId },
+      select: { positionId: true }
+    });
+    return this.cleanString(employee?.positionId);
+  }
+
+  private async resolveUserPositionAssignments(userIdRaw: string) {
+    const userId = this.cleanString(userIdRaw);
+    if (!userId) {
+      return [];
+    }
+    const now = new Date();
+    const rows = await this.prisma.client.userPositionAssignment.findMany({
+      where: {
+        userId,
+        status: GenericStatus.ACTIVE,
+        AND: [
+          {
+            OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }]
+          },
+          {
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }]
+          }
+        ]
+      },
+      select: {
+        positionId: true,
+        isPrimary: true,
+        createdAt: true
+      },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }]
+    });
+    return rows.map((row) => this.cleanString(row.positionId)).filter(Boolean);
   }
 
   private parsePermissionRules(value: unknown) {
@@ -1193,7 +1236,7 @@ export class SettingsEnterpriseService {
     if ((Object.values(UserRole) as string[]).includes(roleRaw)) {
       return roleRaw as UserRole;
     }
-    return UserRole.STAFF;
+    return UserRole.USER;
   }
 
   private parseOrgUnitType(value: unknown): OrgUnitType {
@@ -1459,5 +1502,9 @@ export class SettingsEnterpriseService {
     }
     const date = new Date(String(value));
     return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private uniqueStrings(values: Array<string | null | undefined>) {
+    return Array.from(new Set(values.map((item) => this.cleanString(item)).filter(Boolean)));
   }
 }

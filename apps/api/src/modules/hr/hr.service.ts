@@ -3840,7 +3840,7 @@ export class HrService {
     if (actor.role === 'ANONYMOUS') {
       throw new ForbiddenException('Không xác định người dùng để tạo mục tiêu.');
     }
-    if (actor.role === UserRole.STAFF && actor.employeeId && actor.employeeId !== targetEmployeeId) {
+    if (actor.role === UserRole.USER && actor.employeeId && actor.employeeId !== targetEmployeeId) {
       throw new ForbiddenException('Nhân viên chỉ được tạo mục tiêu của chính mình.');
     }
   }
@@ -3855,7 +3855,7 @@ export class HrService {
     if (actor.role === 'ANONYMOUS') {
       throw new ForbiddenException('Không xác định người dùng để cập nhật mục tiêu.');
     }
-    if (actor.role === UserRole.STAFF && actor.employeeId && actor.employeeId !== targetEmployeeId) {
+    if (actor.role === UserRole.USER && actor.employeeId && actor.employeeId !== targetEmployeeId) {
       throw new ForbiddenException('Nhân viên chỉ được cập nhật mục tiêu của chính mình.');
     }
   }
@@ -4084,12 +4084,12 @@ export class HrService {
       };
     }
 
-    const role = actor.role === 'ANONYMOUS' ? UserRole.STAFF : actor.role;
+    const role = actor.role === 'ANONYMOUS' ? UserRole.USER : actor.role;
     let scope = this.normalizeGoalScope(filters.scope, role === UserRole.ADMIN ? 'company' : 'self');
-    if (role === UserRole.STAFF) {
+    if (role === UserRole.USER) {
       scope = 'self';
     }
-    if (role === UserRole.MANAGER && scope === 'company') {
+    if (role === UserRole.USER && scope === 'company') {
       scope = 'department';
     }
 

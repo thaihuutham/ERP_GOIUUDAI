@@ -27,7 +27,7 @@ export class FinanceController {
   ) {}
 
   @Get('invoices')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async listInvoices(@Query() query: FinanceListQueryDto, @Req() req?: { query?: Record<string, unknown> }) {
     const entityIds = await this.customFields.resolveEntityIdsByQuery(CustomFieldEntityType.INVOICE, req?.query);
     const result = await this.financeService.listInvoices(query, entityIds);
@@ -35,7 +35,7 @@ export class FinanceController {
   }
 
   @Post('invoices')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'CREATE_INVOICE', entityType: 'Invoice' })
   async createInvoice(@Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
@@ -45,7 +45,7 @@ export class FinanceController {
   }
 
   @Post('invoices/from-order')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'CREATE_INVOICE_FROM_ORDER', entityType: 'Invoice' })
   async createInvoiceFromOrder(@Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
@@ -55,7 +55,7 @@ export class FinanceController {
   }
 
   @Patch('invoices/:id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'UPDATE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   async updateInvoice(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     const mutation = this.customFields.parseMutationBody(body);
@@ -65,7 +65,7 @@ export class FinanceController {
   }
 
   @Delete('invoices/:id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'ARCHIVE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   async archiveInvoice(@Param('id') id: string) {
     const invoice = await this.financeService.archiveInvoice(id);
@@ -73,7 +73,7 @@ export class FinanceController {
   }
 
   @Post('invoices/:id/issue')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'ISSUE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   async issueInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
     const invoice = await this.financeService.issueInvoice(id, body);
@@ -81,7 +81,7 @@ export class FinanceController {
   }
 
   @Post('invoices/:id/approve')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'APPROVE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   async approveInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
     const invoice = await this.financeService.approveInvoice(id, body);
@@ -89,7 +89,7 @@ export class FinanceController {
   }
 
   @Post('invoices/:id/pay')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'PAY_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   async payInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
     const invoice = await this.financeService.payInvoice(id, body);
@@ -97,7 +97,7 @@ export class FinanceController {
   }
 
   @Post('invoices/:id/void')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'VOID_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
   async voidInvoice(@Param('id') id: string, @Body() body: InvoiceTransitionDto) {
     const invoice = await this.financeService.voidInvoice(id, body);
@@ -105,81 +105,81 @@ export class FinanceController {
   }
 
   @Get('invoices-aging')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   getInvoiceAging(@Query() query: FinanceListQueryDto) {
     return this.financeService.getInvoiceAging(query);
   }
 
   @Get('invoices/:id/allocations')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditRead({ action: 'READ_INVOICE_ALLOCATIONS', entityType: 'Invoice', entityIdParam: 'id' })
   listInvoiceAllocations(@Param('id') id: string) {
     return this.financeService.listInvoiceAllocations(id);
   }
 
   @Post('invoices/:id/allocations')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   @AuditAction({ action: 'ALLOCATE_INVOICE_PAYMENT', entityType: 'Invoice', entityIdParam: 'id' })
   allocatePayment(@Param('id') id: string, @Body() body: CreatePaymentAllocationDto) {
     return this.financeService.allocatePayment(id, body);
   }
 
   @Get('accounts')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listAccounts(@Query() query: FinanceListQueryDto) {
     return this.financeService.listAccounts(query);
   }
 
   @Post('accounts')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createAccount(@Body() body: CreateAccountDto) {
     return this.financeService.createAccount(body);
   }
 
   @Patch('accounts/:id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   updateAccount(@Param('id') id: string, @Body() body: UpdateAccountDto) {
     return this.financeService.updateAccount(id, body);
   }
 
   @Get('journal-entries')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listJournalEntries(@Query() query: FinanceListQueryDto) {
     return this.financeService.listJournalEntries(query);
   }
 
   @Post('journal-entries')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createJournalEntry(@Body() body: CreateJournalEntryDto) {
     return this.financeService.createJournalEntry(body);
   }
 
   @Patch('journal-entries/:id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   updateJournalEntry(@Param('id') id: string, @Body() body: UpdateJournalEntryDto) {
     return this.financeService.updateJournalEntry(id, body);
   }
 
   @Get('budget-plans')
-  @Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listBudgetPlans(@Query() query: FinanceListQueryDto) {
     return this.financeService.listBudgetPlans(query);
   }
 
   @Post('budget-plans')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   createBudgetPlans(@Body() body: CreateBudgetPlanDto) {
     return this.financeService.createBudgetPlan(body);
   }
 
   @Patch('budget-plans/:id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   updateBudgetPlan(@Param('id') id: string, @Body() body: UpdateBudgetPlanDto) {
     return this.financeService.updateBudgetPlan(id, body);
   }
 
   @Get('periods/locks')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   listLockedPeriods() {
     return this.financeService.listLockedPeriods();
   }

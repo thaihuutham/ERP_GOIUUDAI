@@ -21,7 +21,7 @@ import {
 } from './dto/assistant.dto';
 
 @Controller('assistant')
-@Roles(UserRole.STAFF, UserRole.MANAGER, UserRole.ADMIN)
+@Roles(UserRole.USER, UserRole.ADMIN)
 export class AssistantController {
   constructor(
     @Inject(AssistantAuthzService) private readonly authzService: AssistantAuthzService,
@@ -72,7 +72,7 @@ export class AssistantController {
   }
 
   @Get('knowledge/sources')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async listKnowledgeSources(@Query() query: AssistantKnowledgeSourcesQueryDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.VIEW);
@@ -80,7 +80,7 @@ export class AssistantController {
   }
 
   @Post('knowledge/sources')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async createKnowledgeSource(@Body() body: CreateAssistantKnowledgeSourceDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.CREATE);
@@ -88,7 +88,7 @@ export class AssistantController {
   }
 
   @Post('knowledge/sources/:id/sync')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async syncKnowledgeSource(@Param('id') id: string, @Body() body: SyncAssistantKnowledgeSourceDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.UPDATE);
@@ -124,7 +124,7 @@ export class AssistantController {
   }
 
   @Post('reports/runs/:id/approve')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async approveRun(@Param('id') id: string, @Body() body: AssistantRunDecisionDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.APPROVE);
@@ -132,7 +132,7 @@ export class AssistantController {
   }
 
   @Post('reports/runs/:id/reject')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async rejectRun(@Param('id') id: string, @Body() body: AssistantRunDecisionDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.APPROVE);
@@ -140,7 +140,7 @@ export class AssistantController {
   }
 
   @Get('channels')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async listChannels(@Query() query: AssistantDispatchChannelsQueryDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.VIEW);
@@ -148,7 +148,7 @@ export class AssistantController {
   }
 
   @Post('channels')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async createChannel(@Body() body: CreateAssistantDispatchChannelDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.CREATE);
@@ -156,7 +156,7 @@ export class AssistantController {
   }
 
   @Patch('channels/:id')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async updateChannel(@Param('id') id: string, @Body() body: UpdateAssistantDispatchChannelDto) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.UPDATE);
@@ -164,7 +164,7 @@ export class AssistantController {
   }
 
   @Post('channels/:id/test')
-  @Roles(UserRole.MANAGER, UserRole.ADMIN)
+  @Roles(UserRole.USER, UserRole.ADMIN)
   async testChannel(@Param('id') id: string) {
     const access = await this.authzService.resolveCurrentAccess();
     this.authzService.assertModulePermission(access, 'reports', PermissionAction.APPROVE);

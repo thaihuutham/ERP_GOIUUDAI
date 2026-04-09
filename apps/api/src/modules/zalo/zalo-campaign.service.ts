@@ -2408,7 +2408,8 @@ export class ZaloCampaignService {
   private readActor(): AuthActor {
     const raw = this.toRecord(this.cls.get(AUTH_USER_CONTEXT_KEY));
     const userId = this.cleanString(raw.userId ?? raw.sub) || null;
-    const role = this.cleanString(raw.role).toUpperCase() || 'STAFF';
+    const roleRaw = this.cleanString(raw.role).toUpperCase();
+    const role = roleRaw === 'ADMIN' ? 'ADMIN' : roleRaw === 'USER' || roleRaw === 'MANAGER' || roleRaw === 'STAFF' ? 'USER' : 'USER';
     return {
       userId,
       role,

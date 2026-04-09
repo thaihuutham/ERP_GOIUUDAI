@@ -173,8 +173,11 @@ export class IamAccessService {
       }
     ];
 
-    const positionId = this.cleanString(actor.positionId);
-    if (positionId) {
+    const positionIds = this.uniqueStrings([
+      ...this.toStringArray(actor.positionIds),
+      this.cleanString(actor.positionId)
+    ]);
+    for (const positionId of positionIds) {
       conditions.push({
         subjectType: 'POSITION',
         subjectId: positionId
@@ -205,5 +208,16 @@ export class IamAccessService {
 
   private cleanString(value: unknown) {
     return String(value ?? '').trim();
+  }
+
+  private toStringArray(value: unknown) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map((item) => this.cleanString(item)).filter(Boolean);
+  }
+
+  private uniqueStrings(values: Array<string>) {
+    return Array.from(new Set(values.map((item) => this.cleanString(item)).filter(Boolean)));
   }
 }

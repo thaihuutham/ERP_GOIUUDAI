@@ -138,8 +138,8 @@ export class ZaloAccountAssignmentService {
       return null;
     }
 
-    // Keep admin/manager behavior unchanged for phased rollout.
-    if (role === 'ADMIN' || role === 'MANAGER') {
+    // ADMIN keeps global visibility; USER scope follows assignment.
+    if (role === 'ADMIN') {
       return null;
     }
 
@@ -169,7 +169,7 @@ export class ZaloAccountAssignmentService {
       };
     }
 
-    if (role === 'ADMIN' || role === 'MANAGER') {
+    if (role === 'ADMIN') {
       return {
         allowed: true,
         permissionLevel: ZaloAccountPermissionLevel.ADMIN,
@@ -215,7 +215,7 @@ export class ZaloAccountAssignmentService {
     const userId = this.cleanString(auth.userId);
     const role = this.cleanString(auth.role).toUpperCase();
 
-    if (!userId || role === 'ADMIN' || role === 'MANAGER') {
+    if (!userId || role === 'ADMIN') {
       for (const accountId of normalizedIds) {
         permissionMap[accountId] = ZaloAccountPermissionLevel.ADMIN;
       }
@@ -252,10 +252,6 @@ export class ZaloAccountAssignmentService {
     if (role === 'ADMIN') {
       return;
     }
-    if (role === 'MANAGER') {
-      throw new ForbiddenException('Chỉ ADMIN hệ thống mới được quản trị phân quyền tài khoản Zalo.');
-    }
-
     const decision = await this.resolveAccessForAccount(zaloAccountId);
     if (!decision.allowed || !this.hasPermission(decision.permissionLevel, ZaloAccountPermissionLevel.ADMIN)) {
       throw new ForbiddenException('Bạn không có quyền quản trị phân quyền tài khoản Zalo này.');
@@ -270,7 +266,7 @@ export class ZaloAccountAssignmentService {
     if (!userId) {
       return;
     }
-    if (role === 'ADMIN' || role === 'MANAGER') {
+    if (role === 'ADMIN') {
       return;
     }
     throw new ForbiddenException('Bạn không có quyền xem metrics vận hành Zalo.');

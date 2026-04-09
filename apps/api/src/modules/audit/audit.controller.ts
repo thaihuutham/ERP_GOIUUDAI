@@ -5,7 +5,7 @@ import { AuditRead } from '../../common/audit/audit.decorators';
 import { AuditService } from './audit.service';
 
 @Controller('audit')
-@Roles(UserRole.MANAGER, UserRole.ADMIN)
+@Roles(UserRole.USER, UserRole.ADMIN)
 export class AuditController {
   constructor(@Inject(AuditService) private readonly auditService: AuditService) {}
 

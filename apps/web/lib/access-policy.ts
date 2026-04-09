@@ -8,7 +8,7 @@ export const IAM_V2_ENFORCE_MODE = 'ENFORCE';
 
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export type PermissionEffect = 'ALLOW' | 'DENY';
-export type AccessRole = UserRole | 'USER';
+export type AccessRole = UserRole;
 export type IamV2Mode = 'OFF' | 'SHADOW' | 'ENFORCE';
 
 export type PermissionDecision = {
@@ -41,8 +41,7 @@ export type AccessPolicySnapshot = {
 
 const APPROVAL_PATH_MARKERS = ['/approve', '/reject', '/submit', '/escalate', '/delegate', '/restore', '/reindex', '/pay'];
 
-const STAFF_WRITE_MODULES = new Set<string>(['notifications']);
-const STAFF_HARD_DENY_MODULES = new Set<string>(['finance', 'workflows', 'audit']);
+const USER_WRITE_MODULES = new Set<string>(['notifications']);
 const SENSITIVE_MODULES = new Set<string>(['settings', 'finance', 'workflows', 'audit']);
 const RUNTIME_TOGGLABLE_MODULES = new Set<string>(ERP_MODULES.filter((moduleKey) => moduleKey !== 'settings') as string[]);
 
@@ -69,17 +68,12 @@ export function mapRuntimeRoleToAccessRole(role: UserRole, iamV2Enabled: boolean
   if (role === 'ADMIN') {
     return 'ADMIN';
   }
-  if (iamV2Enabled) {
-    return 'USER';
-  }
-  return role;
+  return 'USER';
 }
 
 function createBaselineMatrix(accessRole: AccessRole, moduleKey: string): ModulePermissionMatrix {
   const normalizedModule = normalizeModuleKey(moduleKey);
-  const canView = accessRole === 'USER'
-    ? false
-    : hasRoleAtLeast(accessRole, getMinRoleForModule(normalizedModule));
+  const canView = hasRoleAtLeast(accessRole, getMinRoleForModule(normalizedModule));
   if (!canView) {
     return createDeniedMatrix();
   }
@@ -94,17 +88,7 @@ function createBaselineMatrix(accessRole: AccessRole, moduleKey: string): Module
     };
   }
 
-  if (accessRole === 'MANAGER') {
-    return {
-      VIEW: true,
-      CREATE: true,
-      UPDATE: true,
-      DELETE: false,
-      APPROVE: true
-    };
-  }
-
-  const canWrite = STAFF_WRITE_MODULES.has(normalizedModule);
+  const canWrite = USER_WRITE_MODULES.has(normalizedModule);
   return {
     VIEW: true,
     CREATE: canWrite,
@@ -117,9 +101,6 @@ function createBaselineMatrix(accessRole: AccessRole, moduleKey: string): Module
 function isHardDeniedByRole(accessRole: AccessRole, moduleKeyRaw: string) {
   const moduleKey = normalizeModuleKey(moduleKeyRaw);
   if (moduleKey === 'settings' && accessRole !== 'ADMIN') {
-    return true;
-  }
-  if (accessRole === 'STAFF' && STAFF_HARD_DENY_MODULES.has(moduleKey)) {
     return true;
   }
   return false;

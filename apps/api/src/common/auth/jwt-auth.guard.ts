@@ -13,6 +13,8 @@ import { resolveTenantRuntimeConfig } from '../tenant/tenant-context.util';
 import { IS_PUBLIC_KEY, ROLES_KEY } from './auth.constants';
 
 const { verify } = jwt;
+const USER_ACCESS_ROLE = UserRole.USER;
+const ADMIN_ACCESS_ROLE = UserRole.ADMIN;
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -50,7 +52,8 @@ export class JwtAuthGuard implements CanActivate {
         context.getClass()
       ]);
       if (requiredRoles && requiredRoles.length > 0) {
-        if (!authUser.role || !requiredRoles.includes(authUser.role)) {
+        const requiredRoleSet = this.normalizeRequiredRoleSet(requiredRoles);
+        if (!authUser.role || !requiredRoleSet.has(authUser.role)) {
           throw new ForbiddenException('Bạn không có quyền truy cập tài nguyên này.');
         }
       }
@@ -82,7 +85,7 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const roleRaw = typeof payload.role === 'string' ? payload.role.toUpperCase() : '';
-    const role = (Object.values(UserRole) as string[]).includes(roleRaw) ? (roleRaw as UserRole) : undefined;
+    const role = this.normalizeAccessRole(roleRaw);
     const tokenTenantId =
       typeof payload.tenantId === 'string'
         ? payload.tenantId
@@ -139,7 +142,8 @@ export class JwtAuthGuard implements CanActivate {
     ]);
 
     if (requiredRoles && requiredRoles.length > 0) {
-      if (!authUser.role || !requiredRoles.includes(authUser.role)) {
+      const requiredRoleSet = this.normalizeRequiredRoleSet(requiredRoles);
+      if (!authUser.role || !requiredRoleSet.has(authUser.role)) {
         throw new ForbiddenException('Bạn không có quyền truy cập tài nguyên này.');
       }
     }
@@ -152,7 +156,7 @@ export class JwtAuthGuard implements CanActivate {
     fallbackTenantId?: string
   ): AuthUser {
     const roleRaw = this.readHeader(headers, 'x-erp-dev-role').toUpperCase();
-    const role = (Object.values(UserRole) as string[]).includes(roleRaw) ? (roleRaw as UserRole) : UserRole.MANAGER;
+    const role = this.normalizeAccessRole(roleRaw) ?? USER_ACCESS_ROLE;
     const userId = this.readHeader(headers, 'x-erp-dev-user-id') || `dev_${role.toLowerCase()}`;
     const email = this.readHeader(headers, 'x-erp-dev-email') || `${role.toLowerCase()}@local.erp`;
     const tenantId = this.readHeader(headers, 'x-tenant-id') || fallbackTenantId;
@@ -182,6 +186,25 @@ export class JwtAuthGuard implements CanActivate {
 
   private cleanString(value: unknown) {
     return String(value ?? '').trim();
+  }
+
+  private normalizeAccessRole(roleRaw: unknown): UserRole {
+    const normalized = this.cleanString(roleRaw).toUpperCase();
+    if (normalized === 'ADMIN') {
+      return ADMIN_ACCESS_ROLE;
+    }
+    if (normalized === 'USER' || normalized === 'MANAGER' || normalized === 'STAFF') {
+      return USER_ACCESS_ROLE;
+    }
+    return USER_ACCESS_ROLE;
+  }
+
+  private normalizeRequiredRoleSet(requiredRoles: UserRole[]) {
+    const normalized = new Set<UserRole>();
+    for (const role of requiredRoles) {
+      normalized.add(this.normalizeAccessRole(role));
+    }
+    return normalized;
   }
 
   private async getSessionTimeoutMinutes() {

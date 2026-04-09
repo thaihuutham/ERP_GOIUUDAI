@@ -2343,7 +2343,7 @@ export class HrRegulationService {
       throw new ForbiddenException('Tài khoản chưa liên kết employeeId để truy cập dữ liệu quy chế.');
     }
 
-    if (actor.role === UserRole.STAFF) {
+    if (actor.role === UserRole.USER) {
       return {
         scope: 'self',
         role: actor.role,

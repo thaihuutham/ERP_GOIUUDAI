@@ -130,8 +130,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       enabled: false,
       roleScopeDefaults: {
         ADMIN: 'company',
-        MANAGER: 'department',
-        STAFF: 'self'
+        USER: 'department'
       },
       enforcePermissionEngine: true,
       denyIfNoScope: true,
@@ -140,8 +139,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     },
     settingsEditorPolicy: {
       domainRoleMap: {
-        MANAGER: [],
-        STAFF: []
+        USER: []
       },
       userDomainMap: {}
     }
@@ -151,7 +149,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       {
         module: 'sales',
         minAmount: 0,
-        approverRole: 'MANAGER',
+        approverRole: 'USER',
         approverDepartment: ''
       }
     ],
@@ -241,7 +239,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     },
     paymentPolicy: {
       partialPaymentEnabled: true,
-      overrideRoles: ['ADMIN', 'MANAGER'],
+      overrideRoles: ['ADMIN'],
       callbackTolerance: 300,
       reconcileSchedule: '0 */2 * * *'
     },
@@ -311,7 +309,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       cutoffDay: 25
     },
     approverChain: {
-      leaveApproverRole: 'MANAGER',
+      leaveApproverRole: 'USER',
       payrollApproverRole: 'ADMIN'
     },
     appendixFieldCatalog: {

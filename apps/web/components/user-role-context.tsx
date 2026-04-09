@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { readStoredAuthSession, writeStoredAuthSession, type WebAuthSession } from '../lib/auth-session';
 import { apiRequest } from '../lib/api-client';
-import { DEFAULT_WEB_ROLE, USER_ROLES, type UserRole } from '../lib/rbac';
+import { DEFAULT_WEB_ROLE, type UserRole } from '../lib/rbac';
 
 type UserRoleContextValue = {
   role: UserRole;
@@ -45,6 +45,17 @@ function isMfaChallengePayload(value: unknown): value is MfaChallengePayload {
   return record.mfaRequired === true && typeof record.challengeToken === 'string' && record.challengeToken.trim().length > 0;
 }
 
+function normalizeWebRole(value: unknown): UserRole {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'ADMIN') {
+    return 'ADMIN';
+  }
+  if (normalized === 'USER' || normalized === 'MANAGER' || normalized === 'STAFF') {
+    return 'USER';
+  }
+  return DEFAULT_WEB_ROLE;
+}
+
 export function UserRoleProvider({ children }: { children: ReactNode }) {
   const [role, setRoleState] = useState<UserRole>(DEFAULT_WEB_ROLE);
   const [authSession, setAuthSession] = useState<WebAuthSession | null>(null);
@@ -57,10 +68,7 @@ export function UserRoleProvider({ children }: { children: ReactNode }) {
       const session = readStoredAuthSession();
       if (session) {
         setAuthSession(session);
-        const nextRole = session.user?.role;
-        if (nextRole && USER_ROLES.includes(nextRole as UserRole)) {
-          setRoleState(nextRole as UserRole);
-        }
+        setRoleState(normalizeWebRole(session.user?.role));
       }
       setReady(true);
       return;
@@ -68,8 +76,8 @@ export function UserRoleProvider({ children }: { children: ReactNode }) {
 
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw && USER_ROLES.includes(raw as UserRole)) {
-        setRoleState(raw as UserRole);
+      if (raw) {
+        setRoleState(normalizeWebRole(raw));
       }
     } finally {
       setReady(true);
@@ -97,10 +105,7 @@ export function UserRoleProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const nextRole = nextSession.user?.role;
-    if (nextRole && USER_ROLES.includes(nextRole as UserRole)) {
-      setRoleState(nextRole as UserRole);
-    }
+    setRoleState(normalizeWebRole(nextSession.user?.role));
   };
 
   const login = async (email: string, password: string) => {
