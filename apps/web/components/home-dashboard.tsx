@@ -14,7 +14,15 @@ import {
   ListTodo,
   Clock,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  DollarSign,
+  CreditCard,
+  Package,
+  PieChart,
+  UserPlus,
+  Palmtree,
+  Briefcase,
+  Handshake
 } from 'lucide-react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { moduleCards } from '../lib/modules';
@@ -22,8 +30,17 @@ import { formatRuntimeCurrency } from '../lib/runtime-format';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
-import { StatCard, SimpleAreaChart, SimplePieChart, Badge, Skeleton } from './ui';
+import { StatCard, SimpleAreaChart, SimplePieChart, DualBarChart, Badge, Skeleton } from './ui';
 import { useSmartPolling } from '../lib/use-smart-polling';
+
+/* ─── Types ──────────────────────────────────────── */
+
+type CashflowEntry = {
+  month?: string;
+  label?: string;
+  income?: number;
+  expense?: number;
+};
 
 type Overview = {
   range?: {
@@ -38,9 +55,18 @@ type Overview = {
   activePurchaseOrders?: number;
   totalOrders?: number;
   revenueDeltaPercent?: number | null;
+  // New KPI fields
+  totalCollections?: number;
+  totalExpenses?: number;
+  budgetUsedPercent?: number;
+  activeEmployees?: number;
+  onLeaveToday?: number;
+  activeRecruitment?: number;
+  newCustomersInRange?: number;
   charts?: {
     revenueSeries?: Array<{ bucket?: string; label?: string; value?: number; orders?: number }>;
     orderStatusSeries?: Array<{ status?: string; label?: string; value?: number }>;
+    cashflowSeries?: CashflowEntry[];
   };
 };
 
@@ -66,6 +92,8 @@ type WidgetState<T> = {
   error: string | null;
   lastUpdatedAt: string | null;
 };
+
+/* ─── Constants ──────────────────────────────────── */
 
 const POLL_INTERVALS = {
   overview: 120_000,
@@ -95,6 +123,8 @@ const ACTION_LABELS: Record<string, string> = {
   DELEGATE: 'Ủy quyền',
   CANCEL: 'Hủy thao tác'
 };
+
+/* ─── Helpers ────────────────────────────────────── */
 
 function isReportsDisabledErrorMessage(message: string) {
   const normalized = message.toLowerCase();
@@ -262,6 +292,15 @@ function formatMetricValue(value: number | undefined, formatter?: (value: number
   }
   return formatter ? formatter(numberValue) : String(numberValue);
 }
+
+function formatShortCurrency(value: number) {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} tỷ`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(0)} tr`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
+  return String(value);
+}
+
+/* ─── Component ──────────────────────────────────── */
 
 export function HomeDashboard() {
   const { role } = useUserRole();
@@ -457,6 +496,8 @@ export function HomeDashboard() {
     void loadOverviewWidget();
   }, [selectedRange, loadOverviewWidget]);
 
+  /* ─── Derived data ─────────────────────────────── */
+
   const overviewData = overviewState.data;
   const revenueSeries = (overviewData?.charts?.revenueSeries ?? []).map((item) => ({
     name: String(item.label ?? item.bucket ?? ''),
@@ -466,39 +507,50 @@ export function HomeDashboard() {
     name: String(item.label ?? item.status ?? 'Khác'),
     value: toFiniteNumber(item.value)
   }));
+  const cashflowSeries = (overviewData?.charts?.cashflowSeries ?? []).map((item) => ({
+    name: String(item.label ?? item.month ?? ''),
+    income: toFiniteNumber(item.income),
+    expense: toFiniteNumber(item.expense)
+  }));
   const hasRevenueData = hasPositiveSeriesValue(revenueSeries);
   const hasOrderStatusData = hasPositiveSeriesValue(orderStatusSeries);
+  const hasCashflowData = cashflowSeries.some((item) => item.income > 0 || item.expense > 0);
 
   const overviewStatusLabel = getWidgetStatusLabel(overviewState.status);
   const tasksStatusLabel = getWidgetStatusLabel(tasksState.status);
   const activitiesStatusLabel = getWidgetStatusLabel(activitiesState.status);
   const selectedRangeLabel = DASHBOARD_RANGES.find((item) => item.key === selectedRange)?.label ?? selectedRange;
 
+  const isLoading = overviewState.status === 'loading' && !overviewData;
+
+  /* ─── Render ───────────────────────────────────── */
+
   return (
     <div className="dashboard-root">
+      {/* ── Hero Panel ───────────────────────────── */}
       <section className="hero-panel">
         <div>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', color: 'var(--primary)', fontWeight: 700, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.45rem' }}>
+          <div className="hero-status-tag">
             <Activity size={14} /> Vận hành ổn định
           </div>
-          <h1 style={{ fontSize: '1.65rem', marginBottom: '0.3rem' }}>
+          <h1>
             {SYSTEM_PROFILE.systemName}
           </h1>
           <p>
             {`${SYSTEM_PROFILE.companyName} • ${SYSTEM_PROFILE.businessDomain} • ${SYSTEM_PROFILE.scale}. ${SYSTEM_PROFILE.operatingModel}.`}
           </p>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+        <div className="hero-right">
           <div className="hero-badge">
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+            <div className="hero-badge-row">
               <ShieldCheck size={14} />
               <span>{SYSTEM_PROFILE.governanceVision}</span>
             </div>
           </div>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+          <div className="hero-role-label">
             Vai trò hiện tại: <strong>{role}</strong>
           </div>
-          <div style={{ display: 'inline-flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '0.35rem' }}>
+          <div className="hero-range-selector">
             {DASHBOARD_RANGES.map((range) => (
               <button
                 key={range.key}
@@ -514,66 +566,158 @@ export function HomeDashboard() {
         </div>
       </section>
 
-      {/* KPIs Grid */}
-      <section className="metrics-grid">
-        <Link href={`/modules/sales?range=${selectedRange}`} style={{ textDecoration: 'none' }}>
-          <StatCard
-            label="Phát sinh doanh thu"
-            value={formatMetricValue(overviewData?.totalRevenue, (value) => formatRuntimeCurrency(value))}
-            icon={<TrendingUp size={18} />}
-            color="var(--primary)"
-            trend={typeof overviewData?.revenueDeltaPercent === 'number' ? overviewData.revenueDeltaPercent : undefined}
-          />
-        </Link>
-        <Link href={`/modules/hr?range=${selectedRange}`} style={{ textDecoration: 'none' }}>
-          <StatCard
-            label="Nhân sự vận hành"
-            value={formatMetricValue(overviewData?.totalEmployees)}
-            icon={<Users size={18} />}
-            color="var(--success)"
-          />
-        </Link>
-        <Link href={`/modules/finance?q=PENDING&range=${selectedRange}`} style={{ textDecoration: 'none' }}>
-          <StatCard
-            label="Hóa đơn chờ xử lý"
-            value={formatMetricValue(overviewData?.pendingInvoices)}
-            icon={<FileText size={18} />}
-            color="var(--warning)"
-          />
-        </Link>
-        <Link href={`/modules/scm?q=PENDING&range=${selectedRange}`} style={{ textDecoration: 'none' }}>
-          <StatCard
-            label="Đơn mua hàng (PO)"
-            value={formatMetricValue(overviewData?.activePurchaseOrders)}
-            icon={<ShoppingCart size={18} />}
-            color="var(--danger)"
-          />
-        </Link>
+      {/* ── KPI Row 1: BÁN HÀNG ─────────────────── */}
+      <section className="kpi-section">
+        <h2 className="kpi-section-title">
+          <TrendingUp size={16} /> Bán hàng
+        </h2>
+        <div className="metrics-grid">
+          <Link href={`/modules/sales?range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Doanh thu"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.totalRevenue, (v) => formatRuntimeCurrency(v))}
+              icon={<DollarSign size={18} />}
+              color="var(--primary)"
+              trend={typeof overviewData?.revenueDeltaPercent === 'number' ? overviewData.revenueDeltaPercent : undefined}
+            />
+          </Link>
+          <Link href={`/modules/sales?range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Đơn hàng"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.totalOrders)}
+              icon={<Package size={18} />}
+              color="var(--info)"
+            />
+          </Link>
+          <Link href={`/modules/sales?q=APPROVED&range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Đơn hoàn thành"
+              value={isLoading ? '--' : formatMetricValue(
+                orderStatusSeries.find((s) => s.name === 'Hoàn thành')?.value as number | undefined
+              )}
+              icon={<CheckCircle2 size={18} />}
+              color="var(--success)"
+            />
+          </Link>
+          <Link href={`/modules/sales?q=PENDING&range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Chờ duyệt"
+              value={isLoading ? '--' : formatMetricValue(
+                orderStatusSeries.find((s) => s.name === 'Đang xử lý')?.value as number | undefined
+              )}
+              icon={<Clock size={18} />}
+              color="var(--warning)"
+            />
+          </Link>
+        </div>
       </section>
+
+      {/* ── KPI Row 2: TÀI CHÍNH & VẬN HÀNH ─────── */}
+      <section className="kpi-section">
+        <h2 className="kpi-section-title">
+          <CreditCard size={16} /> Tài chính & Vận hành
+        </h2>
+        <div className="metrics-grid">
+          <Link href={`/modules/finance?q=PENDING&range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Hóa đơn chờ xử lý"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.pendingInvoices)}
+              icon={<FileText size={18} />}
+              color="var(--warning)"
+            />
+          </Link>
+          <Link href={`/modules/finance?q=APPROVED&range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Thu tiền"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.totalCollections, (v) => formatShortCurrency(v))}
+              icon={<DollarSign size={18} />}
+              color="var(--success)"
+            />
+          </Link>
+          <Link href={`/modules/scm?q=PENDING&range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Đơn mua hàng (PO)"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.activePurchaseOrders)}
+              icon={<ShoppingCart size={18} />}
+              color="var(--danger)"
+            />
+          </Link>
+          <Link href={`/modules/finance?range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="Ngân sách đã dùng"
+              value={isLoading ? '--' : `${formatMetricValue(overviewData?.budgetUsedPercent)}%`}
+              icon={<PieChart size={18} />}
+              color="var(--info)"
+            />
+          </Link>
+        </div>
+      </section>
+
+      {/* ── KPI Row 3: NHÂN SỰ & CRM ────────────── */}
+      <section className="kpi-section">
+        <h2 className="kpi-section-title">
+          <Users size={16} /> Nhân sự & CRM
+        </h2>
+        <div className="metrics-grid">
+          <Link href={`/modules/hr?range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="NV đang làm việc"
+              value={isLoading ? '--' : `${formatMetricValue(overviewData?.activeEmployees)}/${formatMetricValue(overviewData?.totalEmployees)}`}
+              icon={<Briefcase size={18} />}
+              color="var(--success)"
+            />
+          </Link>
+          <Link href="/modules/hr?q=LEAVE" className="link-unstyled">
+            <StatCard
+              label="Nghỉ phép hôm nay"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.onLeaveToday)}
+              icon={<Palmtree size={18} />}
+              color="var(--warning)"
+            />
+          </Link>
+          <Link href="/modules/hr?q=PENDING" className="link-unstyled">
+            <StatCard
+              label="Tuyển đang xử lý"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.activeRecruitment)}
+              icon={<UserPlus size={18} />}
+              color="var(--info)"
+            />
+          </Link>
+          <Link href={`/modules/crm?range=${selectedRange}`} className="link-unstyled">
+            <StatCard
+              label="KH mới"
+              value={isLoading ? '--' : formatMetricValue(overviewData?.newCustomersInRange)}
+              icon={<Handshake size={18} />}
+              color="var(--primary)"
+            />
+          </Link>
+        </div>
+      </section>
+
+      {/* ── Data range meta ──────────────────────── */}
       {overviewData?.range?.from && overviewData?.range?.to && (
         <div className="dashboard-refresh-meta">
           Phạm vi dữ liệu: {selectedRangeLabel} ({new Date(overviewData.range.from).toLocaleDateString('vi-VN')} - {new Date(overviewData.range.to).toLocaleDateString('vi-VN')}) • Tổng đơn: {formatMetricValue(overviewData.totalOrders)}
         </div>
       )}
 
-      {/* Visualizations & Data Row */}
+      {/* ── Charts Row ───────────────────────────── */}
       <section className="dashboard-charts-row">
-        {/* Main Chart */}
+        {/* Revenue chart */}
         <Link
           href={`/modules/reports?name=sales&range=${selectedRange}`}
-          className="dashboard-chart-card"
-          style={{ textDecoration: 'none' }}
+          className="dashboard-chart-card link-unstyled"
         >
           <div className="dashboard-widget-header">
             <h3><TrendingUp size={16} color="var(--primary)" /> Doanh thu theo ngày ({selectedRangeLabel})</h3>
             {overviewStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(overviewState.status)}`}>{overviewStatusLabel}</span>}
           </div>
-          {overviewState.status === 'loading' && !overviewData ? (
+          {isLoading ? (
             <div className="dashboard-widget-placeholder">
               <Skeleton height="230px" />
             </div>
           ) : hasRevenueData ? (
-            <div style={{ padding: '0.5rem 0 0 0' }}>
+            <div className="dashboard-chart-body">
               <SimpleAreaChart
                 data={revenueSeries}
                 xKey="name"
@@ -592,18 +736,17 @@ export function HomeDashboard() {
           )}
         </Link>
 
-        {/* Secondary Info (Pie Chart + Tasks) */}
-        <div style={{ display: 'grid', gap: '0.75rem' }}>
+        {/* Secondary column: Pie + Tasks */}
+        <div className="dashboard-secondary-col">
           <Link
             href={`/modules/sales?range=${selectedRange}`}
-            className="dashboard-chart-card"
-            style={{ paddingBottom: '0.5rem', textDecoration: 'none' }}
+            className="dashboard-chart-card dashboard-secondary-chart-card link-unstyled"
           >
             <h3><ShoppingCart size={16} /> Trạng thái đơn hàng</h3>
-            {overviewState.status === 'loading' && !overviewData ? (
+            {isLoading ? (
               <Skeleton height="150px" />
             ) : hasOrderStatusData ? (
-              <div style={{ padding: '0.5rem 0' }}>
+              <div className="dashboard-pie-body">
                 <SimplePieChart
                   data={orderStatusSeries}
                   height={160}
@@ -623,7 +766,7 @@ export function HomeDashboard() {
                 <h3><ListTodo size={16} /> Việc cần làm nhanh</h3>
                 {tasksStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(tasksState.status)}`}>{tasksStatusLabel}</span>}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.2rem' }}>
+              <div className="quick-tasks-list">
                 {tasksState.status === 'loading' && tasksState.data.length === 0 && (
                   <>
                     <Skeleton height="42px" />
@@ -639,7 +782,7 @@ export function HomeDashboard() {
                 )}
                 {tasksState.data.map((task) => (
                   <div key={task.id} className="quick-task-item">
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <div className="quick-task-info">
                       {task.status === 'completed' ? (
                         <CheckCircle2 size={14} color="var(--success)" />
                       ) : task.status === 'urgent' ? (
@@ -647,7 +790,7 @@ export function HomeDashboard() {
                       ) : (
                         <Clock size={14} color="var(--text-muted)" />
                       )}
-                      <span style={{ fontWeight: 500 }}>{task.title}</span>
+                      <span>{task.title}</span>
                     </div>
                     <Badge variant={task.status === 'urgent' ? 'danger' : task.status === 'completed' ? 'success' : 'neutral'}>
                       {task.module}
@@ -663,37 +806,47 @@ export function HomeDashboard() {
         </div>
       </section>
 
-      <section className="dashboard-charts-row" style={{ marginTop: '0.15rem' }}>
-        {/* Module Navigation */}
-        <div style={{ display: 'grid', gap: '0.65rem' }}>
-          <h3 style={{ fontSize: '1.02rem', display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
-            <LayoutDashboard size={20} /> Phân hệ vận hành
-          </h3>
-          <div className="module-card-grid">
-            {visibleModules.map((module) => (
-              <Link 
-                key={module.key} 
-                href={`/modules/${module.key}`}
-                className="module-card"
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <h3>{module.title}</h3>
-                  <ArrowRight size={14} color="var(--muted)" />
-                </div>
-                <p>{module.description}</p>
-                <span className="module-card-link">Mở phân hệ</span>
-              </Link>
-            ))}
+      {/* ── Cashflow + Activity Row ──────────────── */}
+      <section className="dashboard-charts-row dashboard-bottom-row">
+        {/* Cashflow bar chart */}
+        <div className="dashboard-chart-card">
+          <div className="dashboard-widget-header">
+            <h3><CreditCard size={16} color="var(--primary)" /> Thu / Chi ({selectedRangeLabel})</h3>
+            {overviewStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(overviewState.status)}`}>{overviewStatusLabel}</span>}
           </div>
+          {isLoading ? (
+            <div className="dashboard-widget-placeholder">
+              <Skeleton height="230px" />
+            </div>
+          ) : hasCashflowData ? (
+            <div className="dashboard-chart-body">
+              <DualBarChart
+                data={cashflowSeries}
+                xKey="name"
+                bar1Key="income"
+                bar2Key="expense"
+                bar1Label="Thu"
+                bar2Label="Chi"
+                bar1Color="var(--success)"
+                bar2Color="var(--warning)"
+                height={240}
+                formatY={(val) => formatShortCurrency(val)}
+              />
+            </div>
+          ) : overviewState.status === 'ready' ? (
+            <p className="dashboard-widget-note">Chưa có dữ liệu thu chi trong khoảng thời gian đã chọn.</p>
+          ) : (
+            <p className="dashboard-widget-note is-error">Không thể tải dữ liệu thu chi.</p>
+          )}
         </div>
 
         {/* Activity Feed */}
         <div className="activity-feed">
           <div className="dashboard-widget-header">
-            <h3 style={{ marginBottom: '0.35rem' }}><Activity size={16} color="var(--primary)" /> Hoạt động mới nhất</h3>
+            <h3><Activity size={16} color="var(--primary)" /> Hoạt động mới nhất</h3>
             {activitiesStatusLabel && <span className={`dashboard-widget-status ${getWidgetStatusClass(activitiesState.status)}`}>{activitiesStatusLabel}</span>}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="activity-list">
             {!canViewAudit && (
               <p className="dashboard-widget-note">Feed audit chỉ hiển thị cho USER/ADMIN theo policy bảo mật.</p>
             )}
@@ -721,6 +874,31 @@ export function HomeDashboard() {
           {canViewAudit && activitiesState.status === 'stale' && activitiesState.error && (
             <p className="dashboard-widget-note is-stale">{activitiesState.error}</p>
           )}
+        </div>
+      </section>
+
+      {/* ── Module Navigation ────────────────────── */}
+      <section className="dashboard-bottom-row">
+        <div className="dashboard-module-nav">
+          <h3 className="dashboard-module-heading">
+            <LayoutDashboard size={20} /> Phân hệ vận hành
+          </h3>
+          <div className="module-card-grid">
+            {visibleModules.map((module) => (
+              <Link 
+                key={module.key} 
+                href={`/modules/${module.key}`}
+                className="module-card"
+              >
+                <div className="module-card-header">
+                  <h3>{module.title}</h3>
+                  <ArrowRight size={14} color="var(--muted)" />
+                </div>
+                <p>{module.description}</p>
+                <span className="module-card-link">Mở phân hệ</span>
+              </Link>
+            ))}
+          </div>
         </div>
       </section>
 

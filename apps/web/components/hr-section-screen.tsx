@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { getModuleDefinition } from '../lib/module-definitions';
 import type { ModuleDefinition } from '../lib/module-ui';
 import { HR_SECTION_MAP, type HrSectionKey } from '../lib/hr-sections';
@@ -12,6 +13,33 @@ import { ModuleWorkbench } from './module-workbench';
 
 export function HrSectionScreen({ sectionKey }: { sectionKey: HrSectionKey }) {
   const { canModule } = useAccessPolicy();
+
+  // Memoize sectionModule to prevent creating new object references on every render,
+  // which would cause infinite re-render loops in ModuleWorkbench's FeaturePanel useEffect.
+  const sectionModule = useMemo<ModuleDefinition | null>(() => {
+    const section = HR_SECTION_MAP[sectionKey];
+    if (!section) return null;
+    if (['recruitment', 'goals', 'attendance', 'regulation'].includes(sectionKey)) {
+      return null; // These sections use dedicated boards, not ModuleWorkbench
+    }
+
+    const hrModule = getModuleDefinition('hr');
+    if (!hrModule) return null;
+
+    const sectionFeatures = section.featureKeys
+      .map((featureKey: string) => hrModule.features.find((feature) => feature.key === featureKey))
+      .filter((feature): feature is NonNullable<typeof feature> => Boolean(feature));
+
+    if (!sectionFeatures.length) return null;
+
+    return {
+      key: 'hr',
+      title: section.title,
+      summary: section.description,
+      highlights: section.highlights,
+      features: sectionFeatures
+    };
+  }, [sectionKey]);
 
   if (!canModule('hr')) {
     return null;
@@ -31,12 +59,7 @@ export function HrSectionScreen({ sectionKey }: { sectionKey: HrSectionKey }) {
     return <HrRegulationBoard />;
   }
 
-  const hrModule = getModuleDefinition('hr');
-  const sectionFeatures = section.featureKeys
-    .map((featureKey) => hrModule.features.find((feature) => feature.key === featureKey))
-    .filter((feature): feature is NonNullable<typeof feature> => Boolean(feature));
-
-  if (!sectionFeatures.length) {
+  if (!sectionModule) {
     return (
       <article className="module-workbench">
         <header className="module-header">
@@ -48,14 +71,6 @@ export function HrSectionScreen({ sectionKey }: { sectionKey: HrSectionKey }) {
       </article>
     );
   }
-
-  const sectionModule: ModuleDefinition = {
-    key: 'hr',
-    title: section.title,
-    summary: section.description,
-    highlights: section.highlights,
-    features: sectionFeatures
-  };
 
   return <ModuleWorkbench module={sectionModule} />;
 }

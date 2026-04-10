@@ -17,11 +17,13 @@ function makePrismaMock() {
       },
       invoice: {
         findMany: vi.fn(),
-        count: vi.fn()
+        count: vi.fn(),
+        aggregate: vi.fn()
       },
       purchaseOrder: {
         findMany: vi.fn(),
-        count: vi.fn()
+        count: vi.fn(),
+        aggregate: vi.fn()
       },
       project: {
         findMany: vi.fn(),
@@ -36,7 +38,11 @@ function makePrismaMock() {
         findMany: vi.fn()
       },
       customer: {
-        findMany: vi.fn()
+        findMany: vi.fn(),
+        count: vi.fn()
+      },
+      leaveRequest: {
+        count: vi.fn()
       },
       workflowInstance: {
         findMany: vi.fn()
@@ -178,11 +184,19 @@ describe('ReportsService', () => {
       });
     prisma.client.employee.count.mockResolvedValue(20);
     prisma.client.invoice.count.mockResolvedValue(1);
+    prisma.client.invoice.aggregate.mockResolvedValue({
+      _sum: { totalAmount: 300 }
+    });
     prisma.client.purchaseOrder.count.mockResolvedValue(2);
+    prisma.client.purchaseOrder.aggregate.mockResolvedValue({
+      _sum: { totalAmount: 120 }
+    });
     prisma.client.project.count.mockResolvedValue(4);
     prisma.client.project.aggregate.mockResolvedValue({
       _avg: { forecastPercent: 55.5 }
     });
+    prisma.client.leaveRequest.count.mockResolvedValue(3);
+    prisma.client.customer.count.mockResolvedValue(7);
     prisma.client.asset.count
       .mockResolvedValueOnce(5)
       .mockResolvedValueOnce(2);
@@ -190,13 +204,26 @@ describe('ReportsService', () => {
       { status: GenericStatus.APPROVED, _count: { _all: 2 } },
       { status: GenericStatus.PENDING, _count: { _all: 1 } }
     ]);
-    prisma.client.$queryRaw.mockResolvedValue([
-      {
-        bucket: new Date('2026-04-01T00:00:00.000Z'),
-        revenue: 200,
-        orders: 1
-      }
-    ]);
+    prisma.client.$queryRaw
+      .mockResolvedValueOnce([
+        {
+          bucket: new Date('2026-04-01T00:00:00.000Z'),
+          revenue: 200,
+          orders: 1
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          month: '2026-04',
+          total: 300
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          month: '2026-04',
+          total: 120
+        }
+      ]);
 
     const service = new ReportsService(prisma as any, reportExport as any);
     const overview = await service.overview({ range: 'THIS_WEEK' } as any);

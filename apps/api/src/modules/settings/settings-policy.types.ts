@@ -106,6 +106,14 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     documentLayout: {
       invoiceTemplate: 'standard',
       showCompanySeal: false
+    },
+    dashboardWidgets: {
+      sales: ['line', 'bar'],
+      finance: ['line', 'area'],
+      crm: ['line', 'funnel'],
+      hr: ['radar', 'scatter'],
+      scm: ['pie', 'composed'],
+      reports: ['line', 'bar', 'pie', 'area']
     }
   },
   locale_calendar: {
@@ -245,23 +253,51 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     checkoutTemplates: {
       INSURANCE: [
         {
-          code: 'INSURANCE_STD',
-          label: 'Mẫu bảo hiểm tiêu chuẩn',
-          requiredFields: ['insuranceType', 'termDays', 'requestedEffectiveDate']
+          code: 'AUTO_INSURANCE_STD',
+          label: 'Bảo hiểm ô tô',
+          requiredFields: ['termDays', 'requestedEffectiveDate'],
+          fieldConfig: {
+            termDays: { type: 'select', options: ['180', '360'], label: 'Chu kỳ (ngày)' },
+            requestedEffectiveDate: { type: 'date', label: 'Ngày hiệu lực yêu cầu' },
+            certificateLink: { type: 'text', label: 'Link giấy chứng nhận' },
+            certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận (PDF/ảnh)' }
+          }
+        },
+        {
+          code: 'MOTO_INSURANCE_STD',
+          label: 'Bảo hiểm xe máy',
+          requiredFields: ['termDays', 'requestedEffectiveDate'],
+          fieldConfig: {
+            termDays: { type: 'select', options: ['180', '360'], label: 'Chu kỳ (ngày)' },
+            requestedEffectiveDate: { type: 'date', label: 'Ngày hiệu lực yêu cầu' },
+            certificateLink: { type: 'text', label: 'Link giấy chứng nhận' },
+            certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận (PDF/ảnh)' }
+          }
         }
       ],
       TELECOM: [
         {
           code: 'TELECOM_STD',
           label: 'Mẫu viễn thông tiêu chuẩn',
-          requiredFields: ['packageCode', 'billingCycle', 'servicePhone']
+          requiredFields: ['packageCode', 'billingCycle', 'servicePhone'],
+          fieldConfig: {
+            packageCode: { type: 'text', label: 'Mã gói cước / SIM' },
+            billingCycle: { type: 'select', options: ['30', '60', '90', '120', '360'], label: 'Chu kỳ (ngày)' },
+            servicePhone: { type: 'tel', label: 'SĐT dùng dịch vụ' },
+            differentServicePhone: { type: 'checkbox', label: 'SĐT dịch vụ khác SĐT liên lạc' }
+          }
         }
       ],
       DIGITAL: [
         {
           code: 'DIGITAL_STD',
           label: 'Mẫu dịch vụ số tiêu chuẩn',
-          requiredFields: ['planCode', 'termDays', 'startDate']
+          requiredFields: ['planCode', 'termDays', 'startDate'],
+          fieldConfig: {
+            planCode: { type: 'text', label: 'Mã gói dịch vụ' },
+            termDays: { type: 'select', options: ['30', '90', '180', '360'], label: 'Thời hạn (ngày)' },
+            startDate: { type: 'date', label: 'Ngày bắt đầu' }
+          }
         }
       ]
     },

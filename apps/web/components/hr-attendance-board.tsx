@@ -235,6 +235,8 @@ export function HrAttendanceBoard() {
   const [selectedMonth, setSelectedMonth] = useState<number>(() => new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [monthlyData, setMonthlyData] = useState<AttendanceMonthlyPayload | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const recordsPerPage = 50;
   const [isLoadingMonthly, setIsLoadingMonthly] = useState(false);
   const [todayState, setTodayState] = useState<TodayAttendanceState>({
     isLoading: false,
@@ -363,6 +365,7 @@ export function HrAttendanceBoard() {
 
   useEffect(() => {
     void loadMonthlyAttendance();
+    setCurrentPage(1);
   }, [loadMonthlyAttendance]);
 
   useEffect(() => {
@@ -558,15 +561,22 @@ export function HrAttendanceBoard() {
       return;
     }
 
+    let throttleTimeout: number | null = null;
     const onClick = () => {
+      if (throttleTimeout !== null) return;
+      throttleTimeout = window.setTimeout(() => {
+        throttleTimeout = null;
+      }, 1000);
       resetInactivityTimer();
     };
+    
     window.addEventListener('click', onClick, true);
     resetInactivityTimer();
 
     return () => {
       window.removeEventListener('click', onClick, true);
       clearInactivityTimer();
+      if (throttleTimeout !== null) window.clearTimeout(throttleTimeout);
     };
   }, [canUseRemoteCheckIn, clearInactivityTimer, resetInactivityTimer, todayState.isCheckedIn]);
 
@@ -575,6 +585,11 @@ export function HrAttendanceBoard() {
   const dayColumnWidth = 56;
   const totalColumnWidth = 130;
   const tableMinWidth = employeeColumnWidth + totalColumnWidth + daysInMonth * dayColumnWidth;
+  
+  const totalRecords = monthlyData?.rows.length ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRecords / recordsPerPage));
+  const startIndex = (currentPage - 1) * recordsPerPage;
+  const currentRows = monthlyData?.rows.slice(startIndex, startIndex + recordsPerPage) ?? [];
 
   return (
     <article className="module-workbench">
@@ -679,8 +694,14 @@ export function HrAttendanceBoard() {
                     Đang tải dữ liệu chấm công...
                   </td>
                 </tr>
-              ) : monthlyData && monthlyData.rows.length > 0 ? (
-                monthlyData.rows.map((row) => {
+              ) : currentRows.length === 0 ? (
+                <tr>
+                  <td className="standard-table-empty-row" colSpan={daysInMonth + 2}>
+                    Không có dữ liệu chấm công.
+                  </td>
+                </tr>
+              ) : (
+                currentRows.map((row) => {
                   const workedDaysCount = row.daily.filter((cell) => cell.status === 'WORKED' && cell.workedMinutes > 0).length;
                   const exemptDaysCount = row.daily.filter((cell) => cell.status === 'EXEMPT').length;
                   const totalLabel =
@@ -802,16 +823,35 @@ export function HrAttendanceBoard() {
                     </tr>
                   );
                 })
-              ) : (
-                <tr>
-                  <td className="standard-table-empty-row" colSpan={daysInMonth + 2}>
-                    Không có dữ liệu chấm công trong tháng đã chọn.
-                  </td>
-                </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {totalRecords > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 0' }}>
+            <span style={{ fontSize: '0.875rem', color: 'var(--muted)' }}>
+              Hiển thị {startIndex + 1} - {Math.min(startIndex + recordsPerPage, totalRecords)} / {totalRecords} nhân sự
+            </span>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button 
+                className="btn btn-ghost" 
+                disabled={currentPage === 1} 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              >
+                Trước
+              </button>
+              <span style={{ fontSize: '0.875rem' }}>{currentPage} / {totalPages}</span>
+              <button 
+                className="btn btn-ghost" 
+                disabled={currentPage >= totalPages} 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              >
+                Tiếp
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="module-card">

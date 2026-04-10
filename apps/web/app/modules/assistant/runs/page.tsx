@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { AssistantRunsBoard } from '../../../../components/assistant/assistant-runs-board';
 import { AssistantShell } from '../../../../components/assistant/assistant-shell';
 

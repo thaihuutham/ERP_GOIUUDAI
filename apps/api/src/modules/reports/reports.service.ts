@@ -63,6 +63,10 @@ export class ReportsService {
       lt: resolvedRange.previousTo
     } as const;
 
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
     const [
       ordersAgg,
       previousOrdersAgg,
@@ -74,7 +78,15 @@ export class ReportsService {
       activeAssets,
       maintenanceAssets,
       orderStatusGroups,
-      revenueSeries
+      revenueSeries,
+      // New dashboard KPI queries
+      approvedInvoicesAgg,
+      approvedPOsAgg,
+      activeEmployeeCount,
+      onLeaveTodayCount,
+      pendingEmployeeCount,
+      newCustomersCount,
+      cashflowSeries
     ] = await Promise.all([
       this.prisma.client.order.aggregate({
         where: { createdAt: whereCreatedAt },
@@ -128,12 +140,55 @@ export class ReportsService {
         where: { createdAt: whereCreatedAt },
         _count: { _all: true }
       }),
-      this.buildRevenueSeries(resolvedRange.from, resolvedRange.to)
+      this.buildRevenueSeries(resolvedRange.from, resolvedRange.to),
+      // Total collections: approved invoices sum
+      this.prisma.client.invoice.aggregate({
+        where: {
+          status: GenericStatus.APPROVED,
+          createdAt: whereCreatedAt
+        },
+        _sum: { totalAmount: true }
+      }),
+      // Total expenses: approved PO sum
+      this.prisma.client.purchaseOrder.aggregate({
+        where: {
+          status: GenericStatus.APPROVED,
+          createdAt: whereCreatedAt
+        },
+        _sum: { totalAmount: true }
+      }),
+      // Active employees
+      this.prisma.client.employee.count({
+        where: { status: GenericStatus.ACTIVE }
+      }),
+      // On leave today
+      this.prisma.client.leaveRequest.count({
+        where: {
+          startDate: { lte: todayEnd },
+          endDate: { gte: todayStart },
+          status: { in: [GenericStatus.PENDING, GenericStatus.APPROVED] }
+        }
+      }),
+      // Active recruitment (proxy: pending employees)
+      this.prisma.client.employee.count({
+        where: { status: GenericStatus.PENDING }
+      }),
+      // New customers in range
+      this.prisma.client.customer.count({
+        where: { createdAt: whereCreatedAt }
+      }),
+      // Cashflow series (monthly income vs expense)
+      this.buildCashflowSeries(resolvedRange.from, resolvedRange.to)
     ]);
 
     const totalRevenue = this.toFiniteNumber(ordersAgg._sum.totalAmount);
     const previousRevenue = this.toFiniteNumber(previousOrdersAgg._sum.totalAmount);
     const totalOrders = Number(ordersAgg._count?._all ?? 0);
+    const totalCollections = this.toFiniteNumber(approvedInvoicesAgg._sum.totalAmount);
+    const totalExpenses = this.toFiniteNumber(approvedPOsAgg._sum.totalAmount);
+    const budgetUsedPercent = totalRevenue > 0
+      ? Number(((totalExpenses / totalRevenue) * 100).toFixed(1))
+      : 0;
 
     return {
       range: {
@@ -152,9 +207,18 @@ export class ReportsService {
       maintenanceAssets,
       totalOrders,
       revenueDeltaPercent: this.computeDeltaPercent(totalRevenue, previousRevenue),
+      // New KPI fields
+      totalCollections,
+      totalExpenses,
+      budgetUsedPercent,
+      activeEmployees: activeEmployeeCount,
+      onLeaveToday: onLeaveTodayCount,
+      activeRecruitment: pendingEmployeeCount,
+      newCustomersInRange: newCustomersCount,
       charts: {
         revenueSeries,
-        orderStatusSeries: this.toOrderStatusSeries(orderStatusGroups)
+        orderStatusSeries: this.toOrderStatusSeries(orderStatusGroups),
+        cashflowSeries
       }
     };
   }
@@ -220,6 +284,101 @@ export class ReportsService {
       sortableFields,
       consistency: 'snapshot'
     });
+  }
+
+  async getMetricsByModule(query: ModuleDataQueryDto) {
+    const normalized = query.name.trim().toLowerCase();
+    const resolvedRange = this.resolveRange(query);
+    const whereCreatedAt = {
+      gte: resolvedRange.from,
+      lt: resolvedRange.to
+    } as const;
+
+    let metrics: any = {};
+
+    switch (normalized) {
+      case 'sales':
+      case 'crm': {
+        const orderStatusGroups = await this.prisma.client.order.groupBy({
+          by: ['status'],
+          where: { createdAt: whereCreatedAt },
+          _count: { _all: true }
+        });
+        const revenueSeries = await this.buildRevenueSeries(resolvedRange.from, resolvedRange.to);
+        metrics = {
+          orderStatusSeries: this.toOrderStatusSeries ? this.toOrderStatusSeries(orderStatusGroups) : orderStatusGroups,
+          revenueSeries,
+        };
+        break;
+      }
+      case 'finance': {
+        const cashflowSeries = await this.buildCashflowSeries(resolvedRange.from, resolvedRange.to);
+        metrics = { cashflowSeries };
+        break;
+      }
+      case 'hr': {
+        const activeCount = await this.prisma.client.employee.count({
+          where: { status: GenericStatus.ACTIVE }
+        });
+        const pendingCount = await this.prisma.client.employee.count({
+          where: { status: GenericStatus.PENDING }
+        });
+        const onLeaveCount = await this.prisma.client.leaveRequest.count({
+           where: { 
+             status: GenericStatus.APPROVED, 
+             startDate: { lte: resolvedRange.to }, 
+             endDate: { gte: resolvedRange.from } 
+           }
+        });
+        metrics = { activeCount, pendingCount, onLeaveCount };
+        break;
+      }
+      case 'scm':
+      case 'inventory':
+      case 'catalog':
+      case 'assets': {
+        const activeAssets = await this.prisma.client.asset.count({
+          where: { status: GenericStatus.ACTIVE }
+        });
+        const pendingPOs = await this.prisma.client.purchaseOrder.count({
+          where: { status: GenericStatus.PENDING, createdAt: whereCreatedAt }
+        });
+        metrics = { activeAssets, pendingPOs };
+        break;
+      }
+      case 'projects': {
+        const avgForecast = await this.prisma.client.project.aggregate({
+          where: { status: GenericStatus.ACTIVE, createdAt: whereCreatedAt },
+          _avg: { forecastPercent: true }
+        });
+        const activeCount = await this.prisma.client.project.count({
+          where: { status: GenericStatus.ACTIVE, createdAt: whereCreatedAt }
+        });
+        metrics = { activeProjects: activeCount, avgForecastPercent: Number((avgForecast._avg.forecastPercent ?? 0).toFixed(2)) };
+        break;
+      }
+      case 'workflows':
+      case 'audit': {
+        const instances = await this.prisma.client.workflowInstance.count({
+          where: { createdAt: whereCreatedAt }
+        });
+        metrics = { instances };
+        break;
+      }
+      default:
+        metrics = { message: 'No specific metrics for this module.' };
+    }
+
+    return {
+      moduleName: normalized,
+      range: {
+        key: resolvedRange.key,
+        label: resolvedRange.label,
+        from: resolvedRange.from.toISOString(),
+        to: resolvedRange.to.toISOString()
+      },
+      metrics
+    };
   }
 
   async listDefinitions(query: ReportsListQueryDto) {
@@ -709,6 +868,75 @@ export class ReportsService {
         label: formatBucketLabel(bucket),
         value: entry.value,
         orders: entry.orders
+      };
+    });
+  }
+
+  private async buildCashflowSeries(from: Date, to: Date) {
+    const tenantId = this.prisma.getTenantId();
+
+    type MonthlyRow = { month: string; total: Prisma.Decimal | number | null };
+
+    let incomeRows: MonthlyRow[] = [];
+    let expenseRows: MonthlyRow[] = [];
+
+    try {
+      incomeRows = await this.prisma.client.$queryRaw<MonthlyRow[]>(Prisma.sql`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') AS "month",
+          COALESCE(SUM("totalAmount"), 0) AS "total"
+        FROM "Invoice"
+        WHERE "tenant_Id" = ${tenantId}
+          AND "status" = 'APPROVED'
+          AND "createdAt" >= ${from}
+          AND "createdAt" < ${to}
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `);
+    } catch {
+      incomeRows = [];
+    }
+
+    try {
+      expenseRows = await this.prisma.client.$queryRaw<MonthlyRow[]>(Prisma.sql`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') AS "month",
+          COALESCE(SUM("totalAmount"), 0) AS "total"
+        FROM "PurchaseOrder"
+        WHERE "tenant_Id" = ${tenantId}
+          AND "status" = 'APPROVED'
+          AND "createdAt" >= ${from}
+          AND "createdAt" < ${to}
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `);
+    } catch {
+      expenseRows = [];
+    }
+
+    const incomeMap = new Map(incomeRows.map((r) => [r.month, this.toFiniteNumber(r.total)]));
+    const expenseMap = new Map(expenseRows.map((r) => [r.month, this.toFiniteNumber(r.total)]));
+    const allMonths = new Set([...incomeMap.keys(), ...expenseMap.keys()]);
+    const sortedMonths = [...allMonths].sort();
+
+    // If no data, generate months from range
+    if (sortedMonths.length === 0) {
+      const cursor = new Date(from.getFullYear(), from.getMonth(), 1);
+      while (cursor < to) {
+        const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+        sortedMonths.push(key);
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+    }
+
+    return sortedMonths.map((month) => {
+      const [year, m] = month.split('-');
+      const label = `T${Number(m)}/${year}`;
+      return {
+        month,
+        label,
+        income: incomeMap.get(month) ?? 0,
+        expense: expenseMap.get(month) ?? 0
       };
     });
   }

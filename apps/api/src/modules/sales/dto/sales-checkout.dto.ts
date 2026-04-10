@@ -210,3 +210,48 @@ export class ReEvaluateInvoiceActionDto {
   @MaxLength(300)
   reason?: string;
 }
+
+export class UpdateDraftCheckoutOrderDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  templateCode?: string;
+
+  @IsOptional()
+  @IsObject()
+  templateFields?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  customerId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  customerName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => SalesCheckoutOrderItemDto)
+  items?: SalesCheckoutOrderItemDto[];
+}
+
+export class SubmitCheckoutOrderDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}

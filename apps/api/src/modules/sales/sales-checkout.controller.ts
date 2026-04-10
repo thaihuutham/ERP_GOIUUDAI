@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { AuditAction } from '../../common/audit/audit.decorators';
 import { Public } from '../../common/auth/auth.decorators';
 import {
@@ -6,7 +6,9 @@ import {
   CreateSalesCheckoutOrderDto,
   PaymentBankEventDto,
   PaymentOverrideDto,
-  ReEvaluateInvoiceActionDto
+  ReEvaluateInvoiceActionDto,
+  SubmitCheckoutOrderDto,
+  UpdateDraftCheckoutOrderDto
 } from './dto/sales-checkout.dto';
 import { PaymentCallbackRateLimitGuard } from './guards/payment-callback-rate-limit.guard';
 import { SalesCheckoutService } from './sales-checkout.service';
@@ -24,6 +26,18 @@ export class SalesCheckoutController {
   @AuditAction({ action: 'CREATE_CHECKOUT_ORDER', entityType: 'Order' })
   createCheckoutOrder(@Body() body: CreateSalesCheckoutOrderDto) {
     return this.checkoutService.createCheckoutOrder(body);
+  }
+
+  @Patch('orders/:id')
+  @AuditAction({ action: 'UPDATE_DRAFT_CHECKOUT_ORDER', entityType: 'Order', entityIdParam: 'id' })
+  updateDraftOrder(@Param('id') orderId: string, @Body() body: UpdateDraftCheckoutOrderDto) {
+    return this.checkoutService.updateDraftOrder(orderId, body);
+  }
+
+  @Post('orders/:id/submit')
+  @AuditAction({ action: 'SUBMIT_CHECKOUT_ORDER', entityType: 'Order', entityIdParam: 'id' })
+  submitCheckoutOrder(@Param('id') orderId: string, @Body() body: SubmitCheckoutOrderDto) {
+    return this.checkoutService.submitCheckoutOrder(orderId, body);
   }
 
   @Get('orders/:id')

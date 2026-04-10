@@ -1,0 +1,188 @@
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.20kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.47kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:22-alpine
+#3 DONE 1.3s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 290B done
+#4 DONE 0.0s
+
+#5 [deps 1/7] FROM docker.io/library/node:22-alpine@sha256:4d64b49e6c891c8fc821007cb1cdc6c0db7773110ac2c34bf2e6960adef62ed3
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 147.34kB 0.1s done
+#6 DONE 0.1s
+
+#7 [deps 6/7] COPY packages/ui/package.json ./packages/ui/package.json
+#7 CACHED
+
+#8 [deps 7/7] RUN npm install
+#8 CACHED
+
+#9 [deps 2/7] WORKDIR /workspace
+#9 CACHED
+
+#10 [deps 3/7] COPY package.json tsconfig.base.json ./
+#10 CACHED
+
+#11 [deps 4/7] COPY apps/web/package.json ./apps/web/package.json
+#11 CACHED
+
+#12 [deps 5/7] COPY packages/shared/package.json ./packages/shared/package.json
+#12 CACHED
+
+#13 [build 3/8] COPY --from=deps /workspace/node_modules ./node_modules
+#13 CACHED
+
+#14 [build 4/8] COPY . .
+#14 DONE 1.1s
+
+#15 [build 5/8] RUN npm run build --workspace @erp/shared
+#15 0.489 
+#15 0.489 > @erp/shared@1.0.0 build
+#15 0.489 > tsc -p tsconfig.json
+#15 0.489 
+#15 1.600 npm notice
+#15 1.600 npm notice New major version of npm available! 10.9.7 -> 11.12.1
+#15 1.600 npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+#15 1.600 npm notice To update run: npm install -g npm@11.12.1
+#15 1.600 npm notice
+#15 DONE 1.7s
+
+#16 [build 6/8] RUN npm run build --workspace @erp/ui
+#16 0.250 
+#16 0.250 > @erp/ui@1.0.0 build
+#16 0.250 > tsc -p tsconfig.json
+#16 0.250 
+#16 DONE 1.3s
+
+#17 [build 7/8] RUN npm run build --workspace @erp/web
+#17 0.268 
+#17 0.268 > @erp/web@1.0.0 build
+#17 0.268 > next build
+#17 0.268 
+#17 0.692 Attention: Next.js now collects completely anonymous telemetry regarding usage.
+#17 0.692 This information is used to shape Next.js' roadmap and prioritize features.
+#17 0.692 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#17 0.692 https://nextjs.org/telemetry
+#17 0.692 
+#17 0.756    ▲ Next.js 15.5.15
+#17 0.756 
+#17 0.813    Creating an optimized production build ...
+#17 22.60  ✓ Compiled successfully in 19.5s
+#17 22.64    Linting and checking validity of types ...
+#17 40.75    Collecting page data ...
+#17 43.27    Generating static pages (0/3) ...
+#17 43.64  ✓ Generating static pages (3/3)
+#17 44.15    Finalizing page optimization ...
+#17 44.15    Collecting build traces ...
+#17 58.16 
+#17 58.17 Route (app)                                             Size  First Load JS
+#17 58.17 ┌ ƒ /                                                9.87 kB         254 kB
+#17 58.17 ├ ○ /_not-found                                        994 B         104 kB
+#17 58.17 ├ ƒ /modules/assets                                    291 B         318 kB
+#17 58.17 ├ ƒ /modules/assistant                                 134 B         103 kB
+#17 58.17 ├ ƒ /modules/assistant/access                        2.06 kB         123 kB
+#17 58.17 ├ ƒ /modules/assistant/channels                      5.99 kB         169 kB
+#17 58.17 ├ ƒ /modules/assistant/knowledge                     6.52 kB         128 kB
+#17 58.17 ├ ƒ /modules/assistant/proxy                         2.98 kB         124 kB
+#17 58.17 ├ ƒ /modules/assistant/runs                          6.15 kB         169 kB
+#17 58.17 ├ ƒ /modules/audit                                   6.54 kB         163 kB
+#17 58.17 ├ ƒ /modules/catalog                                   291 B         318 kB
+#17 58.17 ├ ƒ /modules/crm                                     17.3 kB         177 kB
+#17 58.17 ├ ƒ /modules/crm/conversations                         134 B         103 kB
+#17 58.17 ├ ƒ /modules/crm/customers/import                    5.69 kB         253 kB
+#17 58.17 ├ ƒ /modules/crm/vehicles                            7.49 kB         306 kB
+#17 58.17 ├ ƒ /modules/crm/zalo-accounts                         141 B         265 kB
+#17 58.17 ├ ƒ /modules/finance                                 7.99 kB         165 kB
+#17 58.17 ├ ƒ /modules/hr                                         7 kB         164 kB
+#17 58.17 ├ ƒ /modules/hr/[section]                            27.4 kB         482 kB
+#17 58.17 ├ ƒ /modules/notifications                             294 B         318 kB
+#17 58.17 ├ ƒ /modules/projects                                  291 B         318 kB
+#17 58.17 ├ ƒ /modules/reports                                 10.4 kB         249 kB
+#17 58.17 ├ ƒ /modules/sales                                     14 kB         306 kB
+#17 58.17 ├ ƒ /modules/scm                                     7.05 kB         164 kB
+#17 58.17 ├ ƒ /modules/settings                                42.5 kB         293 kB
+#17 58.17 ├ ƒ /modules/settings/appearance                     4.39 kB         110 kB
+#17 58.17 ├ ƒ /modules/settings/custom-fields                  5.76 kB         118 kB
+#17 58.17 ├ ƒ /modules/settings/positions/[positionId]         3.27 kB         115 kB
+#17 58.17 ├ ƒ /modules/workflows                               11.7 kB         168 kB
+#17 58.17 ├ ƒ /modules/zalo-automation/accounts                  141 B         265 kB
+#17 58.17 ├ ƒ /modules/zalo-automation/ai-routing                134 B         103 kB
+#17 58.17 ├ ƒ /modules/zalo-automation/ai-runs                 6.68 kB         251 kB
+#17 58.17 ├ ƒ /modules/zalo-automation/campaigns                 138 B         255 kB
+#17 58.17 ├ ƒ /modules/zalo-automation/campaigns/[campaignId]    137 B         255 kB
+#17 58.17 └ ƒ /modules/zalo-automation/messages                12.5 kB         311 kB
+#17 58.17 + First Load JS shared by all                         103 kB
+#17 58.17   ├ chunks/18-bc479a03bdeb5748.js                    46.4 kB
+#17 58.17   ├ chunks/87c73c54-09e1ba5c70e60a51.js              54.2 kB
+#17 58.17   └ other shared chunks (total)                      1.95 kB
+#17 58.17 
+#17 58.17 
+#17 58.17 ○  (Static)   prerendered as static content
+#17 58.17 ƒ  (Dynamic)  server-rendered on demand
+#17 58.17 
+#17 DONE 58.5s
+
+#18 [build 8/8] RUN npm prune --omit=dev --workspaces --include-workspace-root
+#18 16.71 npm warn deprecated rimraf@2.7.1: Rimraf versions prior to v4 are no longer supported
+#18 17.03 npm warn deprecated lodash.isequal@4.5.0: This package is deprecated. Use require('node:util').isDeepStrictEqual instead.
+#18 17.35 npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+#18 17.38 npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+#18 17.52 npm warn deprecated fstream@1.0.12: This package is no longer supported.
+#18 49.95 
+#18 49.95 added 385 packages, removed 1 package, changed 22 packages, and audited 486 packages in 50s
+#18 49.95 
+#18 49.95 61 packages are looking for funding
+#18 49.95   run `npm fund` for details
+#18 49.97 
+#18 49.97 5 vulnerabilities (1 moderate, 4 high)
+#18 49.97 
+#18 49.97 To address issues that do not require attention, run:
+#18 49.97   npm audit fix
+#18 49.97 
+#18 49.97 Some issues need review, and may require choosing
+#18 49.97 a different dependency.
+#18 49.97 
+#18 49.97 Run `npm audit` for details.
+#18 DONE 51.4s
+
+#19 [runtime 3/8] COPY --from=build /workspace/package.json ./package.json
+#19 CACHED
+
+#20 [runtime 2/8] WORKDIR /app
+#20 CACHED
+
+#21 [runtime 4/8] COPY --from=build /workspace/node_modules ./node_modules
+#21 CACHED
+
+#22 [runtime 5/8] COPY --from=build /workspace/apps/web/.next ./apps/web/.next
+#22 DONE 6.2s
+
+#23 [runtime 6/8] COPY --from=build /workspace/apps/web/public ./apps/web/public
+#23 DONE 0.0s
+
+#24 [runtime 7/8] COPY --from=build /workspace/apps/web/package.json ./apps/web/package.json
+#24 DONE 0.0s
+
+#25 [runtime 8/8] COPY --from=build /workspace/apps/web/next.config.mjs ./apps/web/next.config.mjs
+#25 DONE 0.0s
+
+#26 exporting to image
+#26 exporting layers
+#26 exporting layers 1.1s done
+#26 writing image sha256:cd8c4e28338df364c2f90585b30452fe34b7ca3102b555ff8c2e6b21961c8887
+#26 writing image sha256:cd8c4e28338df364c2f90585b30452fe34b7ca3102b555ff8c2e6b21961c8887 done
+#26 naming to docker.io/library/erp-retail-web done
+#26 DONE 1.1s
+
+#27 resolving provenance for metadata file
+#27 DONE 0.1s
+ erp-retail-web  Built

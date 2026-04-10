@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { ZaloAutomationCampaignsWorkbench } from '../../../../components/zalo-automation-campaigns-workbench';
 
 export default function ZaloAutomationCampaignsPage() {

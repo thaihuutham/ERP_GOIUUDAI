@@ -28,6 +28,7 @@
 @import './styles/modules/hr.css';
 @import './styles/modules/scm.css';
 @import './styles/modules/side-panel.css';
+@import './styles/modules/settings.css';
 
 /* Responsive (must be last) */
 @import './styles/responsive.css';
@@ -90,4 +91,17 @@ img {
 :focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+/* ── Toast Animations ─────────────────────────────── */
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }

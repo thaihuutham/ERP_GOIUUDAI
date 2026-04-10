@@ -14,6 +14,7 @@ import {
   SearchEntity,
   SearchOrdersFilters,
   SearchProductsFilters,
+  SearchInvoicesFilters,
   SearchReindexEntity,
   SearchReindexItemResult,
   SearchReindexResult,
@@ -90,6 +91,28 @@ type ProductSearchDocument = {
   createdAt: string;
 };
 
+export type InvoiceSearchSource = {
+  id: string;
+  tenant_Id: string;
+  invoiceNo: string | null;
+  partnerName: string | null;
+  status: GenericStatus;
+  totalAmount: Prisma.Decimal | number | string | null;
+  dueAt: Date | null;
+  updatedAt: Date;
+};
+
+export type InvoiceSearchDocument = {
+  id: string;
+  tenant_Id: string;
+  invoiceNo: string | null;
+  partnerName: string | null;
+  status: string;
+  totalAmount: number | null;
+  dueAt: string | null;
+  updatedAt: string;
+};
+
 const INDEX_SETTINGS: Record<SearchEntity, { searchable: string[]; filterable: string[]; sortable: string[] }> = {
   customers: {
     searchable: ['fullName', 'email', 'phone', 'tags'],
@@ -105,6 +128,11 @@ const INDEX_SETTINGS: Record<SearchEntity, { searchable: string[]; filterable: s
     searchable: ['name', 'sku', 'categoryPath'],
     filterable: ['tenant_Id', 'status', 'archivedAt'],
     sortable: ['createdAt', 'unitPrice']
+  },
+  invoices: {
+    searchable: ['invoiceNo', 'partnerName'],
+    filterable: ['tenant_Id', 'status', 'dueAt'],
+    sortable: ['updatedAt', 'totalAmount']
   }
 };
 
@@ -163,6 +191,62 @@ export class SearchService {
     const tenantId = this.prisma.getTenantId();
     const contains = { contains: keyword, mode: 'insensitive' as const };
 
+    const useHybrid = await this.shouldUseHybridSearch(keyword);
+
+    const getCustomers = async () => {
+      const sqlSearch = () => this.prisma.client.customer.findMany({
+        where: { tenant_Id: tenantId, OR: [{ fullName: contains }, { email: contains }, { phone: contains }, { code: contains }] },
+        select: { id: true, code: true, fullName: true, email: true, phone: true, status: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      });
+      if (!useHybrid) return sqlSearch();
+      const ids = await this.searchCustomerIds(keyword, tenantId, limitPerGroup);
+      if (ids === null) return sqlSearch();
+      if (ids.length === 0) return [];
+      const rows = await this.prisma.client.customer.findMany({
+        where: { tenant_Id: tenantId, id: { in: ids } },
+        select: { id: true, code: true, fullName: true, email: true, phone: true, status: true, updatedAt: true }
+      });
+      return this.rankByIds(rows, ids);
+    };
+
+    const getOrders = async () => {
+      const sqlSearch = () => this.prisma.client.order.findMany({
+        where: { tenant_Id: tenantId, OR: [{ orderNo: contains }, { customerName: contains }, { id: contains }] },
+        select: { id: true, orderNo: true, customerName: true, status: true, totalAmount: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      });
+      if (!useHybrid) return sqlSearch();
+      const ids = await this.searchOrderIds(keyword, tenantId, limitPerGroup);
+      if (ids === null) return sqlSearch();
+      if (ids.length === 0) return [];
+      const rows = await this.prisma.client.order.findMany({
+        where: { tenant_Id: tenantId, id: { in: ids } },
+        select: { id: true, orderNo: true, customerName: true, status: true, totalAmount: true, updatedAt: true }
+      });
+      return this.rankByIds(rows, ids);
+    };
+
+    const getInvoices = async () => {
+      const sqlSearch = () => this.prisma.client.invoice.findMany({
+        where: { tenant_Id: tenantId, OR: [{ invoiceNo: contains }, { partnerName: contains }, { id: contains }] },
+        select: { id: true, invoiceNo: true, partnerName: true, status: true, totalAmount: true, dueAt: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: limitPerGroup
+      });
+      if (!useHybrid) return sqlSearch();
+      const ids = await this.searchInvoiceIds(keyword, tenantId, limitPerGroup);
+      if (ids === null) return sqlSearch();
+      if (ids.length === 0) return [];
+      const rows = await this.prisma.client.invoice.findMany({
+        where: { tenant_Id: tenantId, id: { in: ids } },
+        select: { id: true, invoiceNo: true, partnerName: true, status: true, totalAmount: true, dueAt: true, updatedAt: true }
+      });
+      return this.rankByIds(rows, ids);
+    };
+
     const [
       customers,
       orders,
@@ -175,61 +259,9 @@ export class SearchService {
       projectTasks,
       reports
     ] = await Promise.all([
-      this.prisma.client.customer.findMany({
-        where: {
-          tenant_Id: tenantId,
-          OR: [
-            { fullName: contains },
-            { email: contains },
-            { phone: contains },
-            { code: contains }
-          ]
-        },
-        select: {
-          id: true,
-          code: true,
-          fullName: true,
-          email: true,
-          phone: true,
-          status: true,
-          updatedAt: true
-        },
-        orderBy: { updatedAt: 'desc' },
-        take: limitPerGroup
-      }),
-      this.prisma.client.order.findMany({
-        where: {
-          tenant_Id: tenantId,
-          OR: [{ orderNo: contains }, { customerName: contains }, { id: contains }]
-        },
-        select: {
-          id: true,
-          orderNo: true,
-          customerName: true,
-          status: true,
-          totalAmount: true,
-          updatedAt: true
-        },
-        orderBy: { updatedAt: 'desc' },
-        take: limitPerGroup
-      }),
-      this.prisma.client.invoice.findMany({
-        where: {
-          tenant_Id: tenantId,
-          OR: [{ invoiceNo: contains }, { partnerName: contains }, { id: contains }]
-        },
-        select: {
-          id: true,
-          invoiceNo: true,
-          partnerName: true,
-          status: true,
-          totalAmount: true,
-          dueAt: true,
-          updatedAt: true
-        },
-        orderBy: { updatedAt: 'desc' },
-        take: limitPerGroup
-      }),
+      getCustomers(),
+      getOrders(),
+      getInvoices(),
       this.prisma.client.product.findMany({
         where: {
           tenant_Id: tenantId,
@@ -600,6 +632,21 @@ export class SearchService {
     return this.searchIds('products', keyword, tenantId, limit, clauses);
   }
 
+  async searchInvoiceIds(
+    keyword: string,
+    tenantId: string,
+    limit: number,
+    filters: SearchInvoicesFilters = {}
+  ): Promise<string[] | null> {
+    const clauses: string[] = [];
+
+    if (filters.status) {
+      clauses.push(`status = ${this.toFilterValue(filters.status)}`);
+    }
+
+    return this.searchIds('invoices', keyword, tenantId, limit, clauses);
+  }
+
   async syncCustomerUpsert(customer: CustomerSearchSource): Promise<void> {
     await this.runWriteSync('customers', customer.id, customer.tenant_Id, async () => {
       const index = this.getIndex('customers');
@@ -638,6 +685,20 @@ export class SearchService {
   async syncProductDelete(id: string, tenantId: string): Promise<void> {
     await this.runWriteSync('products', id, tenantId, async () => {
       const index = this.getIndex('products');
+      await index.deleteDocument(id);
+    });
+  }
+
+  async syncInvoiceUpsert(invoice: InvoiceSearchSource): Promise<void> {
+    await this.runWriteSync('invoices', invoice.id, invoice.tenant_Id, async () => {
+      const index = this.getIndex('invoices');
+      await index.addDocuments([this.mapInvoiceDocument(invoice)], { primaryKey: 'id' });
+    });
+  }
+
+  async syncInvoiceDelete(id: string, tenantId: string): Promise<void> {
+    await this.runWriteSync('invoices', id, tenantId, async () => {
+      const index = this.getIndex('invoices');
       await index.deleteDocument(id);
     });
   }
@@ -858,6 +919,8 @@ export class SearchService {
         return this.reindexOrders();
       case 'products':
         return this.reindexProducts();
+      case 'invoices':
+        return this.reindexInvoices();
       default:
         return 0;
     }
@@ -985,6 +1048,46 @@ export class SearchService {
     return indexedCount;
   }
 
+  private async reindexInvoices(): Promise<number> {
+    const index = this.getIndex('invoices');
+    const deleteTask = await index.deleteAllDocuments();
+    await this.waitForTask(deleteTask.taskUid);
+
+    let cursor: string | undefined;
+    let indexedCount = 0;
+
+    while (true) {
+      const rows = await this.prisma.client.invoice.findMany({
+        select: {
+          id: true,
+          tenant_Id: true,
+          invoiceNo: true,
+          partnerName: true,
+          status: true,
+          totalAmount: true,
+          dueAt: true,
+          updatedAt: true
+        },
+        orderBy: { id: 'asc' },
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        take: REINDEX_BATCH_SIZE
+      });
+
+      if (rows.length === 0) {
+        break;
+      }
+
+      const docs = rows.map((row) => this.mapInvoiceDocument(row));
+      const task = await index.addDocuments(docs, { primaryKey: 'id' });
+      await this.waitForTask(task.taskUid);
+
+      indexedCount += docs.length;
+      cursor = rows[rows.length - 1]?.id;
+    }
+
+    return indexedCount;
+  }
+
   private mapCustomerDocument(row: CustomerSearchSource): CustomerSearchDocument {
     return {
       id: row.id,
@@ -1023,6 +1126,19 @@ export class SearchService {
       archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
       unitPrice: this.toNumber(row.unitPrice),
       createdAt: row.createdAt.toISOString()
+    };
+  }
+
+  private mapInvoiceDocument(row: InvoiceSearchSource): InvoiceSearchDocument {
+    return {
+      id: row.id,
+      tenant_Id: row.tenant_Id,
+      invoiceNo: row.invoiceNo,
+      partnerName: row.partnerName,
+      status: String(row.status),
+      totalAmount: this.toNullableNumber(row.totalAmount),
+      dueAt: row.dueAt ? row.dueAt.toISOString() : null,
+      updatedAt: row.updatedAt.toISOString()
     };
   }
 
@@ -1253,5 +1369,19 @@ export class SearchService {
       return fallback;
     }
     return Math.min(max, Math.max(min, Math.round(parsed)));
+  }
+
+  private rankByIds<T extends { id: string }>(rows: T[], orderedIds: string[]) {
+    const idMap = new Map();
+    for (const row of rows) {
+      idMap.set(row.id, row);
+    }
+    const result = [];
+    for (const id of orderedIds) {
+      if (idMap.has(id)) {
+        result.push(idMap.get(id));
+      }
+    }
+    return result;
   }
 }

@@ -8,8 +8,10 @@
   ],
   "scripts": {
     "dev": "npm run dev:api",
+    "dev:infra:up": "docker compose up -d postgres redis meilisearch minio",
+    "dev:infra:down": "docker compose stop postgres redis meilisearch minio",
     "predev:api": "npm run build --workspace @erp/shared",
-    "dev:api": "npm run dev --workspace @erp/api",
+    "dev:api": "npm run dev:infra:up && DATABASE_URL=${DEV_HOST_DATABASE_URL:-postgresql://erp:erp@127.0.0.1:55432/erp_retail} npm run dev --workspace @erp/api",
     "predev:web": "npm run build --workspace @erp/shared",
     "dev:web": "npm run dev --workspace @erp/web",
     "build": "npm run build --workspace @erp/shared && npm run build --workspace @erp/ui && npm run build --workspace @erp/api && npm run build --workspace @erp/web",

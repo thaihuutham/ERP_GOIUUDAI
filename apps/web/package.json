@@ -14,6 +14,7 @@
     "@erp/shared": "file:../../packages/shared",
     "@erp/ui": "file:../../packages/ui",
     "framer-motion": "^12.38.0",
+    "html2pdf.js": "^0.10.1",
     "lucide-react": "^1.7.0",
     "next": "^15.0.0",
     "react": "^19.0.0",

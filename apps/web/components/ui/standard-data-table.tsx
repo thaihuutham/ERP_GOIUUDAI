@@ -257,6 +257,11 @@ export function StandardDataTable<T extends { id: string | number }>({
     [allColumnKeys]
   );
 
+  // Save to localStorage (define early)
+  const saveSettings = useCallback((visible: string[], order: string[]) => {
+    localStorage.setItem(storageKey, JSON.stringify({ visible, order }));
+  }, [storageKey]);
+
   // Initialize from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
@@ -276,25 +281,21 @@ export function StandardDataTable<T extends { id: string | number }>({
           : [];
         const nextVisible = normalizedVisible.length > 0 ? normalizedVisible : fallbackVisible;
         const nextOrder = normalizeOrderKeys(parsed?.order);
-        setVisibleColumns(nextVisible);
-        setColumnOrder(nextOrder);
+        
+        setVisibleColumns(prev => JSON.stringify(prev) === JSON.stringify(nextVisible) ? prev : nextVisible);
+        setColumnOrder(prev => JSON.stringify(prev) === JSON.stringify(nextOrder) ? prev : nextOrder);
         saveSettings(nextVisible, nextOrder);
       } catch (e) {
-        setVisibleColumns(fallbackVisible);
-        setColumnOrder(fallbackOrder);
+        setVisibleColumns(prev => JSON.stringify(prev) === JSON.stringify(fallbackVisible) ? prev : fallbackVisible);
+        setColumnOrder(prev => JSON.stringify(prev) === JSON.stringify(fallbackOrder) ? prev : fallbackOrder);
         saveSettings(fallbackVisible, fallbackOrder);
       }
     } else {
-      setVisibleColumns(fallbackVisible);
-      setColumnOrder(fallbackOrder);
+      setVisibleColumns(prev => JSON.stringify(prev) === JSON.stringify(fallbackVisible) ? prev : fallbackVisible);
+      setColumnOrder(prev => JSON.stringify(prev) === JSON.stringify(fallbackOrder) ? prev : fallbackOrder);
       saveSettings(fallbackVisible, fallbackOrder);
     }
-  }, [allColumnKeys, normalizeOrderKeys, resolvedDefaultVisibleKeys, storageKey]);
-
-  // Save to localStorage
-  const saveSettings = (visible: string[], order: string[]) => {
-    localStorage.setItem(storageKey, JSON.stringify({ visible, order }));
-  };
+  }, [allColumnKeys, normalizeOrderKeys, resolvedDefaultVisibleKeys, storageKey, saveSettings]);
 
   const toggleColumn = (key: string) => {
     const next = visibleColumns.includes(key)

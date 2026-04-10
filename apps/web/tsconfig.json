@@ -23,10 +23,12 @@
   },
   "include": [
     "**/*.ts",
+    "**/*.d.ts",
     "**/*.tsx",
+    ".next-dev-e2e/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-dev-e2e/types/**/*.ts"
+    ".next-dev-web/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

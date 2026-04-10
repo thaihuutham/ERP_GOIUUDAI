@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { SettingsPositionDetailPage } from '../../../../../components/settings-position-detail-page';
 
 export default async function SettingsPositionPage({

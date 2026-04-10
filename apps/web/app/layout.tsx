@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import { AppShell } from '../components/app-shell';
 import { AccessPolicyProvider } from '../components/access-policy-context';
 import { UserRoleProvider } from '../components/user-role-context';
+import { ErrorBoundary } from '../components/error-boundary';
+import { ToastProvider } from '../components/toast-context';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 
 export const metadata: Metadata = {
@@ -17,7 +19,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body suppressHydrationWarning>
         <UserRoleProvider>
           <AccessPolicyProvider>
-            <AppShell>{children}</AppShell>
+            <ToastProvider>
+              <AppShell>
+                <ErrorBoundary>{children}</ErrorBoundary>
+              </AppShell>
+            </ToastProvider>
           </AccessPolicyProvider>
         </UserRoleProvider>
       </body>

@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { AssistantKnowledgeBoard } from '../../../../components/assistant/assistant-knowledge-board';
 import { AssistantShell } from '../../../../components/assistant/assistant-shell';
 

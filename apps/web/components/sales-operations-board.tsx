@@ -70,19 +70,40 @@ type ApprovalRecord = {
   createdAt?: string | null;
 };
 
-type CreateOrderItemForm = {
+type CheckoutOrderGroup = 'INSURANCE' | 'TELECOM' | 'DIGITAL';
+
+type FieldConfigItem = {
+  type?: 'text' | 'select' | 'date' | 'tel' | 'number' | 'checkbox' | 'file';
+  label?: string;
+  options?: string[];
+};
+
+type CheckoutTemplateConfig = {
+  code: string;
+  label: string;
+  requiredFields: string[];
+  fieldConfig?: Record<string, FieldConfigItem>;
+};
+
+type CheckoutConfigResponse = {
+  checkoutTemplates?: Record<CheckoutOrderGroup, CheckoutTemplateConfig[]>;
+};
+
+type CreateCheckoutItemForm = {
   productName: string;
   quantity: number;
   unitPrice: number;
 };
 
-type CreateOrderFormState = {
-  orderNo: string;
+type CreateCheckoutFormState = {
+  orderGroup: CheckoutOrderGroup;
+  templateCode: string;
+  templateFields: Record<string, string>;
   customerName: string;
   customerId: string;
   employeeId: string;
   createdBy: string;
-  items: CreateOrderItemForm[];
+  items: CreateCheckoutItemForm[];
 };
 
 const SALES_COLUMN_SETTINGS_KEY = 'erp-retail.sales.order-table-settings.v3';
@@ -120,7 +141,7 @@ function buildAuditObjectHref(entityType: string, entityId: string) {
   return `/modules/audit?${params.toString()}`;
 }
 
-function makeEmptyOrderItem(): CreateOrderItemForm {
+function makeEmptyCheckoutItem(): CreateCheckoutItemForm {
   return {
     productName: '',
     quantity: 1,
@@ -128,15 +149,65 @@ function makeEmptyOrderItem(): CreateOrderItemForm {
   };
 }
 
-function makeInitialCreateOrderForm(): CreateOrderFormState {
+function makeInitialCreateCheckoutForm(): CreateCheckoutFormState {
   return {
-    orderNo: '',
+    orderGroup: 'INSURANCE',
+    templateCode: '',
+    templateFields: {},
     customerName: '',
     customerId: '',
     employeeId: '',
     createdBy: '',
-    items: [makeEmptyOrderItem()]
+    items: [makeEmptyCheckoutItem()]
   };
+}
+
+function formatTemplateFieldLabel(key: string) {
+  const spaced = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[._-]+/g, ' ')
+    .trim();
+  if (!spaced) return key;
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function detectTemplateFieldInputType(key: string): 'text' | 'date' | 'number' | 'tel' {
+  const lower = key.toLowerCase();
+  if (lower.includes('phone') || lower.includes('mobile')) {
+    return 'tel';
+  }
+  if (lower.includes('date') || lower.endsWith('at') || lower.includes('time')) {
+    return 'date';
+  }
+  if (
+    lower.includes('day')
+    || lower.includes('term')
+    || lower.includes('amount')
+    || lower.includes('price')
+    || lower.includes('qty')
+    || lower.includes('quantity')
+    || lower.includes('limit')
+    || lower.includes('count')
+  ) {
+    return 'number';
+  }
+  return 'text';
+}
+
+function parseTemplateFieldValue(key: string, value: string): string | number {
+  const normalized = value.trim();
+  if (detectTemplateFieldInputType(key) !== 'number') {
+    return normalized;
+  }
+  const asNumber = Number(normalized);
+  return Number.isFinite(asNumber) ? asNumber : normalized;
+}
+
+function areTemplateFieldMapsEqual(left: Record<string, string>, right: Record<string, string>) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => (left[key] ?? '') === (right[key] ?? ''));
 }
 
 export function SalesOperationsBoard() {
@@ -160,7 +231,9 @@ export function SalesOperationsBoard() {
 
   const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
-  const [createOrderForm, setCreateOrderForm] = useState<CreateOrderFormState>(makeInitialCreateOrderForm());
+  const [isLoadingCheckoutConfig, setIsLoadingCheckoutConfig] = useState(false);
+  const [checkoutConfig, setCheckoutConfig] = useState<CheckoutConfigResponse | null>(null);
+  const [createOrderForm, setCreateOrderForm] = useState<CreateCheckoutFormState>(makeInitialCreateCheckoutForm());
 
   const [decisionNote, setDecisionNote] = useState('');
   const [isHandlingDecision, setIsHandlingDecision] = useState(false);
@@ -177,6 +250,36 @@ export function SalesOperationsBoard() {
     [search, tableSortBy, tableSortDir]
   );
   const salesTablePager = useCursorTableState(salesTableFingerprint);
+
+  const currentGroupTemplates = useMemo(
+    () => checkoutConfig?.checkoutTemplates?.[createOrderForm.orderGroup] ?? [],
+    [checkoutConfig, createOrderForm.orderGroup]
+  );
+
+  const selectedTemplate = useMemo(() => {
+    if (currentGroupTemplates.length === 0) {
+      return null;
+    }
+    return currentGroupTemplates.find((item) => item.code === createOrderForm.templateCode) ?? currentGroupTemplates[0] ?? null;
+  }, [currentGroupTemplates, createOrderForm.templateCode]);
+
+  const ensureTemplateSelection = (
+    orderGroup: CheckoutOrderGroup,
+    currentCode: string,
+    currentFields: Record<string, string>
+  ) => {
+    const templates = checkoutConfig?.checkoutTemplates?.[orderGroup] ?? [];
+    const matched = templates.find((item) => item.code === currentCode) ?? templates[0] ?? null;
+    const nextCode = matched?.code ?? '';
+    const nextFields: Record<string, string> = {};
+    for (const fieldKey of matched?.requiredFields ?? []) {
+      nextFields[fieldKey] = currentFields[fieldKey] ?? '';
+    }
+    return {
+      nextCode,
+      nextFields
+    };
+  };
 
   const loadData = async () => {
     if (!canView) return;
@@ -207,6 +310,24 @@ export function SalesOperationsBoard() {
     }
   };
 
+  const loadCheckoutConfig = async () => {
+    if (!canCreate || isLoadingCheckoutConfig) return;
+    setIsLoadingCheckoutConfig(true);
+    try {
+      const payload = await apiRequest<CheckoutConfigResponse>('/sales/checkout/config');
+      setCheckoutConfig(payload);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? `Không thể tải cấu hình Sale Checkout v1: ${error.message}`
+          : 'Không thể tải cấu hình Sale Checkout v1.'
+      );
+    } finally {
+      setIsLoadingCheckoutConfig(false);
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       loadData();
@@ -221,6 +342,26 @@ export function SalesOperationsBoard() {
       setSelectedOrder(refreshed);
     }
   }, [orders, selectedOrder]);
+
+  useEffect(() => {
+    if (!isCreatePanelOpen || !canCreate || checkoutConfig) return;
+    void loadCheckoutConfig();
+  }, [isCreatePanelOpen, canCreate, checkoutConfig]);
+
+  useEffect(() => {
+    if (!checkoutConfig) return;
+    setCreateOrderForm((prev) => {
+      const { nextCode, nextFields } = ensureTemplateSelection(prev.orderGroup, prev.templateCode, prev.templateFields);
+      if (prev.templateCode === nextCode && areTemplateFieldMapsEqual(prev.templateFields, nextFields)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        templateCode: nextCode,
+        templateFields: nextFields
+      };
+    });
+  }, [checkoutConfig, createOrderForm.orderGroup]);
 
   const selectedOrderApprovals = useMemo(() => {
     if (!selectedOrder) return [];
@@ -430,7 +571,7 @@ export function SalesOperationsBoard() {
 
   const handleCreateOrder = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canCreate) return;
+    if (!canCreate || isCreatingOrder) return;
 
     const normalizedItems = createOrderForm.items
       .map((item) => ({
@@ -440,17 +581,39 @@ export function SalesOperationsBoard() {
       }))
       .filter((item) => item.productName && item.quantity > 0 && item.unitPrice > 0);
 
+    if (!selectedTemplate) {
+      setErrorMessage(`Tạo checkout thất bại: chưa cấu hình template cho nhóm ${createOrderForm.orderGroup}.`);
+      return;
+    }
+    if (!createOrderForm.customerName.trim()) {
+      setErrorMessage('Tạo checkout thất bại: cần nhập customer name.');
+      return;
+    }
     if (normalizedItems.length === 0) {
-      setErrorMessage('Cần ít nhất một dòng sản phẩm hợp lệ (tên, số lượng, đơn giá).');
+      setErrorMessage('Tạo checkout thất bại: cần tối thiểu 1 dòng dịch vụ hợp lệ.');
       return;
     }
 
+    const templatePayload: Record<string, unknown> = {};
+    for (const fieldKey of selectedTemplate.requiredFields) {
+      const rawValue = (createOrderForm.templateFields[fieldKey] ?? '').trim();
+      if (!rawValue) {
+        setErrorMessage(`Tạo checkout thất bại: thiếu field bắt buộc ${fieldKey}.`);
+        return;
+      }
+      templatePayload[fieldKey] = parseTemplateFieldValue(fieldKey, rawValue);
+    }
+
+    setErrorMessage(null);
+    setResultMessage(null);
     setIsCreatingOrder(true);
     try {
-      const createdOrder = await apiRequest<SalesOrder>('/sales/orders', {
+      const createdOrder = await apiRequest<{ id: string; orderNo?: string | null }>('/sales/checkout/orders', {
         method: 'POST',
         body: {
-          orderNo: createOrderForm.orderNo || undefined,
+          orderGroup: createOrderForm.orderGroup,
+          templateCode: selectedTemplate.code,
+          templateFields: templatePayload,
           customerName: createOrderForm.customerName || undefined,
           customerId: createOrderForm.customerId || undefined,
           employeeId: createOrderForm.employeeId || undefined,
@@ -458,19 +621,99 @@ export function SalesOperationsBoard() {
           items: normalizedItems
         }
       });
-      setResultMessage(`Đã tạo đơn hàng ${createdOrder.orderNo || createdOrder.id.slice(-8)}.`);
-      setErrorMessage(null);
+      setResultMessage(`Đã tạo đơn nháp ${createdOrder.orderNo || createdOrder.id.slice(-8)}. Bấm "Gửi đơn" để chuyển sang chờ thanh toán.`);
       setIsCreatePanelOpen(false);
-      setCreateOrderForm(makeInitialCreateOrderForm());
+      setCreateOrderForm(makeInitialCreateCheckoutForm());
       await loadData();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo đơn hàng');
+      setErrorMessage(error instanceof Error ? `Tạo checkout thất bại: ${error.message}` : 'Tạo checkout thất bại.');
     } finally {
       setIsCreatingOrder(false);
     }
   };
 
-  const handleUpdateItem = (index: number, key: keyof CreateOrderItemForm, value: string) => {
+  const handleOrderGroupChange = (group: CheckoutOrderGroup) => {
+    setCreateOrderForm((prev) => {
+      const { nextCode, nextFields } = ensureTemplateSelection(group, '', {});
+      return {
+        ...prev,
+        orderGroup: group,
+        templateCode: nextCode,
+        templateFields: nextFields
+      };
+    });
+  };
+
+  const handleTemplateCodeChange = (templateCode: string) => {
+    setCreateOrderForm((prev) => {
+      const { nextCode, nextFields } = ensureTemplateSelection(prev.orderGroup, templateCode, prev.templateFields);
+      return {
+        ...prev,
+        templateCode: nextCode,
+        templateFields: nextFields
+      };
+    });
+  };
+
+  const handleTemplateFieldChange = (fieldKey: string, value: string) => {
+    setCreateOrderForm((prev) => {
+      const nextFields = {
+        ...prev.templateFields,
+        [fieldKey]: value
+      };
+
+      // Auto-compute effectiveTo when termDays or startDate/requestedEffectiveDate changes
+      const termDaysKeys = ['termDays'];
+      const startDateKeys = ['startDate', 'requestedEffectiveDate'];
+      const isTermUpdate = termDaysKeys.includes(fieldKey);
+      const isStartUpdate = startDateKeys.includes(fieldKey);
+
+      if (isTermUpdate || isStartUpdate) {
+        const termDaysValue = isTermUpdate ? value : (nextFields.termDays ?? '');
+        const startDateValue = isStartUpdate
+          ? value
+          : (nextFields.startDate ?? nextFields.requestedEffectiveDate ?? '');
+
+        if (termDaysValue && startDateValue) {
+          const days = Number(termDaysValue);
+          const start = new Date(startDateValue);
+          if (Number.isFinite(days) && days > 0 && !Number.isNaN(start.getTime())) {
+            const end = new Date(start);
+            end.setDate(end.getDate() + days);
+            nextFields.effectiveTo = end.toISOString().slice(0, 10);
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        templateFields: nextFields
+      };
+    });
+  };
+
+  const handleFileUpload = async (fieldKey: string, file: File) => {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const result = await fetch('/api/v1/sales/checkout/files/upload', {
+        method: 'POST',
+        body: formData
+      });
+      if (!result.ok) {
+        const err = await result.json().catch(() => ({}));
+        throw new Error((err as Record<string, string>).message || 'Upload thất bại');
+      }
+      const data = await result.json() as { fileId: string; fileName: string; url: string };
+      handleTemplateFieldChange(fieldKey, data.fileId);
+      setResultMessage(`Đã upload file: ${file.name}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? `Upload thất bại: ${error.message}` : 'Upload thất bại.');
+    }
+  };
+
+  const handleUpdateItem = (index: number, key: keyof CreateCheckoutItemForm, value: string) => {
     setCreateOrderForm((prev) => ({
       ...prev,
       items: prev.items.map((item, itemIndex) => {
@@ -492,7 +735,7 @@ export function SalesOperationsBoard() {
   const handleAddItem = () => {
     setCreateOrderForm((prev) => ({
       ...prev,
-      items: [...prev.items, makeEmptyOrderItem()]
+      items: [...prev.items, makeEmptyCheckoutItem()]
     }));
   };
 
@@ -501,7 +744,7 @@ export function SalesOperationsBoard() {
       const nextItems = prev.items.filter((_, itemIndex) => itemIndex !== index);
       return {
         ...prev,
-        items: nextItems.length > 0 ? nextItems : [makeEmptyOrderItem()]
+        items: nextItems.length > 0 ? nextItems : [makeEmptyCheckoutItem()]
       };
     });
   };
@@ -640,6 +883,9 @@ export function SalesOperationsBoard() {
                 className="btn btn-primary"
                 onClick={() => {
                   setIsCreatePanelOpen(true);
+                  if (!checkoutConfig) {
+                    void loadCheckoutConfig();
+                  }
                 }}
               >
                 <Plus size={16} /> Tạo đơn hàng
@@ -834,71 +1080,226 @@ export function SalesOperationsBoard() {
         onClose={() => {
           if (isCreatingOrder) return;
           setIsCreatePanelOpen(false);
-          setCreateOrderForm(makeInitialCreateOrderForm());
+          setCreateOrderForm(makeInitialCreateCheckoutForm());
         }}
         title="Tạo đơn bán hàng"
       >
         <form onSubmit={handleCreateOrder} style={{ display: 'grid', gap: '1rem' }}>
           <div className="field">
-            <label>Số đơn hàng</label>
-            <input
-              value={createOrderForm.orderNo}
-              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, orderNo: event.target.value }))}
-              placeholder="SO-2026-000001"
-            />
+            <label>Nhóm sản phẩm</label>
+            <select value={createOrderForm.orderGroup} onChange={(event) => handleOrderGroupChange(event.target.value as CheckoutOrderGroup)}>
+              <option value="INSURANCE">INSURANCE</option>
+              <option value="TELECOM">TELECOM</option>
+              <option value="DIGITAL">DIGITAL</option>
+            </select>
           </div>
+
           <div className="field">
-            <label>Khách hàng *</label>
+            <label>Template checkout</label>
+            <select
+              value={selectedTemplate?.code || ''}
+              onChange={(event) => handleTemplateCodeChange(event.target.value)}
+              disabled={isLoadingCheckoutConfig || currentGroupTemplates.length === 0}
+            >
+              {currentGroupTemplates.length === 0 ? <option value="">Chưa có template</option> : null}
+              {currentGroupTemplates.map((template) => (
+                <option key={template.code} value={template.code}>
+                  {template.code} - {template.label}
+                </option>
+              ))}
+            </select>
+            {isLoadingCheckoutConfig ? <small className="muted">Đang tải template từ policy...</small> : null}
+          </div>
+
+          {selectedTemplate ? (
+            <div style={{ border: '1px solid var(--line)', borderRadius: '8px', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+              <strong style={{ fontSize: '0.95rem' }}>Field bắt buộc theo template</strong>
+              {selectedTemplate.requiredFields.length === 0 ? <p className="muted" style={{ margin: 0 }}>Template không có field bắt buộc.</p> : null}
+              {selectedTemplate.requiredFields.map((fieldKey) => {
+                const fc = selectedTemplate.fieldConfig?.[fieldKey];
+                const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
+                const fieldType = fc?.type || detectTemplateFieldInputType(fieldKey);
+                const fieldOptions = fc?.options;
+
+                if (fieldType === 'select' && fieldOptions && fieldOptions.length > 0) {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel} *</label>
+                      <select
+                        required
+                        value={createOrderForm.templateFields[fieldKey] ?? ''}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
+                      >
+                        <option value="">-- Chọn --</option>
+                        {fieldOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'checkbox') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        id={`ops-tpl-${fieldKey}`}
+                        checked={createOrderForm.templateFields[fieldKey] === 'true'}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.checked ? 'true' : 'false')}
+                        style={{ width: 'auto' }}
+                      />
+                      <label htmlFor={`ops-tpl-${fieldKey}`} style={{ margin: 0 }}>{fieldLabel}</label>
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'file') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel} *</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleFileUpload(fieldKey, file);
+                        }}
+                      />
+                      {createOrderForm.templateFields[fieldKey] ? (
+                        <small className="muted">✅ File ID: {createOrderForm.templateFields[fieldKey]}</small>
+                      ) : null}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                    <label>{fieldLabel} *</label>
+                    <input
+                      type={fieldType}
+                      required
+                      value={createOrderForm.templateFields[fieldKey] ?? ''}
+                      onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
+                      placeholder={fieldKey}
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Render optional non-required fields from fieldConfig */}
+              {Object.entries(selectedTemplate.fieldConfig ?? {}).filter(([key]) => !selectedTemplate.requiredFields.includes(key)).map(([fieldKey, fc]) => {
+                const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
+                const fieldType = fc?.type || 'text';
+
+                if (fieldType === 'checkbox') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        id={`ops-tpl-${fieldKey}`}
+                        checked={createOrderForm.templateFields[fieldKey] === 'true'}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.checked ? 'true' : 'false')}
+                        style={{ width: 'auto' }}
+                      />
+                      <label htmlFor={`ops-tpl-${fieldKey}`} style={{ margin: 0 }}>{fieldLabel}</label>
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'file') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel}</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleFileUpload(fieldKey, file);
+                        }}
+                      />
+                      {createOrderForm.templateFields[fieldKey] ? (
+                        <small className="muted">✅ File ID: {createOrderForm.templateFields[fieldKey]}</small>
+                      ) : null}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                    <label>{fieldLabel}</label>
+                    <input
+                      type={fieldType}
+                      value={createOrderForm.templateFields[fieldKey] ?? ''}
+                      onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
+                      placeholder={fieldKey}
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Auto-computed effectiveTo */}
+              {createOrderForm.templateFields.effectiveTo ? (
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>Ngày hết hiệu lực (tự tính, cho phép sửa)</label>
+                  <input
+                    type="date"
+                    value={createOrderForm.templateFields.effectiveTo ?? ''}
+                    onChange={(event) => handleTemplateFieldChange('effectiveTo', event.target.value)}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="field">
+            <label>Customer name *</label>
             <input
               required
               value={createOrderForm.customerName}
               onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, customerName: event.target.value }))}
-              placeholder="Tên khách hàng"
             />
           </div>
           <div className="field">
-            <label>Customer ID (optional)</label>
+            <label>Customer ID</label>
             <input
               value={createOrderForm.customerId}
               onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, customerId: event.target.value }))}
-              placeholder="cus_xxx"
             />
           </div>
           <div className="field">
-            <label>Employee ID (optional)</label>
+            <label>Employee ID</label>
             <input
               value={createOrderForm.employeeId}
               onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, employeeId: event.target.value }))}
-              placeholder="emp_xxx"
             />
           </div>
           <div className="field">
-            <label>Người tạo</label>
+            <label>Created By</label>
             <input
               value={createOrderForm.createdBy}
               onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, createdBy: event.target.value }))}
-              placeholder="manager@erp.local"
             />
           </div>
 
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: '1rem', display: 'grid', gap: '0.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Dòng sản phẩm</h4>
+              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Dòng dịch vụ / sản phẩm</h4>
               <button type="button" className="btn btn-ghost" onClick={handleAddItem}><Plus size={14} /> Thêm dòng</button>
             </div>
             {createOrderForm.items.map((item, index) => (
               <div key={`item-${index}`} style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
                 <div className="field">
-                  <label>Tên sản phẩm</label>
+                  <label>Product name</label>
                   <input
                     value={item.productName}
                     onChange={(event) => handleUpdateItem(index, 'productName', event.target.value)}
-                    placeholder="Sản phẩm A"
                   />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem' }}>
                   <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Số lượng</label>
+                    <label>Quantity</label>
                     <input
                       type="number"
                       min={1}
@@ -907,7 +1308,7 @@ export function SalesOperationsBoard() {
                     />
                   </div>
                   <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Đơn giá</label>
+                    <label>Unit Price</label>
                     <input
                       type="number"
                       min={0}
@@ -925,7 +1326,7 @@ export function SalesOperationsBoard() {
 
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
             <button type="submit" className="btn btn-primary" disabled={isCreatingOrder} style={{ flex: 1 }}>
-              {isCreatingOrder ? 'Đang tạo...' : 'Tạo đơn hàng'}
+              {isCreatingOrder ? 'Đang tạo...' : 'Tạo đơn nháp (DRAFT)'}
             </button>
             <button
               type="button"
@@ -934,7 +1335,7 @@ export function SalesOperationsBoard() {
               onClick={() => {
                 if (isCreatingOrder) return;
                 setIsCreatePanelOpen(false);
-                setCreateOrderForm(makeInitialCreateOrderForm());
+                setCreateOrderForm(makeInitialCreateCheckoutForm());
               }}
             >
               Hủy

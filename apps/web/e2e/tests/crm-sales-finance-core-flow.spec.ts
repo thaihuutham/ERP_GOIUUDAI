@@ -367,6 +367,72 @@ async function mockCoreErpApis(page: Page, state: MockState) {
       return json(route, state.approvals);
     }
 
+    if (method === 'GET' && path === '/api/v1/sales/checkout/config') {
+      return json(route, {
+        checkoutTemplates: {
+          INSURANCE: [
+            { code: 'AUTO_INSURANCE_STD', label: 'Bảo hiểm ô tô', requiredFields: [], fieldConfig: {} },
+            { code: 'MOTO_INSURANCE_STD', label: 'Bảo hiểm xe máy', requiredFields: [], fieldConfig: {} }
+          ],
+          TELECOM: [
+            { code: 'TELECOM_BASE', label: 'Telecom Base', requiredFields: [], fieldConfig: {} }
+          ],
+          DIGITAL: [
+            { code: 'DIGITAL_BASE', label: 'Digital Base', requiredFields: [], fieldConfig: {} }
+          ]
+        }
+      });
+    }
+
+    if (method === 'POST' && path === '/api/v1/sales/checkout/files/upload') {
+      return json(route, {
+        fileId: `file_e2e_${Date.now()}`,
+        fileName: 'mock_upload.pdf',
+        originalName: 'test.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        url: '/api/v1/sales/checkout/files/mock'
+      });
+    }
+
+    if (method === 'POST' && path === '/api/v1/sales/checkout/orders') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const itemsInput = Array.isArray(body.items) ? body.items : [];
+      const items: OrderItem[] = itemsInput.map((row) => ({
+        id: `item_e2e_${state.seq.item++}`,
+        productName: String((row as Record<string, unknown>).productName ?? ''),
+        quantity: Number((row as Record<string, unknown>).quantity ?? 1),
+        unitPrice: Number((row as Record<string, unknown>).unitPrice ?? 0)
+      }));
+      const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+      const orderSeq = state.seq.order++;
+      const orderNo = `SO-E2E-${String(orderSeq).padStart(4, '0')}`;
+      const order: SalesOrder = {
+        id: `order_e2e_${orderSeq}`,
+        orderNo,
+        customerName: String(body.customerName ?? ''),
+        customerId: body.customerId ? String(body.customerId) : undefined,
+        totalAmount,
+        status: 'PENDING',
+        createdBy: body.createdBy ? String(body.createdBy) : undefined,
+        createdAt: new Date().toISOString(),
+        items,
+        invoices: []
+      };
+      state.orders.unshift(order);
+      return json(route, {
+        id: order.id,
+        orderNo: order.orderNo,
+        orderGroup: body.orderGroup ? String(body.orderGroup) : null,
+        customerName: order.customerName,
+        totalAmount: order.totalAmount,
+        checkoutStatus: 'DRAFT',
+        createdAt: order.createdAt,
+        items: order.items,
+        invoices: []
+      }, 201);
+    }
+
     if (method === 'POST' && path === '/api/v1/sales/orders') {
       const body = request.postDataJSON() as Record<string, unknown>;
       const itemsInput = Array.isArray(body.items) ? body.items : [];
@@ -637,19 +703,19 @@ test('runs CRM -> Sales -> Finance core flow via Operations Boards', async ({ pa
 
   await page.goto('/modules/sales');
   await page.getByRole('button', { name: 'Tạo đơn hàng' }).first().click();
-  await page.getByPlaceholder('SO-2026-000001').fill('SO-E2E-0001');
-  await page.getByPlaceholder('Tên khách hàng').fill('Khách Lẻ A');
-  await page.getByPlaceholder('cus_xxx').fill(state.customers[0].id);
-  await page.getByPlaceholder('Sản phẩm A').fill('Ao thun dong phuc');
-  const lineNumberInputs = page.locator('.side-panel-container input[type="number"]');
-  await lineNumberInputs.nth(1).fill('150000');
-  await page.locator('.side-panel-container').getByRole('button', { name: /^Tạo đơn hàng$/ }).click();
-  await expect(page.getByText('Đã tạo đơn hàng SO-E2E-0001.')).toBeVisible();
+  const createPanel = page.locator('.side-panel-container').filter({ hasText: 'Nhóm sản phẩm' });
+  await createPanel.locator('label:has-text("Customer name *") + input').fill('Khách Lẻ A');
+  await createPanel.locator('label:has-text("Customer ID") + input').fill(state.customers[0].id);
+  await createPanel.locator('label:has-text("Product name") + input').first().fill('Ao thun dong phuc');
+  await createPanel.locator('label:has-text("Unit Price") + input').first().fill('150000');
+  await createPanel.getByRole('button', { name: /Tạo đơn nháp/ }).click();
+  await expect(page.getByText(/Đã tạo đơn nháp SO-E2E-0001/)).toBeVisible();
   expect(state.orders).toHaveLength(1);
+  const createdOrderNo = state.orders[0].orderNo;
 
-  await page.getByRole('button', { name: 'SO-E2E-0001' }).click();
+  await page.getByRole('button', { name: createdOrderNo }).click();
   await page.locator('.side-panel-container').getByRole('button', { name: 'Phê duyệt đơn' }).click();
-  await expect(page.getByText('Đơn hàng SO-E2E-0001 đã được phê duyệt.')).toBeVisible();
+  await expect(page.getByText(`Đơn hàng ${createdOrderNo} đã được phê duyệt.`)).toBeVisible();
   expect(state.orders[0].status).toBe('APPROVED');
 
   await page.locator('.side-panel-container').getByRole('button', { name: 'Xuất hóa đơn' }).click();

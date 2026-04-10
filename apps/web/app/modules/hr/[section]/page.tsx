@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { notFound } from 'next/navigation';
 import { HrSectionScreen } from '../../../../components/hr-section-screen';
 import { isHrSectionKey } from '../../../../lib/hr-sections';

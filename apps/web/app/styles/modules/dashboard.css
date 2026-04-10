@@ -54,6 +54,26 @@
   gap: 0.75rem;
 }
 
+/* ── KPI Sections ──────────────────────────────── */
+
+.kpi-section {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.kpi-section-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding-left: 0.1rem;
+}
+
 /* ── Module Card Grid ──────────────────────────── */
 
 .module-card-grid {
@@ -234,6 +254,133 @@
   .hero-panel {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Hero Panel Inline Replacements ────────────── */
+
+.hero-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.45rem;
+}
+
+.hero-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.hero-role-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.hero-range-selector {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.hero-badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* ── Chart / Layout Inline Replacements ───────── */
+
+.dashboard-chart-body {
+  padding: 0.5rem 0 0 0;
+}
+
+.dashboard-pie-body {
+  padding: 0.5rem 0;
+}
+
+.dashboard-secondary-col {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.dashboard-secondary-chart-card {
+  padding-bottom: 0.5rem;
+}
+
+.dashboard-bottom-row {
+  margin-top: 0.15rem;
+}
+
+/* ── Module Nav / Tasks Inline Replacements ────── */
+
+.dashboard-module-nav {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.dashboard-module-heading {
+  font-size: 1.02rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.quick-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+.quick-task-info {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.quick-task-info span {
+  font-weight: 500;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 1100px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-charts-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .hero-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-right {
+    align-items: flex-start;
+  }
+
+  .hero-range-selector {
+    justify-content: flex-start;
   }
 
   .metrics-grid {

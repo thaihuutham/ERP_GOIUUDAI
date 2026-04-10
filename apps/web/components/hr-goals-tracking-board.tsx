@@ -267,13 +267,13 @@ export function HrGoalsTrackingBoard() {
     return q;
   }, [scope, keyword, period, statusFilter, trackingFilter, employeeIdFilter, departmentIdFilter, orgUnitIdFilter]);
 
-  const loadData = async () => {
+  const loadData = async (signal?: AbortSignal) => {
     setIsLoading(true);
     setError(null);
     try {
       const [trackerPayload, overviewPayload] = await Promise.all([
-        apiRequest<TrackerPayload>('/hr/goals/tracker', { query }),
-        apiRequest<OverviewPayload>('/hr/goals/overview', { query })
+        apiRequest<TrackerPayload>('/hr/goals/tracker', { query, signal }),
+        apiRequest<OverviewPayload>('/hr/goals/overview', { query, signal })
       ]);
       setTracker(trackerPayload);
       setOverview(overviewPayload);
@@ -283,9 +283,10 @@ export function HrGoalsTrackingBoard() {
         setSelectedGoal(next);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Không tải được dữ liệu mục tiêu.');
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) setIsLoading(false);
     }
   };
 
@@ -302,14 +303,16 @@ export function HrGoalsTrackingBoard() {
   };
 
   useEffect(() => {
-    loadData();
+    const controller = new AbortController();
+    void loadData(controller.signal);
+    return () => controller.abort();
   }, [query]);
 
   useEffect(() => {
     if (!pollingEnabled) return;
     const timer = window.setInterval(() => {
-      loadData();
-    }, 10_000);
+      void loadData();
+    }, 60_000);
     return () => window.clearInterval(timer);
   }, [pollingEnabled, query]);
 
@@ -618,10 +621,10 @@ export function HrGoalsTrackingBoard() {
           <button className="btn btn-primary" onClick={() => setIsCreateOpen(true)}>
             <Plus size={14} /> Đăng ký mục tiêu
           </button>
-          <button className="btn btn-ghost" onClick={loadData}>
+          <button className="btn btn-ghost" onClick={() => void loadData()}>
             <RefreshCw size={14} /> Refresh
           </button>
-          <button className="btn btn-ghost" onClick={handleRecomputeAll}>
+          <button className="btn btn-ghost" onClick={() => void handleRecomputeAll()}>
             <Gauge size={14} /> Recompute auto
           </button>
           <button className="btn btn-ghost" onClick={() => setPollingEnabled((prev) => !prev)}>

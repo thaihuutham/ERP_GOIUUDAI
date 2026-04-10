@@ -9,6 +9,11 @@ import { ModuleWorkbench } from './module-workbench';
 export function DomainModuleBoard({ moduleKey }: { moduleKey: string }) {
   const { snapshot } = useAccessPolicy();
   const module = getModuleDefinition(moduleKey);
+
+  if (!module) {
+    return <div>Module &quot;{moduleKey}&quot; not found.</div>;
+  }
+
   const moduleDecision = decideModuleAccess(snapshot, moduleKey);
 
   if (!moduleDecision.allowed) {

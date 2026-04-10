@@ -162,6 +162,7 @@ describe('SettingsPolicyService', () => {
     });
     expect(metadata.domainTabs.org_profile.map((tab) => tab.key)).toEqual([
       'org-general',
+      'org-dashboard',
       'org-appearance',
       'org-structure'
     ]);

@@ -671,7 +671,10 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
   const [filterOptionMap, setFilterOptionMap] = useState<Record<string, SelectOption[]>>({});
   const [isHydratingOptions, setIsHydratingOptions] = useState(false);
   const [optionLoadWarnings, setOptionLoadWarnings] = useState<string[]>([]);
-  const featureFilters = feature.filters ?? [];
+  // Stabilize featureFilters with useMemo to prevent new array reference on every render
+  // when feature.filters is undefined. Without this, feature.filters ?? [] creates a new []
+  // every render, causing infinite re-render loops in downstream useEffects.
+  const featureFilters = useMemo(() => feature.filters ?? [], [feature.filters]);
   const searchParamsKey = searchParams.toString();
   const activeFilterCount = useMemo(
     () => countActiveFilters(featureFilters, filterValues, search),
@@ -791,7 +794,8 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
     }
     setSearch(nextSearch);
     setFilterValues(nextFilterValues);
-  }, [feature.key, featureFilters, searchParams, searchParamsKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feature.key, searchParamsKey]);
 
   useEffect(() => {
     let active = true;

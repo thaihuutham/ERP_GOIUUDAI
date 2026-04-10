@@ -7,7 +7,7 @@
 
 ## 2. Coding
 - Ưu tiên tách hàm/component nhỏ, tránh file > 400 LOC khi có thể.
-- Mọi logic truy cập Firestore phải có xử lý lỗi qua `handleFirestoreError`.
+- Mọi logic truy cập database (Prisma/PostgreSQL) phải có xử lý lỗi qua try/catch với `PrismaClientKnownRequestError` hoặc wrapper tương ứng.
 - Không hardcode role/status khi đã có enum/constant.
 - Với NestJS controller, ưu tiên khai báo DI tường minh: `@Inject(Service)` trong constructor.
 - Với UI ERP, các trường bắt buộc cần giá trị chính xác theo chuẩn hệ thống (module code, role, status, step key, action code, policy key, taxonomy key...) **không cho nhập tự do**.

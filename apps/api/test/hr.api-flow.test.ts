@@ -2,14 +2,29 @@ import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import request from 'supertest';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
+import { CustomFieldsService } from '../src/modules/custom-fields/custom-fields.service';
 import { HrService } from '../src/modules/hr/hr.service';
 import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
 describe('HR API flow integration', () => {
   let app: INestApplication;
   let hrService: HrService;
+  let customFieldsService: CustomFieldsService;
+
+  const stubCustomFields = () => {
+    vi.spyOn(customFieldsService, 'parseMutationBody').mockImplementation((body: Record<string, unknown>) => ({
+      base: body,
+      customFields: {},
+      unifiedContract: false
+    } as any));
+    vi.spyOn(customFieldsService, 'resolveEntityIdsByQuery').mockResolvedValue(undefined);
+    vi.spyOn(customFieldsService, 'applyEntityMutation').mockResolvedValue();
+    vi.spyOn(customFieldsService, 'wrapEntity').mockImplementation(async (_entityType, record) => record as any);
+    vi.spyOn(customFieldsService, 'wrapResult').mockImplementation(async (_entityType, result) => result as any);
+    vi.spyOn(customFieldsService, 'wrapNestedEntity').mockImplementation(async (_entityType, result) => result as any);
+  };
 
   beforeAll(async () => {
     setupSingleTenantAuthTestEnv('phase3-hr-flow-secret');
@@ -30,6 +45,11 @@ describe('HR API flow integration', () => {
 
     await app.init();
     hrService = app.get(HrService);
+    customFieldsService = app.get(CustomFieldsService);
+  });
+
+  beforeEach(() => {
+    stubCustomFields();
   });
 
   afterEach(() => {

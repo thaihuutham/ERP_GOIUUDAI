@@ -2,9 +2,10 @@ import 'reflect-metadata';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import request from 'supertest';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { RuntimeSettingsService } from '../src/common/settings/runtime-settings.service';
+import { CustomFieldsService } from '../src/modules/custom-fields/custom-fields.service';
 import { ScmService } from '../src/modules/scm/scm.service';
 import { makeAuthToken, setupSingleTenantAuthTestEnv } from './auth-test.helper';
 
@@ -28,7 +29,21 @@ function unwrapEntityResponse(body: unknown) {
 describe('SCM API flow integration', () => {
   let app: INestApplication;
   let scmService: ScmService;
+  let customFieldsService: CustomFieldsService;
   let runtimeSettings: RuntimeSettingsService;
+
+  const stubCustomFields = () => {
+    vi.spyOn(customFieldsService, 'parseMutationBody').mockImplementation((body: Record<string, unknown>) => ({
+      base: body,
+      customFields: {},
+      unifiedContract: false
+    } as any));
+    vi.spyOn(customFieldsService, 'resolveEntityIdsByQuery').mockResolvedValue(undefined);
+    vi.spyOn(customFieldsService, 'applyEntityMutation').mockResolvedValue();
+    vi.spyOn(customFieldsService, 'wrapEntity').mockImplementation(async (_entityType, record) => record as any);
+    vi.spyOn(customFieldsService, 'wrapResult').mockImplementation(async (_entityType, result) => result as any);
+    vi.spyOn(customFieldsService, 'wrapNestedEntity').mockImplementation(async (_entityType, result) => result as any);
+  };
 
   beforeAll(async () => {
     setupSingleTenantAuthTestEnv('phase2-integration-test-secret');
@@ -49,7 +64,12 @@ describe('SCM API flow integration', () => {
 
     await app.init();
     scmService = app.get(ScmService);
+    customFieldsService = app.get(CustomFieldsService);
     runtimeSettings = app.get(RuntimeSettingsService);
+  });
+
+  beforeEach(() => {
+    stubCustomFields();
   });
 
   afterEach(() => {

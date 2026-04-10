@@ -1,0 +1,138 @@
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.20kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.47kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:22-alpine
+#3 DONE 1.2s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 290B 0.0s done
+#4 DONE 0.0s
+
+#5 [deps 1/7] FROM docker.io/library/node:22-alpine@sha256:4d64b49e6c891c8fc821007cb1cdc6c0db7773110ac2c34bf2e6960adef62ed3
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 141.99kB 0.1s done
+#6 DONE 0.1s
+
+#7 [deps 2/7] WORKDIR /workspace
+#7 CACHED
+
+#8 [deps 5/7] COPY packages/shared/package.json ./packages/shared/package.json
+#8 CACHED
+
+#9 [deps 7/7] RUN npm install
+#9 CACHED
+
+#10 [deps 3/7] COPY package.json tsconfig.base.json ./
+#10 CACHED
+
+#11 [deps 4/7] COPY apps/web/package.json ./apps/web/package.json
+#11 CACHED
+
+#12 [deps 6/7] COPY packages/ui/package.json ./packages/ui/package.json
+#12 CACHED
+
+#13 [build 3/8] COPY --from=deps /workspace/node_modules ./node_modules
+#13 CACHED
+
+#14 [build 4/8] COPY . .
+#14 DONE 6.4s
+
+#15 [build 5/8] RUN npm run build --workspace @erp/shared
+#15 0.718 
+#15 0.718 > @erp/shared@1.0.0 build
+#15 0.718 > tsc -p tsconfig.json
+#15 0.718 
+#15 2.561 npm notice
+#15 2.561 npm notice New major version of npm available! 10.9.7 -> 11.12.1
+#15 2.561 npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+#15 2.561 npm notice To update run: npm install -g npm@11.12.1
+#15 2.561 npm notice
+#15 DONE 2.7s
+
+#16 [build 6/8] RUN npm run build --workspace @erp/ui
+#16 0.329 
+#16 0.329 > @erp/ui@1.0.0 build
+#16 0.329 > tsc -p tsconfig.json
+#16 0.329 
+#16 DONE 1.5s
+
+#17 [build 7/8] RUN npm run build --workspace @erp/web
+#17 0.276 
+#17 0.276 > @erp/web@1.0.0 build
+#17 0.276 > next build
+#17 0.276 
+#17 0.913 Attention: Next.js now collects completely anonymous telemetry regarding usage.
+#17 0.913 This information is used to shape Next.js' roadmap and prioritize features.
+#17 0.913 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#17 0.913 https://nextjs.org/telemetry
+#17 0.913 
+#17 0.984    ▲ Next.js 15.5.15
+#17 0.984 
+#17 1.053    Creating an optimized production build ...
+#17 25.02  ✓ Compiled successfully in 21.4s
+#17 25.04    Linting and checking validity of types ...
+#17 44.32 Failed to compile.
+#17 44.32 
+#17 44.32 ./components/hr-goals-tracking-board.tsx:624:45
+#17 44.32 Type error: Type '(signal?: AbortSignal) => Promise<void>' is not assignable to type 'MouseEventHandler<HTMLButtonElement>'.
+#17 44.32   Types of parameters 'signal' and 'event' are incompatible.
+#17 44.32     Type 'MouseEvent<HTMLButtonElement, MouseEvent>' is missing the following properties from type 'AbortSignal': aborted, onabort, reason, throwIfAborted, and 3 more.
+#17 44.32 
+#17 44.32 [0m [90m 622 |[39m             [33m<[39m[33mPlus[39m size[33m=[39m{[35m14[39m} [33m/[39m[33m>[39m [33mĐăng[39m ký mục tiêu
+#17 44.32  [90m 623 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m
+#17 44.32 [31m[1m>[22m[39m[90m 624 |[39m           [33m<[39m[33mbutton[39m className[33m=[39m[32m"btn btn-ghost"[39m onClick[33m=[39m{loadData}[33m>[39m
+#17 44.32  [90m     |[39m                                             [31m[1m^[22m[39m
+#17 44.32  [90m 625 |[39m             [33m<[39m[33mRefreshCw[39m size[33m=[39m{[35m14[39m} [33m/[39m[33m>[39m [33mRefresh[39m
+#17 44.32  [90m 626 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m
+#17 44.32  [90m 627 |[39m           [33m<[39m[33mbutton[39m className[33m=[39m[32m"btn btn-ghost"[39m onClick[33m=[39m{() [33m=>[39m [36mvoid[39m handleRecomputeAll()}[33m>[39m[0m
+#17 44.42 Next.js build worker exited with code: 1 and signal: null
+#17 44.44 npm error Lifecycle script `build` failed with error:
+#17 44.44 npm error code 1
+#17 44.44 npm error path /workspace/apps/web
+#17 44.44 npm error workspace @erp/web@1.0.0
+#17 44.44 npm error location /workspace/apps/web
+#17 44.44 npm error command failed
+#17 44.44 npm error command sh -c next build
+#17 ERROR: process "/bin/sh -c npm run build --workspace @erp/web" did not complete successfully: exit code: 1
+------
+ > [build 7/8] RUN npm run build --workspace @erp/web:
+44.32  [90m 626 |[39m           [33m<[39m[33m/[39m[33mbutton[39m[33m>[39m
+44.32  [90m 627 |[39m           [33m<[39m[33mbutton[39m className[33m=[39m[32m"btn btn-ghost"[39m onClick[33m=[39m{() [33m=>[39m [36mvoid[39m handleRecomputeAll()}[33m>[39m[0m
+44.42 Next.js build worker exited with code: 1 and signal: null
+44.44 npm error Lifecycle script `build` failed with error:
+44.44 npm error code 1
+44.44 npm error path /workspace/apps/web
+44.44 npm error workspace @erp/web@1.0.0
+44.44 npm error location /workspace/apps/web
+44.44 npm error command failed
+44.44 npm error command sh -c next build
+------
+Dockerfile:21
+
+--------------------
+
+  19 |     RUN npm run build --workspace @erp/shared
+
+  20 |     RUN npm run build --workspace @erp/ui
+
+  21 | >>> RUN npm run build --workspace @erp/web
+
+  22 |     RUN npm prune --omit=dev --workspaces --include-workspace-root
+
+  23 |     
+
+--------------------
+
+failed to solve: process "/bin/sh -c npm run build --workspace @erp/web" did not complete successfully: exit code: 1
+
+
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/ov6cg65kqwltvby54vio566bs
+

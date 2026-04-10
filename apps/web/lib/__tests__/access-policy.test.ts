@@ -45,10 +45,10 @@ describe('access policy snapshot merge', () => {
     });
 
     expect(decideActionAccess(snapshot, 'crm', 'VIEW').allowed).toBe(true);
-    expect(decideActionAccess(snapshot, 'crm', 'CREATE').allowed).toBe(false);
+    expect(decideActionAccess(snapshot, 'crm', 'CREATE').allowed).toBe(true);
     expect(decideActionAccess(snapshot, 'crm', 'UPDATE').allowed).toBe(false);
     expect(decideActionAccess(snapshot, 'crm', 'DELETE').allowed).toBe(true);
-    expect(decideActionAccess(snapshot, 'crm', 'APPROVE').allowed).toBe(false);
+    expect(decideActionAccess(snapshot, 'crm', 'APPROVE').allowed).toBe(true);
   });
 
   it('keeps hard deny rules for settings', () => {
@@ -104,14 +104,14 @@ describe('access policy snapshot merge', () => {
 });
 
 describe('access policy route decisions', () => {
-  it('denies settings and assistant channels for USER', () => {
+  it('denies settings for USER while keeping assistant routes available', () => {
     const userSnapshot = buildSnapshot({
       role: 'USER',
       enabledModules: ['crm', 'sales', 'finance', 'workflows', 'audit', 'assistant', 'reports', 'notifications']
     });
 
     expect(decideRouteAccess(userSnapshot, '/modules/settings').allowed).toBe(false);
-    expect(decideRouteAccess(userSnapshot, '/modules/assistant/channels').allowed).toBe(false);
+    expect(decideRouteAccess(userSnapshot, '/modules/assistant/channels').allowed).toBe(true);
     expect(decideRouteAccess(userSnapshot, '/modules/assistant/runs').allowed).toBe(true);
     expect(decideRouteAccess(userSnapshot, '/modules/finance').allowed).toBe(true);
   });

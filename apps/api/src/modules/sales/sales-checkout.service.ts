@@ -22,7 +22,9 @@ import {
   PaymentBankEventDto,
   PaymentOverrideDto,
   ReEvaluateInvoiceActionDto,
-  SalesCheckoutOrderItemDto
+  SalesCheckoutOrderItemDto,
+  SubmitCheckoutOrderDto,
+  UpdateDraftCheckoutOrderDto
 } from './dto/sales-checkout.dto';
 
 type CheckoutOrderDetail = Prisma.OrderGetPayload<{
@@ -118,8 +120,6 @@ export class SalesCheckoutService {
     let orderId = '';
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const orderNo = await this.generateCheckoutOrderNo(payload.orderGroup);
-      const intentCode = this.generatePaymentIntentCode(orderNo);
-      const qrPayload = this.buildQrPayload(intentCode, totalAmount, 'VND');
 
       try {
         const created = await this.prisma.client.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -128,13 +128,12 @@ export class SalesCheckoutService {
               tenant_Id: this.prisma.getTenantId(),
               orderNo,
               orderGroup: payload.orderGroup,
-              checkoutStatus: CheckoutOrderStatus.PENDING_PAYMENT,
+              checkoutStatus: CheckoutOrderStatus.DRAFT,
               customerId,
               customerName,
               employeeId,
               totalAmount: amountLocked,
-              status: GenericStatus.PENDING,
-              commercialLockedAt: now,
+              status: GenericStatus.DRAFT,
               commercialSnapshotJson: {
                 template: selectedTemplate,
                 templateFields: payload.templateFields ?? {},
@@ -165,27 +164,6 @@ export class SalesCheckoutService {
             }))
           });
 
-          await tx.paymentIntent.create({
-            data: {
-              tenant_Id: this.prisma.getTenantId(),
-              orderId: order.id,
-              intentCode,
-              amountLocked,
-              paidAmount: this.decimal(0),
-              remainingAmount: amountLocked,
-              currency: 'VND',
-              qrPayload,
-              paymentLink: qrPayload,
-              qrActive: true,
-              status: PaymentIntentStatus.UNPAID,
-              lockedAt: now,
-              metadataJson: {
-                templateCode: selectedTemplate.code,
-                orderGroup: payload.orderGroup
-              } as Prisma.InputJsonValue
-            }
-          });
-
           return order.id;
         });
 
@@ -202,6 +180,168 @@ export class SalesCheckoutService {
     if (!orderId) {
       throw new BadRequestException('Không thể tạo đơn checkout, vui lòng thử lại.');
     }
+
+    const detail = await this.getCheckoutOrderById(orderId);
+    await this.search.syncOrderUpsert(detail);
+    return detail;
+  }
+
+  async updateDraftOrder(orderId: string, payload: UpdateDraftCheckoutOrderDto) {
+    const order = await this.prisma.client.order.findFirst({
+      where: { id: orderId },
+      include: { items: true }
+    });
+    if (!order) {
+      throw new NotFoundException('Không tìm thấy đơn hàng checkout.');
+    }
+    if (order.checkoutStatus !== CheckoutOrderStatus.DRAFT) {
+      throw new BadRequestException('Chỉ có thể sửa đơn hàng ở trạng thái Nháp.');
+    }
+
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+    const orderGroup = order.orderGroup as CheckoutOrderGroup;
+
+    const templateCode = payload.templateCode ?? (this.ensureRecord(order.commercialSnapshotJson).template as Record<string, unknown>)?.code as string;
+    const selectedTemplate = this.resolveCheckoutTemplate(orderGroup, templateCode, salesPolicy.checkoutTemplates);
+    const templateFields = payload.templateFields ?? (this.ensureRecord(order.commercialSnapshotJson).templateFields as Record<string, unknown>) ?? {};
+    this.assertTemplateRequiredFields(selectedTemplate.requiredFields, templateFields);
+    this.assertTemplateFieldPayloadSize(templateFields);
+
+    const customerId = payload.customerId !== undefined ? (this.cleanString(payload.customerId) || null) : order.customerId;
+    const customerName = payload.customerName !== undefined
+      ? await this.resolveCheckoutCustomerName(customerId, payload.customerName)
+      : order.customerName;
+    const employeeId = payload.employeeId !== undefined ? (this.cleanString(payload.employeeId) || null) : order.employeeId;
+    const note = payload.note !== undefined ? (this.cleanString(payload.note) || null) : (this.ensureRecord(order.commercialSnapshotJson).note as string || null);
+
+    let items = order.items.map((item) => ({
+      productId: item.productId,
+      productName: item.productName,
+      quantity: item.quantity,
+      unitPrice: this.toNumber(item.unitPrice),
+      effectiveFrom: item.effectiveFrom,
+      effectiveTo: item.effectiveTo,
+      serviceContractId: (this.ensureRecord(item.serviceMetaJson).serviceContractId as string) || null,
+      serviceMetaJson: this.ensureRecord(item.serviceMetaJson)
+    }));
+
+    if (payload.items && payload.items.length > 0) {
+      items = this.normalizeCheckoutItems(payload.items);
+      if (items.length === 0) {
+        throw new BadRequestException('Cần tối thiểu 1 dòng dịch vụ hợp lệ.');
+      }
+    }
+
+    const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    if (totalAmount <= 0) {
+      throw new BadRequestException('Tổng tiền thanh toán phải lớn hơn 0.');
+    }
+    const amountLocked = this.decimal(totalAmount);
+
+    await this.prisma.client.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.order.updateMany({
+        where: { id: orderId },
+        data: {
+          customerId,
+          customerName,
+          employeeId,
+          totalAmount: amountLocked,
+          commercialSnapshotJson: {
+            template: selectedTemplate,
+            templateFields,
+            note,
+            currency: 'VND',
+            amountLocked: totalAmount,
+            items
+          } as Prisma.InputJsonValue
+        }
+      });
+
+      if (payload.items && payload.items.length > 0) {
+        await tx.orderItem.deleteMany({ where: { orderId } });
+        await tx.orderItem.createMany({
+          data: items.map((item) => ({
+            tenant_Id: this.prisma.getTenantId(),
+            orderId,
+            productId: item.productId,
+            productName: item.productName,
+            quantity: item.quantity,
+            unitPrice: this.decimal(item.unitPrice),
+            effectiveFrom: item.effectiveFrom,
+            effectiveTo: item.effectiveTo,
+            activationStatus: CheckoutLineActivationStatus.PENDING,
+            serviceMetaJson: {
+              serviceContractId: item.serviceContractId,
+              ...(item.serviceMetaJson ?? {})
+            } as Prisma.InputJsonValue
+          }))
+        });
+      }
+    });
+
+    const detail = await this.getCheckoutOrderById(orderId);
+    await this.search.syncOrderUpsert(detail);
+    return detail;
+  }
+
+  async submitCheckoutOrder(orderId: string, _payload: SubmitCheckoutOrderDto) {
+    const order = await this.prisma.client.order.findFirst({
+      where: { id: orderId },
+      include: { items: true, paymentIntents: true }
+    });
+    if (!order) {
+      throw new NotFoundException('Không tìm thấy đơn hàng checkout.');
+    }
+    if (order.checkoutStatus !== CheckoutOrderStatus.DRAFT) {
+      throw new BadRequestException('Chỉ có thể gửi đơn hàng ở trạng thái Nháp.');
+    }
+    if (!order.items || order.items.length === 0) {
+      throw new BadRequestException('Đơn hàng phải có tối thiểu 1 dòng dịch vụ.');
+    }
+
+    const totalAmount = this.toNumber(order.totalAmount ?? 0);
+    if (totalAmount <= 0) {
+      throw new BadRequestException('Tổng tiền thanh toán phải lớn hơn 0.');
+    }
+
+    const amountLocked = this.decimal(totalAmount);
+    const now = new Date();
+    const intentCode = this.generatePaymentIntentCode(order.orderNo || orderId.slice(-8));
+    const qrPayload = this.buildQrPayload(intentCode, totalAmount, 'VND');
+
+    await this.prisma.client.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (order.paymentIntents.length === 0) {
+        await tx.paymentIntent.create({
+          data: {
+            tenant_Id: this.prisma.getTenantId(),
+            orderId: order.id,
+            intentCode,
+            amountLocked,
+            paidAmount: this.decimal(0),
+            remainingAmount: amountLocked,
+            currency: 'VND',
+            qrPayload,
+            paymentLink: qrPayload,
+            qrActive: true,
+            status: PaymentIntentStatus.UNPAID,
+            lockedAt: now,
+            metadataJson: {
+              templateCode: (this.ensureRecord(order.commercialSnapshotJson).template as Record<string, unknown>)?.code || null,
+              orderGroup: order.orderGroup
+            } as Prisma.InputJsonValue
+          }
+        });
+      }
+
+      await tx.order.updateMany({
+        where: { id: orderId },
+        data: {
+          checkoutStatus: CheckoutOrderStatus.PENDING_PAYMENT,
+          status: GenericStatus.PENDING,
+          commercialLockedAt: now
+        }
+      });
+    });
 
     const detail = await this.getCheckoutOrderById(orderId);
     await this.search.syncOrderUpsert(detail);
@@ -984,7 +1124,8 @@ export class SalesCheckoutService {
       return {
         code: this.cleanString(fallback.code) || `${group}_STD`,
         label: this.cleanString(fallback.label) || `${group} template`,
-        requiredFields: this.toStringArray(fallback.requiredFields)
+        requiredFields: this.toStringArray(fallback.requiredFields),
+        fieldConfig: this.ensureRecord(fallback.fieldConfig)
       };
     }
 
@@ -996,7 +1137,8 @@ export class SalesCheckoutService {
     return {
       code: this.cleanString(matched.code) || normalizedTemplateCode,
       label: this.cleanString(matched.label) || normalizedTemplateCode,
-      requiredFields: this.toStringArray(matched.requiredFields)
+      requiredFields: this.toStringArray(matched.requiredFields),
+      fieldConfig: this.ensureRecord(matched.fieldConfig)
     };
   }
 

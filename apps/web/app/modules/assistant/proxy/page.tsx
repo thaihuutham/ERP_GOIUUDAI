@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { AssistantProxyBoard } from '../../../../components/assistant/assistant-proxy-board';
 import { AssistantShell } from '../../../../components/assistant/assistant-shell';
 

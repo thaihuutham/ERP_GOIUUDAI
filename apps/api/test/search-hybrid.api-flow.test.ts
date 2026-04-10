@@ -3,9 +3,10 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { sign } from 'jsonwebtoken';
 import request from 'supertest';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { RuntimeSettingsService } from '../src/common/settings/runtime-settings.service';
+import { CustomFieldsService } from '../src/modules/custom-fields/custom-fields.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SearchService } from '../src/modules/search/search.service';
 
@@ -13,7 +14,21 @@ describe('Hybrid search API flow', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let search: SearchService;
+  let customFieldsService: CustomFieldsService;
   let runtimeSettings: RuntimeSettingsService;
+
+  const stubCustomFields = () => {
+    vi.spyOn(customFieldsService, 'parseMutationBody').mockImplementation((body: Record<string, unknown>) => ({
+      base: body,
+      customFields: {},
+      unifiedContract: false
+    } as any));
+    vi.spyOn(customFieldsService, 'resolveEntityIdsByQuery').mockResolvedValue(undefined);
+    vi.spyOn(customFieldsService, 'applyEntityMutation').mockResolvedValue();
+    vi.spyOn(customFieldsService, 'wrapEntity').mockImplementation(async (_entityType, record) => record as any);
+    vi.spyOn(customFieldsService, 'wrapResult').mockImplementation(async (_entityType, result) => result as any);
+    vi.spyOn(customFieldsService, 'wrapNestedEntity').mockImplementation(async (_entityType, result) => result as any);
+  };
 
   const makeToken = (role: 'ADMIN' | 'USER') =>
     sign(
@@ -54,7 +69,12 @@ describe('Hybrid search API flow', () => {
 
     prisma = app.get(PrismaService);
     search = app.get(SearchService);
+    customFieldsService = app.get(CustomFieldsService);
     runtimeSettings = app.get(RuntimeSettingsService);
+  });
+
+  beforeEach(() => {
+    stubCustomFields();
   });
 
   afterEach(() => {
@@ -69,6 +89,10 @@ describe('Hybrid search API flow', () => {
     const token = makeToken('ADMIN');
     vi.spyOn(runtimeSettings, 'isModuleEnabled').mockResolvedValue(true);
     vi.spyOn(search, 'searchCustomerIds').mockResolvedValue(['cus_2', 'cus_1']);
+    vi.spyOn(prisma.client.serviceContract, 'findMany').mockResolvedValue([] as any);
+    vi.spyOn(prisma.client.serviceContract, 'groupBy').mockResolvedValue([] as any);
+    vi.spyOn(prisma.client.vehicle, 'findMany').mockResolvedValue([] as any);
+    vi.spyOn(prisma.client.vehicle, 'groupBy').mockResolvedValue([] as any);
     vi.spyOn(prisma.client.customer, 'findMany').mockResolvedValue([
       {
         id: 'cus_1',

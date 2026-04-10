@@ -680,7 +680,7 @@ export function ReportsCenter() {
                   </div>
 
                   <div className="reports-definition-actions">
-                    <Link href={`${moduleRoute}?range=${selectedRange}&reportId=${definition.id}`} className="btn btn-ghost">
+                    <Link href={`/modules/reports/view?moduleName=${definition.moduleName}&range=${selectedRange}&reportId=${definition.id}`} className="btn btn-ghost">
                       <BarChart3 size={14} />
                       Preview & drill-through
                     </Link>

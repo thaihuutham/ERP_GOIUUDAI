@@ -35,6 +35,7 @@ export type ApiRequestOptions = {
   body?: unknown;
   headers?: Record<string, string>;
   skipAuth?: boolean;
+  signal?: AbortSignal;
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -101,7 +102,7 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
       },
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       cache: 'no-store',
-      signal: abortController?.signal
+      signal: options.signal ?? abortController?.signal
     });
   } catch (error) {
     if (isAbortError(error)) {

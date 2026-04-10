@@ -28,10 +28,15 @@ Dự án ERP được rebuild theo kiến trúc mới để giữ toàn bộ fea
 cp .env.example .env
 npm install
 npm run prisma:generate
+npm run dev:infra:up
 npm run dev:api
 # terminal khác
 npm run dev:web
 ```
+
+Lưu ý:
+- `npm run dev:api` sẽ tự đảm bảo chạy đủ hạ tầng local (`postgres`, `redis`, `meilisearch`, `minio`).
+- Khi chạy API trực tiếp trên host, script dùng `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail` để tránh lỗi `Prisma P1001` do host `postgres:5432` chỉ dùng trong Docker network.
 
 ## API production start (local smoke)
 ```bash

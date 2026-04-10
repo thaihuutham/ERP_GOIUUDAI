@@ -9,10 +9,17 @@ import { Badge, statusToBadge } from './ui';
 
 type CheckoutOrderGroup = 'INSURANCE' | 'TELECOM' | 'DIGITAL';
 
+type FieldConfigItem = {
+  type?: 'text' | 'select' | 'date' | 'tel' | 'number' | 'checkbox' | 'file';
+  label?: string;
+  options?: string[];
+};
+
 type CheckoutTemplateConfig = {
   code: string;
   label: string;
   requiredFields: string[];
+  fieldConfig?: Record<string, FieldConfigItem>;
 };
 
 type CheckoutConfigResponse = {
@@ -459,7 +466,7 @@ export function SalesCheckoutBoard() {
         }
       });
 
-      setResultMessage(`Đã tạo checkout order ${created.orderNo || created.id.slice(-8)}.`);
+      setResultMessage(`Đã tạo đơn nháp ${created.orderNo || created.id.slice(-8)}. Bấm "Gửi đơn" để chuyển sang chờ thanh toán.`);
       setCreateForm(makeInitialCreateForm());
       await loadCheckoutOrders();
       setSelectedOrderId(created.id);
@@ -508,13 +515,40 @@ export function SalesCheckoutBoard() {
   };
 
   const handleTemplateFieldChange = (fieldKey: string, value: string) => {
-    setCreateForm((prev) => ({
-      ...prev,
-      templateFields: {
+    setCreateForm((prev) => {
+      const nextFields = {
         ...prev.templateFields,
         [fieldKey]: value
+      };
+
+      // Auto-compute effectiveTo when termDays or startDate/requestedEffectiveDate changes
+      const termDaysKeys = ['termDays'];
+      const startDateKeys = ['startDate', 'requestedEffectiveDate'];
+      const isTermUpdate = termDaysKeys.includes(fieldKey);
+      const isStartUpdate = startDateKeys.includes(fieldKey);
+
+      if (isTermUpdate || isStartUpdate) {
+        const termDaysValue = isTermUpdate ? value : (nextFields.termDays ?? '');
+        const startDateValue = isStartUpdate
+          ? value
+          : (nextFields.startDate ?? nextFields.requestedEffectiveDate ?? '');
+
+        if (termDaysValue && startDateValue) {
+          const days = Number(termDaysValue);
+          const start = new Date(startDateValue);
+          if (Number.isFinite(days) && days > 0 && !Number.isNaN(start.getTime())) {
+            const end = new Date(start);
+            end.setDate(end.getDate() + days);
+            nextFields.effectiveTo = end.toISOString().slice(0, 10);
+          }
+        }
       }
-    }));
+
+      return {
+        ...prev,
+        templateFields: nextFields
+      };
+    });
   };
 
   const handleOrderGroupChange = (group: CheckoutOrderGroup) => {
@@ -669,6 +703,47 @@ export function SalesCheckoutBoard() {
     }
   };
 
+  const handleFileUpload = async (fieldKey: string, file: File) => {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const result = await fetch('/api/v1/sales/checkout/files/upload', {
+        method: 'POST',
+        body: formData
+      });
+      if (!result.ok) {
+        const err = await result.json().catch(() => ({}));
+        throw new Error((err as Record<string, string>).message || 'Upload thất bại');
+      }
+      const data = await result.json() as { fileId: string; fileName: string; url: string };
+      handleTemplateFieldChange(fieldKey, data.fileId);
+      setResultMessage(`Đã upload file: ${file.name}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? `Upload thất bại: ${error.message}` : 'Upload thất bại.');
+    }
+  };
+
+  const handleSubmitDraft = async () => {
+    if (!selectedOrderId || isApplyingAction) return;
+    setIsApplyingAction(true);
+    setErrorMessage(null);
+    setResultMessage(null);
+    try {
+      const result = await apiRequest<CheckoutOrderDetail>(`/sales/checkout/orders/${selectedOrderId}/submit`, {
+        method: 'POST',
+        body: {}
+      });
+      setResultMessage(`Đã gửi đơn ${result.orderNo || result.id.slice(-8)}. Trạng thái: PENDING_PAYMENT.`);
+      await loadCheckoutDetail(selectedOrderId);
+      await loadCheckoutOrders();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? `Gửi đơn thất bại: ${error.message}` : 'Gửi đơn thất bại.');
+    } finally {
+      setIsApplyingAction(false);
+    }
+  };
+
   return (
     <section style={{ marginBottom: '2rem' }}>
       <div className="finance-status-card" style={{ marginBottom: '1rem' }}>
@@ -723,12 +798,68 @@ export function SalesCheckoutBoard() {
               <strong style={{ fontSize: '0.95rem' }}>Field bắt buộc theo template</strong>
               {selectedTemplate.requiredFields.length === 0 ? <p className="muted" style={{ margin: 0 }}>Template không có field bắt buộc.</p> : null}
               {selectedTemplate.requiredFields.map((fieldKey) => {
-                const inputType = detectTemplateFieldInputType(fieldKey);
+                const fc = selectedTemplate.fieldConfig?.[fieldKey];
+                const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
+                const fieldType = fc?.type || detectTemplateFieldInputType(fieldKey);
+                const fieldOptions = fc?.options;
+
+                if (fieldType === 'select' && fieldOptions && fieldOptions.length > 0) {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel} *</label>
+                      <select
+                        required
+                        value={createForm.templateFields[fieldKey] ?? ''}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
+                      >
+                        <option value="">-- Chọn --</option>
+                        {fieldOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'checkbox') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        id={`tpl-${fieldKey}`}
+                        checked={createForm.templateFields[fieldKey] === 'true'}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.checked ? 'true' : 'false')}
+                        style={{ width: 'auto' }}
+                      />
+                      <label htmlFor={`tpl-${fieldKey}`} style={{ margin: 0 }}>{fieldLabel}</label>
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'file') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel} *</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleFileUpload(fieldKey, file);
+                        }}
+                      />
+                      {createForm.templateFields[fieldKey] ? (
+                        <small className="muted">✅ File ID: {createForm.templateFields[fieldKey]}</small>
+                      ) : null}
+                    </div>
+                  );
+                }
+
                 return (
                   <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
-                    <label>{formatTemplateFieldLabel(fieldKey)} *</label>
+                    <label>{fieldLabel} *</label>
                     <input
-                      type={inputType}
+                      type={fieldType}
                       required
                       value={createForm.templateFields[fieldKey] ?? ''}
                       onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
@@ -737,6 +868,88 @@ export function SalesCheckoutBoard() {
                   </div>
                 );
               })}
+
+              {/* Render optional non-required fields from fieldConfig */}
+              {Object.entries(selectedTemplate.fieldConfig ?? {}).filter(([key]) => !selectedTemplate.requiredFields.includes(key)).map(([fieldKey, fc]) => {
+                const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
+                const fieldType = fc?.type || 'text';
+                const fieldOptions = fc?.options;
+
+                if (fieldType === 'checkbox') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        id={`tpl-${fieldKey}`}
+                        checked={createForm.templateFields[fieldKey] === 'true'}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.checked ? 'true' : 'false')}
+                        style={{ width: 'auto' }}
+                      />
+                      <label htmlFor={`tpl-${fieldKey}`} style={{ margin: 0 }}>{fieldLabel}</label>
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'file') {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel}</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleFileUpload(fieldKey, file);
+                        }}
+                      />
+                      {createForm.templateFields[fieldKey] ? (
+                        <small className="muted">✅ File ID: {createForm.templateFields[fieldKey]}</small>
+                      ) : null}
+                    </div>
+                  );
+                }
+
+                if (fieldType === 'select' && fieldOptions && fieldOptions.length > 0) {
+                  return (
+                    <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                      <label>{fieldLabel}</label>
+                      <select
+                        value={createForm.templateFields[fieldKey] ?? ''}
+                        onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
+                      >
+                        <option value="">-- Chọn --</option>
+                        {fieldOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
+                    <label>{fieldLabel}</label>
+                    <input
+                      type={fieldType}
+                      value={createForm.templateFields[fieldKey] ?? ''}
+                      onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
+                      placeholder={fieldKey}
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Auto-computed effectiveTo */}
+              {createForm.templateFields.effectiveTo ? (
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>Ngày hết hiệu lực (tự tính, cho phép sửa)</label>
+                  <input
+                    type="date"
+                    value={createForm.templateFields.effectiveTo ?? ''}
+                    onChange={(event) => handleTemplateFieldChange('effectiveTo', event.target.value)}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -786,7 +999,7 @@ export function SalesCheckoutBoard() {
           </div>
 
           <button type="submit" className="btn btn-primary" disabled={!canCreate || isSubmittingCreate || !selectedTemplate}>
-            {isSubmittingCreate ? 'Đang tạo...' : 'Tạo checkout order'}
+            {isSubmittingCreate ? 'Đang tạo...' : 'Tạo đơn nháp (DRAFT)'}
           </button>
         </form>
 
@@ -839,7 +1052,14 @@ export function SalesCheckoutBoard() {
             <h4 style={{ margin: 0 }}>
               Checkout detail: {selectedOrder.orderNo || selectedOrder.id.slice(-8)}
             </h4>
-            <Badge variant={statusToBadge(selectedOrder.checkoutStatus)}>{selectedOrder.checkoutStatus || '--'}</Badge>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <Badge variant={statusToBadge(selectedOrder.checkoutStatus)}>{selectedOrder.checkoutStatus || '--'}</Badge>
+              {selectedOrder.checkoutStatus === 'DRAFT' ? (
+                <button type="button" className="btn btn-primary" disabled={isApplyingAction} onClick={handleSubmitDraft} style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem' }}>
+                  {isApplyingAction ? 'Đang gửi...' : '📤 Gửi đơn'}
+                </button>
+              ) : null}
+            </div>
           </div>
           {isLoadingDetail ? <p className="muted">Đang đồng bộ trạng thái realtime...</p> : null}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem' }}>

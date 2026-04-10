@@ -33,6 +33,12 @@ export class ReportsController {
     return this.reportsService.byModule(query);
   }
 
+  @Get('metrics')
+  @Roles(UserRole.USER, UserRole.ADMIN)
+  getMetricsByModule(@Query() query: ModuleDataQueryDto) {
+    return this.reportsService.getMetricsByModule(query);
+  }
+
   @Get()
   @Roles(UserRole.USER, UserRole.ADMIN)
   listDefinitions(@Query() query: ReportsListQueryDto) {

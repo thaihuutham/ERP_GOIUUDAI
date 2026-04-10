@@ -48,7 +48,7 @@ describe('settings view model', () => {
 
   it('resolves domain tabs for phase-1 domains', () => {
     const orgTabs = resolveDomainTabs('org_profile');
-    expect(orgTabs.map((item) => item.key)).toEqual(['org-general', 'org-structure']);
+    expect(orgTabs.map((item) => item.key)).toEqual(['org-general', 'org-appearance', 'org-structure']);
 
     const securityTabs = resolveDomainTabs('access_security');
     expect(securityTabs.map((item) => item.key)).toEqual([

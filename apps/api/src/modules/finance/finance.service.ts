@@ -9,6 +9,7 @@ import {
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
+import { SearchService } from '../search/search.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
 import {
   CreateAccountDto,
@@ -54,6 +55,7 @@ export class FinanceService {
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(SearchService) private readonly searchService: SearchService,
     @Inject(SettingsPolicyService) private readonly settingsPolicy: SettingsPolicyService,
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService,
     @Optional() @Inject(IamScopeFilterService) private readonly iamScopeFilter?: IamScopeFilterService
@@ -71,18 +73,79 @@ export class FinanceService {
     const where: Prisma.InvoiceWhereInput = {
       ...(Array.isArray(entityIds) ? { id: { in: entityIds } } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(query.invoiceType ? { invoiceType: query.invoiceType } : {}),
-      ...(query.q
-        ? {
-            OR: [
-              { invoiceNo: { contains: query.q, mode: 'insensitive' } },
-              { partnerName: { contains: query.q, mode: 'insensitive' } }
-            ]
-          }
-        : {})
+      ...(query.invoiceType ? { invoiceType: query.invoiceType } : {})
     };
 
+    const keyword = query.q?.trim();
+
     const scopeFilter = await this.resolveFinanceScopeFilter();
+    if (!scopeFilter.companyWide) {
+      if (scopeFilter.employeeIds.length === 0) {
+        where.id = { in: [] };
+      } else {
+        where.order = {
+          is: {
+            employeeId: {
+              in: scopeFilter.employeeIds
+            }
+          }
+        };
+      }
+    }
+
+    if (keyword && sortBy === 'createdAt' && await this.searchService.shouldUseHybridSearch(keyword, query.cursor)) {
+      const rankedIds = await this.searchService.searchInvoiceIds(
+        keyword,
+        this.prisma.getTenantId(),
+        take + 1,
+        { status: query.status }
+      );
+
+      if (rankedIds !== null) {
+        const lookupIds = rankedIds.slice(0, take + 1);
+        const rankedRows = lookupIds.length > 0
+          ? await this.prisma.client.invoice.findMany({
+              where: {
+                ...where,
+                id: { in: lookupIds }
+              },
+              include: {
+                order: { select: { id: true, orderNo: true } }
+              }
+            })
+          : [];
+
+        const orderedRows = this.rankByIds(rankedRows, lookupIds);
+        const { items, hasMore, nextCursor } = sliceCursorItems(orderedRows, take);
+        const normalizedItems = items.map((invoice) => {
+          const total = Number(invoice.totalAmount ?? 0);
+          const paid = Number(invoice.paidAmount ?? 0);
+          return {
+            ...invoice,
+            orderId: invoice.order?.id ?? invoice.orderId ?? null,
+            orderNo: invoice.order?.orderNo ?? null,
+            outstandingAmount: Math.max(0, total - paid)
+          };
+        });
+
+        return buildCursorListResponse(normalizedItems, {
+          limit: take,
+          hasMore,
+          nextCursor,
+          sortBy,
+          sortDir,
+          sortableFields,
+          consistency: 'snapshot'
+        });
+      }
+    }
+
+    if (keyword) {
+      where.OR = [
+        { invoiceNo: { contains: keyword, mode: 'insensitive' } },
+        { partnerName: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
     if (!scopeFilter.companyWide) {
       if (scopeFilter.employeeIds.length === 0) {
         where.id = { in: [] };
@@ -191,11 +254,14 @@ export class FinanceService {
       }
     });
 
-    return {
+    const result = {
       ...invoice,
       orderId: invoice.order?.id ?? invoice.orderId ?? null,
       orderNo: invoice.order?.orderNo ?? null
     };
+
+    await this.searchService.syncInvoiceUpsert(invoice);
+    return result;
   }
 
   async createInvoiceFromOrder(body: CreateInvoiceFromOrderDto) {
@@ -234,7 +300,7 @@ export class FinanceService {
       }
     });
 
-    return {
+    const result = {
       ...invoice,
       orderNo: invoice.order?.orderNo ?? null,
       transition: {
@@ -242,6 +308,9 @@ export class FinanceService {
         note: body.note ?? null
       }
     };
+
+    await this.searchService.syncInvoiceUpsert(invoice);
+    return result;
   }
 
   async updateInvoice(id: string, body: UpdateInvoiceDto) {
@@ -277,7 +346,9 @@ export class FinanceService {
       }
     });
 
-    return this.getInvoiceOrThrow(id);
+    const updated = await this.getInvoiceOrThrow(id);
+    await this.searchService.syncInvoiceUpsert(updated);
+    return updated;
   }
 
   async archiveInvoice(id: string) {
@@ -309,6 +380,8 @@ export class FinanceService {
     });
 
     const updated = await this.getInvoiceOrThrow(id);
+    await this.searchService.syncInvoiceUpsert(updated);
+
     return {
       ...updated,
       orderId: updated.order?.id ?? updated.orderId ?? null,
@@ -462,6 +535,9 @@ export class FinanceService {
         closedAt: isPaidOff ? allocatedAt : undefined
       }
     });
+
+    const updated = await this.getInvoiceOrThrow(invoice.id);
+    await this.searchService.syncInvoiceUpsert(updated);
 
     return {
       allocation,
@@ -726,6 +802,8 @@ export class FinanceService {
     });
 
     const updated = await this.getInvoiceOrThrow(id);
+    await this.searchService.syncInvoiceUpsert(updated);
+
     return {
       ...updated,
       orderId: updated.order?.id ?? updated.orderId ?? null,
@@ -1107,5 +1185,19 @@ export class FinanceService {
       companyWide: scope.companyWide,
       employeeIds: scope.employeeIds
     };
+  }
+
+  private rankByIds<T extends { id: string }>(rows: T[], orderedIds: string[]) {
+    const idMap = new Map();
+    for (const row of rows) {
+      idMap.set(row.id, row);
+    }
+    const result = [];
+    for (const id of orderedIds) {
+      if (idMap.has(id)) {
+        result.push(idMap.get(id));
+      }
+    }
+    return result;
   }
 }

@@ -1,0 +1,136 @@
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.20kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.47kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:22-alpine
+#3 DONE 1.2s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 290B done
+#4 DONE 0.0s
+
+#5 [deps 1/7] FROM docker.io/library/node:22-alpine@sha256:4d64b49e6c891c8fc821007cb1cdc6c0db7773110ac2c34bf2e6960adef62ed3
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 94.01kB 0.1s done
+#6 DONE 0.1s
+
+#7 [deps 3/7] COPY package.json tsconfig.base.json ./
+#7 CACHED
+
+#8 [deps 4/7] COPY apps/web/package.json ./apps/web/package.json
+#8 CACHED
+
+#9 [deps 5/7] COPY packages/shared/package.json ./packages/shared/package.json
+#9 CACHED
+
+#10 [deps 2/7] WORKDIR /workspace
+#10 CACHED
+
+#11 [deps 6/7] COPY packages/ui/package.json ./packages/ui/package.json
+#11 CACHED
+
+#12 [deps 7/7] RUN npm install
+#12 CACHED
+
+#13 [build 3/8] COPY --from=deps /workspace/node_modules ./node_modules
+#13 CACHED
+
+#14 [build 4/8] COPY . .
+#14 DONE 2.2s
+
+#15 [build 5/8] RUN npm run build --workspace @erp/shared
+#15 0.579 
+#15 0.579 > @erp/shared@1.0.0 build
+#15 0.579 > tsc -p tsconfig.json
+#15 0.579 
+#15 3.469 npm notice
+#15 3.469 npm notice New major version of npm available! 10.9.7 -> 11.12.1
+#15 3.469 npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+#15 3.469 npm notice To update run: npm install -g npm@11.12.1
+#15 3.469 npm notice
+#15 DONE 3.6s
+
+#16 [build 6/8] RUN npm run build --workspace @erp/ui
+#16 0.723 
+#16 0.723 > @erp/ui@1.0.0 build
+#16 0.723 > tsc -p tsconfig.json
+#16 0.723 
+#16 DONE 2.5s
+
+#17 [build 7/8] RUN npm run build --workspace @erp/web
+#17 0.386 
+#17 0.386 > @erp/web@1.0.0 build
+#17 0.386 > next build
+#17 0.386 
+#17 0.996 Attention: Next.js now collects completely anonymous telemetry regarding usage.
+#17 0.996 This information is used to shape Next.js' roadmap and prioritize features.
+#17 0.997 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#17 0.997 https://nextjs.org/telemetry
+#17 0.997 
+#17 1.067    ▲ Next.js 15.5.15
+#17 1.067 
+#17 1.128    Creating an optimized production build ...
+#17 23.26  ✓ Compiled successfully in 19.5s
+#17 23.27    Linting and checking validity of types ...
+#17 38.36 Failed to compile.
+#17 38.36 
+#17 38.36 ./components/hr-goals-tracking-board.tsx:275:66
+#17 38.36 Type error: Object literal may only specify known properties, and 'signal' does not exist in type 'ApiRequestOptions'.
+#17 38.36 
+#17 38.36 [0m [90m 273 |[39m     [36mtry[39m {
+#17 38.36  [90m 274 |[39m       [36mconst[39m [trackerPayload[33m,[39m overviewPayload] [33m=[39m [36mawait[39m [33mPromise[39m[33m.[39mall([
+#17 38.36 [31m[1m>[22m[39m[90m 275 |[39m         apiRequest[33m<[39m[33mTrackerPayload[39m[33m>[39m([32m'/hr/goals/tracker'[39m[33m,[39m { query[33m,[39m signal })[33m,[39m
+#17 38.36  [90m     |[39m                                                                  [31m[1m^[22m[39m
+#17 38.36  [90m 276 |[39m         apiRequest[33m<[39m[33mOverviewPayload[39m[33m>[39m([32m'/hr/goals/overview'[39m[33m,[39m { query[33m,[39m signal })
+#17 38.36  [90m 277 |[39m       ])[33m;[39m
+#17 38.36  [90m 278 |[39m       setTracker(trackerPayload)[33m;[39m[0m
+#17 38.45 Next.js build worker exited with code: 1 and signal: null
+#17 38.47 npm error Lifecycle script `build` failed with error:
+#17 38.47 npm error code 1
+#17 38.47 npm error path /workspace/apps/web
+#17 38.47 npm error workspace @erp/web@1.0.0
+#17 38.47 npm error location /workspace/apps/web
+#17 38.47 npm error command failed
+#17 38.47 npm error command sh -c next build
+#17 ERROR: process "/bin/sh -c npm run build --workspace @erp/web" did not complete successfully: exit code: 1
+------
+ > [build 7/8] RUN npm run build --workspace @erp/web:
+38.36  [90m 277 |[39m       ])[33m;[39m
+38.36  [90m 278 |[39m       setTracker(trackerPayload)[33m;[39m[0m
+38.45 Next.js build worker exited with code: 1 and signal: null
+38.47 npm error Lifecycle script `build` failed with error:
+38.47 npm error code 1
+38.47 npm error path /workspace/apps/web
+38.47 npm error workspace @erp/web@1.0.0
+38.47 npm error location /workspace/apps/web
+38.47 npm error command failed
+38.47 npm error command sh -c next build
+------
+Dockerfile:21
+
+--------------------
+
+  19 |     RUN npm run build --workspace @erp/shared
+
+  20 |     RUN npm run build --workspace @erp/ui
+
+  21 | >>> RUN npm run build --workspace @erp/web
+
+  22 |     RUN npm prune --omit=dev --workspaces --include-workspace-root
+
+  23 |     
+
+--------------------
+
+failed to solve: process "/bin/sh -c npm run build --workspace @erp/web" did not complete successfully: exit code: 1
+
+
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/15fybfml3fqk5wx3usnawzs1z
+

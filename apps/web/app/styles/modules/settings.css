@@ -1,0 +1,146 @@
+/* ═══════════════════════════════════════════
+   Settings Module — Appearance + Settings Center
+   ═══════════════════════════════════════════ */
+
+/* ── Appearance Page ──────────────────────── */
+
+.appearance-section {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 1.1rem;
+}
+
+.appearance-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 0.75rem 0;
+  color: var(--text);
+}
+
+.appearance-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(195px, 1fr));
+  gap: 0.55rem;
+}
+
+.appearance-preset-card {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+
+.appearance-preset-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border-light));
+  background: var(--surface-hover);
+}
+
+.appearance-preset-card.is-selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 5%, white);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-soft) 50%, transparent);
+}
+
+.appearance-preset-swatches {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.appearance-preset-name {
+  flex: 1;
+  font-weight: 500;
+  text-align: left;
+}
+
+.appearance-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.55rem;
+}
+
+.appearance-option-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: 0.75rem 0.55rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+  font-family: inherit;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.appearance-option-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border-light));
+  background: var(--surface-hover);
+}
+
+.appearance-option-card.is-selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 5%, white);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-soft) 50%, transparent);
+}
+
+/* ── Preview panel ────────────────────────── */
+
+.appearance-preview {
+  position: sticky;
+  top: 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.appearance-preview-sidebar {
+  display: grid;
+  gap: 0.15rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.appearance-preview-sidebar-item {
+  padding: 0.45rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.appearance-preview-sidebar-item.is-active {
+  background: color-mix(in srgb, var(--primary) 10%, white);
+  color: var(--primary);
+  font-weight: 600;
+  border-left: 3px solid var(--primary);
+}
+
+/* ── Responsive ───────────────────────────── */
+
+@media (max-width: 860px) {
+  .appearance-preset-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .appearance-option-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

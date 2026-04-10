@@ -37,6 +37,7 @@ export type SettingsLayoutMetadata = {
 const DOMAIN_TAB_MAP: Record<SettingsDomain, SettingsLayoutTabHint[]> = {
   org_profile: [
     { key: 'org-general', label: 'Cấu hình chung', sectionIds: ['org-base', 'org-branding'] },
+    { key: 'org-dashboard', label: 'Dashboard', sectionIds: ['org-dashboard-widgets'] },
     { key: 'org-appearance', label: 'Appearance', sectionIds: ['org-appearance'] },
     { key: 'org-structure', label: 'Sơ đồ tổ chức', sectionIds: [], showOrgStructure: true }
   ],

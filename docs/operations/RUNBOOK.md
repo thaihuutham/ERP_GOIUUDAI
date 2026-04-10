@@ -2,11 +2,18 @@
 
 ## 1. Local startup
 ```bash
-cp config/.env.example config/.env
+cp .env.example .env
 npm install
 npm run prisma:generate --workspace @erp/api
+npm run dev:infra:up
 npm run dev:api
+# terminal khác
+npm run dev:web
 ```
+
+Ghi chú:
+- `npm run dev:api` tự bật các service hạ tầng local cần thiết.
+- API host-mode dùng DB host-local `127.0.0.1:55432` (override qua `DEV_HOST_DATABASE_URL` nếu cần) để tránh lỗi `Failed to fetch` do API crash với `Prisma P1001`.
 
 ## 2. Env bắt buộc cho API auth
 - `AUTH_ENABLED=true` cho staging/prod.

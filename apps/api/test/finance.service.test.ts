@@ -81,9 +81,18 @@ function makeRuntimeSettingsMock() {
   };
 }
 
+function makeSearchMock() {
+  return {
+    shouldUseHybridSearch: vi.fn().mockResolvedValue(false),
+    searchInvoiceIds: vi.fn().mockResolvedValue(null),
+    syncInvoiceUpsert: vi.fn().mockResolvedValue(undefined)
+  };
+}
+
 describe('FinanceService', () => {
   it('filters invoice list by IAM scope employee ids through linked order', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     const iamScopeFilter = {
       resolveForCurrentActor: vi.fn().mockResolvedValue({
         enabled: true,
@@ -97,6 +106,7 @@ describe('FinanceService', () => {
 
     const service = new FinanceService(
       prisma as any,
+      search as any,
       makeSettingsPolicyMock() as any,
       makeRuntimeSettingsMock() as any,
       iamScopeFilter as any
@@ -122,9 +132,10 @@ describe('FinanceService', () => {
 
   it('rejects unbalanced journal lines', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     await expect(
       service.createJournalEntry({
@@ -139,9 +150,10 @@ describe('FinanceService', () => {
 
   it('closes finance period and persists lock list', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     const result = await service.closePeriod('2026-03', 'qa_admin');
 
@@ -153,6 +165,7 @@ describe('FinanceService', () => {
 
   it('allocates payment and marks invoice as paid off when full amount reached', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     prisma.client.invoice.findFirst.mockResolvedValue({
       id: 'inv_1',
       dueAt: new Date('2026-03-31T00:00:00.000Z'),
@@ -167,7 +180,7 @@ describe('FinanceService', () => {
 
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
     const result = await service.allocatePayment('inv_1', {
       allocatedAmount: 100,
       paymentRef: 'PAY-001'
@@ -187,6 +200,7 @@ describe('FinanceService', () => {
 
   it('blocks PAY transition from invalid invoice state', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     prisma.client.invoice.findFirst.mockResolvedValue({
       id: 'inv_2',
       dueAt: null,
@@ -197,7 +211,7 @@ describe('FinanceService', () => {
 
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     await expect(
       service.payInvoice('inv_2', { note: 'invalid transition test' })
@@ -206,6 +220,7 @@ describe('FinanceService', () => {
 
   it('creates manual invoice in DRAFT status', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     prisma.client.invoice.create.mockResolvedValue({
       id: 'inv_manual_1',
       invoiceNo: 'INV-2026-000001',
@@ -221,7 +236,7 @@ describe('FinanceService', () => {
 
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     const result = await service.createInvoice({
       invoiceType: 'SALES',
@@ -244,6 +259,7 @@ describe('FinanceService', () => {
 
   it('creates invoice from approved order', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     prisma.client.order.findFirst.mockResolvedValue({
       id: 'order_approved_1',
       status: GenericStatus.APPROVED,
@@ -270,7 +286,7 @@ describe('FinanceService', () => {
 
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     const result = await service.createInvoiceFromOrder({
       orderId: 'order_approved_1'
@@ -290,6 +306,7 @@ describe('FinanceService', () => {
 
   it('blocks creating invoice from non-approved order', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     prisma.client.order.findFirst.mockResolvedValue({
       id: 'order_pending_1',
       status: GenericStatus.PENDING,
@@ -300,7 +317,7 @@ describe('FinanceService', () => {
 
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     await expect(
       service.createInvoiceFromOrder({ orderId: 'order_pending_1' })
@@ -310,6 +327,7 @@ describe('FinanceService', () => {
 
   it('blocks creating second invoice for the same order', async () => {
     const prisma = makePrismaMock();
+    const search = makeSearchMock();
     prisma.client.order.findFirst.mockResolvedValue({
       id: 'order_approved_2',
       status: GenericStatus.APPROVED,
@@ -324,7 +342,7 @@ describe('FinanceService', () => {
 
     const settingsPolicy = makeSettingsPolicyMock();
     const runtimeSettings = makeRuntimeSettingsMock();
-    const service = new FinanceService(prisma as any, settingsPolicy as any, runtimeSettings as any);
+    const service = new FinanceService(prisma as any, search as any, settingsPolicy as any, runtimeSettings as any);
 
     await expect(
       service.createInvoiceFromOrder({ orderId: 'order_approved_2' })

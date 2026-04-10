@@ -15,10 +15,13 @@ export { Skeleton, SkeletonTable } from './skeleton';
 export { Modal } from './modal';
 export { EntityFormModal } from './entity-form-modal';
 export { CreateEntityDialog } from './create-entity-dialog';
+export { WizardModal } from './wizard-modal';
+export type { WizardStep } from './wizard-modal';
 
 export { StatCard } from './stat-card';
 
 // Charts
 export { SimpleAreaChart } from './charts/area-chart';
 export { SimpleBarChart } from './charts/bar-chart';
+export { DualBarChart } from './charts/dual-bar-chart';
 export { SimplePieChart } from './charts/pie-chart';

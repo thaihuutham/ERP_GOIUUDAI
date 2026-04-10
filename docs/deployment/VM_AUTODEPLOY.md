@@ -91,11 +91,11 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `ZALO_OA_OUTBOUND_URL`
   - `ZALO_OA_API_BASE_URL`
   - `ZALO_OA_OUTBOUND_TIMEOUT_MS`
-  - `SEARCH_ENGINE` (`sql` mặc định, bật hybrid bằng `meili_hybrid`)
+  - `SEARCH_ENGINE` (`meili_hybrid` mặc định, fallback về `sql` khi cần)
   - `MEILI_HOST` (ví dụ `http://meilisearch:7700`)
   - `MEILI_INDEX_PREFIX`
   - `MEILI_TIMEOUT_MS`
-  - `MEILI_ENABLE_WRITE_SYNC`
+  - `MEILI_ENABLE_WRITE_SYNC` (mặc định Workflow/Docker: `true`)
   - `MEILI_PORT` (optional, mặc định `7700`)
   - `AUDIT_ARCHIVE_S3_ENDPOINT`
   - `AUDIT_ARCHIVE_S3_BUCKET`

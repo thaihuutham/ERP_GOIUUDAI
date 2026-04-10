@@ -1,6 +1,6 @@
 import { CustomerCareStatus, GenericStatus } from '@prisma/client';
 
-export const SEARCH_ENTITIES = ['customers', 'orders', 'products'] as const;
+export const SEARCH_ENTITIES = ['customers', 'orders', 'products', 'invoices'] as const;
 export const FEDERATED_SEARCH_ENTITIES = [
   'customers',
   'orders',
@@ -21,6 +21,10 @@ export type SearchCustomersFilters = {
   status?: CustomerCareStatus;
   stage?: string;
   tag?: string;
+};
+
+export type SearchInvoicesFilters = {
+  status?: GenericStatus;
 };
 
 export type SearchOrdersFilters = {

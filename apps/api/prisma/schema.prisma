@@ -67,6 +67,7 @@ enum CheckoutOrderGroup {
 }
 
 enum CheckoutOrderStatus {
+  DRAFT
   PENDING_PAYMENT
   PARTIALLY_PAID
   PAID
