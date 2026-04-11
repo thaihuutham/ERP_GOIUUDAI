@@ -43,7 +43,9 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
   ],
   finance_controls: [
     { key: 'finance-period', label: 'Kỳ kế toán', sectionIds: ['finance-period'] },
-    { key: 'finance-numbering', label: 'Đánh số chứng từ', sectionIds: ['finance-numbering'] }
+    { key: 'finance-numbering', label: 'Đánh số chứng từ', sectionIds: ['finance-numbering', 'finance-order-numbering'] },
+    { key: 'finance-payment', label: 'Thanh toán & VietQR', sectionIds: ['finance-payment-policy'] },
+    { key: 'finance-invoice', label: 'Hóa đơn tự động', sectionIds: ['finance-invoice-automation'] }
   ],
   sales_crm_policies: [
     { key: 'sales-orders', label: 'Quy tắc đơn hàng', sectionIds: ['sales-order-policy'] },
@@ -52,14 +54,12 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
       label: 'Sale Checkout Core',
       sectionIds: [
         'sales-checkout-templates',
-        'sales-checkout-payment',
-        'sales-checkout-invoice',
         'sales-checkout-activation',
-        'sales-checkout-effective',
-        'sales-checkout-numbering'
+        'sales-checkout-effective'
       ]
     },
     { key: 'sales-credit', label: 'Chiết khấu & tín dụng', sectionIds: ['sales-discount-credit'] },
+    { key: 'sales-draft', label: 'Đơn nháp', sectionIds: ['sales-draft-expiry'] },
     { key: 'sales-taxonomy', label: 'Phân loại khách hàng', sectionIds: ['sales-taxonomy'] },
     { key: 'sales-tags', label: 'Tag Registry', sectionIds: ['sales-tag-registry'] },
     { key: 'sales-renewal', label: 'Nhắc gia hạn CRM', sectionIds: ['sales-renewal-reminder'] }
@@ -90,6 +90,8 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
     { key: 'integration-bhtot', label: 'BHTOT', sectionIds: ['integration-bhtot'] },
     { key: 'integration-zalo', label: 'Zalo OA', sectionIds: ['integration-zalo'] },
     { key: 'integration-ai', label: 'AI Connector', sectionIds: ['integration-ai'] },
+    { key: 'integration-ai-ocr', label: 'AI OCR', sectionIds: ['integration-ai-ocr'] },
+    { key: 'integration-ai-routing', label: 'AI Routing', sectionIds: ['integration-ai-routing'] },
     { key: 'integration-payments', label: 'Payments', sectionIds: ['integration-payments'] }
   ],
   notifications_templates: [

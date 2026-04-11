@@ -7,13 +7,15 @@ import { SalesCheckoutController, SalesPaymentIntegrationController } from './sa
 import { SalesFileUploadController } from './sales-file-upload.controller';
 import { PaymentCallbackRateLimitGuard } from './guards/payment-callback-rate-limit.guard';
 import { SalesCheckoutService } from './sales-checkout.service';
+import { SalesDraftCleanupService } from './sales-draft-cleanup.service';
 import { SalesFileUploadService } from './sales-file-upload.service';
+import { SalesOcrService } from './sales-ocr.service';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 
 @Module({
   imports: [SearchModule, SettingsModule, WorkflowsModule, IamModule],
   controllers: [SalesController, SalesCheckoutController, SalesPaymentIntegrationController, SalesFileUploadController],
-  providers: [SalesService, SalesCheckoutService, SalesFileUploadService, PaymentCallbackRateLimitGuard]
+  providers: [SalesService, SalesCheckoutService, SalesFileUploadService, SalesOcrService, SalesDraftCleanupService, PaymentCallbackRateLimitGuard]
 })
 export class SalesModule {}

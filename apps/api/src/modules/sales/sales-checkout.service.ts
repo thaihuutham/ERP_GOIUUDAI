@@ -95,7 +95,10 @@ export class SalesCheckoutService {
       throw new BadRequestException('Cần tối thiểu 1 dòng dịch vụ hợp lệ.');
     }
 
-    const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    const totalAmount = items.reduce(
+      (sum, item) => sum + (item.quantity * item.unitPrice) - (item.discountAmount || 0),
+      0
+    );
     if (totalAmount <= 0) {
       throw new BadRequestException('Tổng tiền thanh toán phải lớn hơn 0.');
     }
@@ -108,6 +111,31 @@ export class SalesCheckoutService {
     );
     this.assertTemplateRequiredFields(selectedTemplate.requiredFields, payload.templateFields ?? {});
     this.assertTemplateFieldPayloadSize(payload.templateFields ?? {});
+
+    // Validate discount against policy
+    const maxDiscount = Number(salesPolicy.discountPolicy?.maxDiscountPercent ?? 100);
+    const approvalThreshold = Number(salesPolicy.discountPolicy?.requireApprovalAbovePercent ?? 10);
+    let needsDiscountApproval = false;
+
+    for (const item of items) {
+      let effectivePercent = 0;
+
+      if (item.discountType === 'PERCENT') {
+        effectivePercent = item.discountValue;
+      } else if (item.discountType === 'FIXED' && item.unitPrice > 0) {
+        effectivePercent = (item.discountAmount / (item.unitPrice * item.quantity)) * 100;
+      }
+
+      if (effectivePercent > maxDiscount) {
+        throw new BadRequestException(
+          `Chiết khấu ${effectivePercent.toFixed(1)}% vượt quá giới hạn ${maxDiscount}% cho "${item.productName || 'sản phẩm'}".`
+        );
+      }
+
+      if (effectivePercent > approvalThreshold) {
+        needsDiscountApproval = true;
+      }
+    }
 
     const customerId = this.cleanString(payload.customerId) || null;
     const customerName = await this.resolveCheckoutCustomerName(customerId, payload.customerName);
@@ -157,6 +185,9 @@ export class SalesCheckoutService {
               effectiveFrom: item.effectiveFrom,
               effectiveTo: item.effectiveTo,
               activationStatus: CheckoutLineActivationStatus.PENDING,
+              discountType: item.discountType,
+              discountValue: item.discountValue ? this.decimal(item.discountValue) : null,
+              discountAmount: item.discountAmount ? this.decimal(item.discountAmount) : null,
               serviceMetaJson: {
                 serviceContractId: item.serviceContractId,
                 ...(item.serviceMetaJson ?? {})
@@ -181,9 +212,44 @@ export class SalesCheckoutService {
       throw new BadRequestException('Không thể tạo đơn checkout, vui lòng thử lại.');
     }
 
+    // C2: If discount exceeds approval threshold, create an Approval record
+    if (needsDiscountApproval) {
+      try {
+        const actor = this.resolveActorContext();
+        await this.prisma.client.approval.create({
+          data: {
+            tenant_Id: this.prisma.getTenantId(),
+            targetType: 'DISCOUNT_APPROVAL',
+            targetId: orderId,
+            requesterId: actor.userId || createdBy || 'system',
+            status: 'PENDING' as GenericStatus,
+            contextJson: {
+              reason: 'Chiết khấu vượt ngưỡng cần duyệt',
+              threshold: approvalThreshold,
+              items: items.map((item) => ({
+                productName: item.productName,
+                discountType: item.discountType,
+                discountValue: item.discountValue,
+                discountAmount: item.discountAmount,
+                unitPrice: item.unitPrice,
+                quantity: item.quantity
+              }))
+            } as Prisma.InputJsonValue
+          }
+        });
+      } catch (approvalError) {
+        console.warn('Could not create discount approval', approvalError);
+      }
+    }
+
     const detail = await this.getCheckoutOrderById(orderId);
     await this.search.syncOrderUpsert(detail);
-    return detail;
+
+    // Return with approval flag so frontend can show notification
+    return {
+      ...detail,
+      needsDiscountApproval
+    };
   }
 
   async updateDraftOrder(orderId: string, payload: UpdateDraftCheckoutOrderDto) {
@@ -222,7 +288,10 @@ export class SalesCheckoutService {
       effectiveFrom: item.effectiveFrom,
       effectiveTo: item.effectiveTo,
       serviceContractId: (this.ensureRecord(item.serviceMetaJson).serviceContractId as string) || null,
-      serviceMetaJson: this.ensureRecord(item.serviceMetaJson)
+      serviceMetaJson: this.ensureRecord(item.serviceMetaJson),
+      discountType: (item as Record<string, unknown>).discountType as string | null ?? null,
+      discountValue: this.toNumber((item as Record<string, unknown>).discountValue as number | null),
+      discountAmount: this.toNumber((item as Record<string, unknown>).discountAmount as number | null)
     }));
 
     if (payload.items && payload.items.length > 0) {
@@ -232,7 +301,10 @@ export class SalesCheckoutService {
       }
     }
 
-    const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    const totalAmount = items.reduce(
+      (sum, item) => sum + (item.quantity * item.unitPrice) - (item.discountAmount || 0),
+      0
+    );
     if (totalAmount <= 0) {
       throw new BadRequestException('Tổng tiền thanh toán phải lớn hơn 0.');
     }
@@ -270,6 +342,9 @@ export class SalesCheckoutService {
             effectiveFrom: item.effectiveFrom,
             effectiveTo: item.effectiveTo,
             activationStatus: CheckoutLineActivationStatus.PENDING,
+            discountType: item.discountType,
+            discountValue: item.discountValue ? this.decimal(item.discountValue) : null,
+            discountAmount: item.discountAmount ? this.decimal(item.discountAmount) : null,
             serviceMetaJson: {
               serviceContractId: item.serviceContractId,
               ...(item.serviceMetaJson ?? {})
@@ -1094,6 +1169,18 @@ export class SalesCheckoutService {
         const effectiveTo = item.effectiveTo ? new Date(item.effectiveTo) : null;
         const serviceContractId = this.cleanString(item.serviceContractId) || null;
         const serviceMetaJson = this.ensureRecord(item.serviceMetaJson);
+
+        // Discount computation
+        const discountType = (item.discountType === 'PERCENT' || item.discountType === 'FIXED')
+          ? item.discountType : null;
+        const discountValue = discountType ? Math.max(0, Number(item.discountValue || 0)) : 0;
+        let discountAmount = 0;
+        if (discountType === 'PERCENT' && discountValue > 0) {
+          discountAmount = Math.round(unitPrice * quantity * discountValue / 100);
+        } else if (discountType === 'FIXED' && discountValue > 0) {
+          discountAmount = Math.min(discountValue, unitPrice * quantity);
+        }
+
         return {
           productId,
           productName,
@@ -1102,7 +1189,10 @@ export class SalesCheckoutService {
           effectiveFrom,
           effectiveTo,
           serviceContractId,
-          serviceMetaJson
+          serviceMetaJson,
+          discountType,
+          discountValue,
+          discountAmount
         };
       })
       .filter((item) => item.unitPrice > 0 && item.quantity > 0 && (item.productName || item.productId));
@@ -1438,5 +1528,114 @@ export class SalesCheckoutService {
 
   private sha256(value: string) {
     return createHash('sha256').update(value).digest('hex');
+  }
+
+  // ── B1: VietQR Generation ──────────────────────────────────────────
+  async generateVietQRData(orderId: string) {
+    const order = await this.getCheckoutOrderById(orderId);
+    const salesPolicy = await this.runtimeSettings.getSalesCrmPolicyRuntime();
+
+    const vietQR = (salesPolicy as Record<string, unknown>).paymentPolicy as Record<string, unknown> | undefined;
+    const qrConfig = (vietQR?.vietQR ?? {}) as Record<string, string>;
+    const bankCode = qrConfig.bankCode || '';
+    const accountNumber = qrConfig.accountNumber || '';
+    const accountName = qrConfig.accountName || '';
+    const contentTemplate = qrConfig.transferContentTemplate || 'DH {orderNo}';
+
+    if (!bankCode || !accountNumber) {
+      throw new BadRequestException('Cấu hình VietQR chưa đầy đủ (bankCode, accountNumber). Vui lòng cấu hình tại Cài đặt hệ thống.');
+    }
+
+    const paidAmount = order.paymentIntents.reduce((sum, intent) => {
+      return sum + intent.transactions
+        .filter((tx) => tx.status === PaymentTransactionStatus.APPLIED)
+        .reduce((txSum, tx) => txSum + this.toNumber(tx.amount), 0);
+    }, 0);
+    const remainingAmount = Math.max(0, this.toNumber(order.totalAmount) - paidAmount);
+    const transferContent = contentTemplate
+      .replace('{orderNo}', order.orderNo || order.id.slice(-8))
+      .replace('{orderId}', order.id);
+
+    // VietQR quick link format
+    const vietQrUrl = `https://img.vietqr.io/image/${bankCode}-${accountNumber}-compact2.jpg?amount=${Math.round(remainingAmount)}&addInfo=${encodeURIComponent(transferContent)}&accountName=${encodeURIComponent(accountName)}`;
+
+    return {
+      qrUrl: vietQrUrl,
+      bankCode,
+      accountNumber,
+      accountName,
+      amount: remainingAmount,
+      transferContent,
+      orderNo: order.orderNo,
+      orderId: order.id
+    };
+  }
+
+  // ── B2: Invoice creation for n8n automation ────────────────────────
+  async createInvoiceFromOrder(orderId: string, payload: { amount?: number; note?: string }) {
+    const order = await this.getCheckoutOrderById(orderId);
+
+    if (!order.customerId) {
+      throw new BadRequestException('Đơn hàng chưa có khách hàng, không thể tạo hóa đơn.');
+    }
+
+    const totalOrder = this.toNumber(order.totalAmount);
+    const existingPaid = order.invoices.reduce((sum, inv) => sum + this.toNumber(inv.paidAmount), 0);
+    const invoiceAmount = payload.amount ?? (totalOrder - existingPaid);
+
+    if (invoiceAmount <= 0) {
+      throw new BadRequestException('Số tiền hóa đơn phải lớn hơn 0.');
+    }
+
+    // Check if invoice already exists for this order (schema has unique constraint)
+    const existingInvoice = await this.prisma.client.invoice.findFirst({
+      where: { tenant_Id: this.prisma.getTenantId(), orderId: order.id }
+    });
+
+    let invoice;
+    if (existingInvoice) {
+      // Update existing invoice amount
+      invoice = await this.prisma.client.invoice.update({
+        where: { id: existingInvoice.id },
+        data: {
+          paidAmount: this.decimal(this.toNumber(existingInvoice.paidAmount) + invoiceAmount),
+          paidAt: new Date(),
+          status: 'APPROVED'
+        }
+      });
+    } else {
+      invoice = await this.prisma.client.invoice.create({
+        data: {
+          tenant_Id: this.prisma.getTenantId(),
+          orderId: order.id,
+          invoiceType: 'SALES',
+          partnerName: order.customerName || null,
+          invoiceNo: `INV-${order.orderNo || order.id.slice(-8)}-${Date.now().toString(36).toUpperCase()}`,
+          totalAmount: this.decimal(totalOrder),
+          paidAmount: this.decimal(invoiceAmount),
+          paidAt: new Date(),
+          status: 'APPROVED'
+        }
+      });
+    }
+
+    // Update order status based on total paid
+    const totalPaidNow = existingPaid + invoiceAmount;
+    const newStatus = totalPaidNow >= totalOrder
+      ? 'PAID' as CheckoutOrderStatus
+      : 'PENDING_PAYMENT' as CheckoutOrderStatus;
+
+    await this.prisma.client.order.update({
+      where: { id: orderId },
+      data: { checkoutStatus: newStatus }
+    });
+
+    return {
+      invoice: { id: invoice.id, invoiceNo: (invoice as Record<string, unknown>).invoiceNo },
+      orderStatus: newStatus,
+      totalPaid: totalPaidNow,
+      totalOrder,
+      remaining: Math.max(0, totalOrder - totalPaidNow)
+    };
   }
 }

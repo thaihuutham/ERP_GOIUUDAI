@@ -72,7 +72,10 @@ const DOMAIN_TAB_MAP: Record<SettingsDomain, SettingsLayoutTabHint[]> = {
   ],
   sales_crm_policies: [
     { key: 'sales-orders', label: 'Quy tắc đơn hàng', sectionIds: ['sales-order-policy'] },
-    { key: 'sales-credit', label: 'Chiết khấu & tín dụng', sectionIds: ['sales-discount-credit'] },
+    { key: 'sales-checkout', label: 'Checkout templates', sectionIds: ['sales-checkout-templates', 'sales-checkout-effective', 'sales-checkout-numbering'] },
+    { key: 'sales-payment', label: 'Thanh toán & VietQR', sectionIds: ['sales-checkout-payment', 'sales-checkout-invoice', 'sales-checkout-activation'] },
+    { key: 'sales-credit', label: 'Chiết khấu & tín dụng', sectionIds: ['sales-discount-credit', 'sales-draft-expiry'] },
+    { key: 'sales-ai', label: 'Tích hợp AI (OCR)', sectionIds: ['sales-ai-integration'] },
     { key: 'sales-taxonomy', label: 'Phân loại khách hàng', sectionIds: ['sales-taxonomy'] },
     { key: 'sales-renewal', label: 'Nhắc gia hạn CRM', sectionIds: ['sales-renewal-reminder'] }
   ],
@@ -114,11 +117,6 @@ const SIDEBAR_GROUPS: SettingsLayoutGroup[] = [
     id: 'general',
     label: 'General',
     domains: ['org_profile', 'locale_calendar'] as SettingsDomain[]
-  },
-  {
-    id: 'appearance',
-    label: 'Appearance',
-    domains: ['org_profile'] as SettingsDomain[]
   },
   {
     id: 'security-access',

@@ -15,7 +15,7 @@ import {
   XCircle,
   Trash2
 } from 'lucide-react';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   apiRequest,
   normalizeListPayload,
@@ -89,10 +89,30 @@ type CheckoutConfigResponse = {
   checkoutTemplates?: Record<CheckoutOrderGroup, CheckoutTemplateConfig[]>;
 };
 
+type CustomerSearchResult = {
+  id: string;
+  fullName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  totalOrders?: number | null;
+  totalSpent?: number | null;
+};
+
+type CatalogProduct = {
+  id: string;
+  name?: string | null;
+  sku?: string | null;
+  price?: number | null;
+};
+
 type CreateCheckoutItemForm = {
+  productId: string;
   productName: string;
   quantity: number;
   unitPrice: number;
+  discountType: '' | 'PERCENT' | 'FIXED';
+  discountValue: number;
 };
 
 type CreateCheckoutFormState = {
@@ -143,9 +163,12 @@ function buildAuditObjectHref(entityType: string, entityId: string) {
 
 function makeEmptyCheckoutItem(): CreateCheckoutItemForm {
   return {
+    productId: '',
     productName: '',
     quantity: 1,
-    unitPrice: 0
+    unitPrice: 0,
+    discountType: '',
+    discountValue: 0
   };
 }
 
@@ -210,6 +233,158 @@ function areTemplateFieldMapsEqual(left: Record<string, string>, right: Record<s
   return leftKeys.every((key) => (left[key] ?? '') === (right[key] ?? ''));
 }
 
+// ── C3: Sales Error Dashboard (for managers) ──────────────────────────
+type DashboardSummary = {
+  cancelledOrders: number;
+  pendingDiscountApprovals: number;
+  totalDiscountApprovals: number;
+  paymentOverrides: number;
+  totalIssues: number;
+};
+
+function SalesErrorDashboard({
+  apiRequest,
+  toCurrency
+}: {
+  apiRequest: <T>(url: string) => Promise<T>;
+  toCurrency: (val: number | null | undefined) => string;
+}) {
+  const [dashboard, setDashboard] = useState<{
+    summary: DashboardSummary;
+    cancelledOrders: Array<Record<string, unknown>>;
+    discountApprovals: Array<Record<string, unknown>>;
+    paymentOverrides: Array<Record<string, unknown>>;
+  } | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const loadDashboard = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await apiRequest<{
+        summary: DashboardSummary;
+        cancelledOrders: Array<Record<string, unknown>>;
+        discountApprovals: Array<Record<string, unknown>>;
+        paymentOverrides: Array<Record<string, unknown>>;
+      }>('/sales/dashboard/errors?days=30');
+      setDashboard(data);
+    } catch {
+      // silent fail — dashboard is non-critical
+    } finally {
+      setIsLoading(false);
+    }
+  }, [apiRequest]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+
+  if (!dashboard || dashboard.summary.totalIssues === 0) return null;
+
+  return (
+    <div style={{
+      marginBottom: '1rem',
+      border: '1px solid var(--warning)',
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden'
+    }}>
+      <button
+        type="button"
+        onClick={() => setIsExpanded(!isExpanded)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '0.75rem 1rem',
+          background: 'color-mix(in srgb, var(--warning) 10%, var(--surface))',
+          border: 'none',
+          cursor: 'pointer',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          color: 'var(--foreground)'
+        }}
+      >
+        <span>
+          📊 Dashboard sai sót (30 ngày): {dashboard.summary.totalIssues} vấn đề
+          {dashboard.summary.pendingDiscountApprovals > 0 && (
+            <span style={{ color: 'var(--danger)', marginLeft: '0.5rem' }}>
+              • {dashboard.summary.pendingDiscountApprovals} CK chờ duyệt
+            </span>
+          )}
+        </span>
+        <span>{isExpanded ? '▲' : '▼'}</span>
+      </button>
+      {isExpanded && (
+        <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {/* Summary cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+            <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--danger) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--danger)' }}>{dashboard.summary.cancelledOrders}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Đơn hủy / Lưu trữ</div>
+            </div>
+            <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--warning)' }}>{dashboard.summary.totalDiscountApprovals}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Chiết khấu cần duyệt</div>
+            </div>
+            <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--info) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--info)' }}>{dashboard.summary.paymentOverrides}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Override thanh toán</div>
+            </div>
+          </div>
+
+          {/* Recent cancelled orders */}
+          {dashboard.cancelledOrders.length > 0 && (
+            <div>
+              <h5 style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--danger)' }}>
+                🚫 Đơn hàng bị hủy gần đây
+              </h5>
+              <div style={{ fontSize: '0.75rem', maxHeight: '150px', overflow: 'auto' }}>
+                {dashboard.cancelledOrders.slice(0, 10).map((order) => (
+                  <div key={String(order.id)} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: '1px solid var(--line)' }}>
+                    <span>{String(order.orderNo || String(order.id).slice(-8))} — {String(order.customerName || 'N/A')}</span>
+                    <span style={{ fontWeight: 600 }}>{toCurrency(order.totalAmount as number ?? 0)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pending discount approvals */}
+          {dashboard.discountApprovals.filter((a) => String(a.status) === 'PENDING').length > 0 && (
+            <div>
+              <h5 style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--warning)' }}>
+                ⏳ Chiết khấu chờ duyệt
+              </h5>
+              <div style={{ fontSize: '0.75rem', maxHeight: '150px', overflow: 'auto' }}>
+                {dashboard.discountApprovals.filter((a) => String(a.status) === 'PENDING').map((approval) => {
+                  const ctx = (approval.contextJson as Record<string, unknown>) ?? {};
+                  return (
+                    <div key={String(approval.id)} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: '1px solid var(--line)' }}>
+                      <span>Đơn {String(approval.targetId).slice(-8)} — {String(ctx.reason || 'Chiết khấu vượt ngưỡng')}</span>
+                      <span style={{ fontWeight: 600, color: 'var(--warning)' }}>Ngưỡng: {String(ctx.threshold || '?')}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={isLoading}
+            onClick={() => void loadDashboard()}
+            style={{ alignSelf: 'flex-end', fontSize: '0.75rem' }}
+          >
+            🔄 Làm mới
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SalesOperationsBoard() {
   const { canModule, canAction } = useAccessPolicy();
   const canView = canModule('sales');
@@ -239,6 +414,19 @@ export function SalesOperationsBoard() {
   const [isHandlingDecision, setIsHandlingDecision] = useState(false);
   const [isExportingInvoice, setIsExportingInvoice] = useState(false);
   const [isArchivingOrder, setIsArchivingOrder] = useState(false);
+  const [vietQrData, setVietQrData] = useState<{ qrUrl: string; amount: number; transferContent: string } | null>(null);
+  const [isLoadingQr, setIsLoadingQr] = useState(false);
+
+  // Customer autocomplete state
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerSearchResults, setCustomerSearchResults] = useState<CustomerSearchResult[]>([]);
+  const [isSearchingCustomer, setIsSearchingCustomer] = useState(false);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
+  // Catalog product state
+  const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const salesTableFingerprint = useMemo(
     () =>
       JSON.stringify({
@@ -383,6 +571,101 @@ export function SalesOperationsBoard() {
     [orders]
   );
 
+  // Draft expiry countdown warnings (client-side computation)
+  const draftWarningCounts = useMemo(() => {
+    const draftOrders = orders.filter(
+      (order) => String(order.status || '').toUpperCase() === 'DRAFT'
+        || (order as Record<string, unknown>).checkoutStatus === 'DRAFT'
+    );
+    if (draftOrders.length === 0) return { nearExpiry: 0, total: draftOrders.length };
+    // Use conservative defaults - admin can configure via settings
+    const expiryDays = 7;
+    const warningDays = 2;
+    const now = Date.now();
+    const warningCutoffMs = (expiryDays - warningDays) * 24 * 60 * 60 * 1000;
+    const nearExpiry = draftOrders.filter((order) => {
+      const created = new Date(order.createdAt || 0).getTime();
+      return (now - created) >= warningCutoffMs;
+    }).length;
+    return { nearExpiry, total: draftOrders.length };
+  }, [orders]);
+
+  // Customer search with debounce
+  useEffect(() => {
+    if (!customerSearchQuery.trim() || customerSearchQuery.trim().length < 2) {
+      setCustomerSearchResults([]);
+      setShowCustomerDropdown(false);
+      return;
+    }
+    setIsSearchingCustomer(true);
+    const timer = setTimeout(async () => {
+      try {
+        const payload = await apiRequest<any>('/crm/customers', {
+          query: { q: customerSearchQuery.trim(), limit: 8 }
+        });
+        const normalized = normalizePagedListPayload<CustomerSearchResult>(payload);
+        setCustomerSearchResults(normalized.items);
+        setShowCustomerDropdown(normalized.items.length > 0);
+      } catch {
+        setCustomerSearchResults([]);
+      } finally {
+        setIsSearchingCustomer(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [customerSearchQuery]);
+
+  // Load catalog products for product picker
+  const loadCatalogProducts = async () => {
+    if (catalogLoaded || isLoadingCatalog) return;
+    setIsLoadingCatalog(true);
+    try {
+      const payload = await apiRequest<any>('/catalog/products', {
+        query: { limit: 100, sortBy: 'name', sortDir: 'asc' }
+      });
+      const normalized = normalizePagedListPayload<CatalogProduct>(payload);
+      setCatalogProducts(normalized.items);
+      setCatalogLoaded(true);
+    } catch {
+      // fail silently, user can type manually as fallback
+    } finally {
+      setIsLoadingCatalog(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isCreatePanelOpen && !catalogLoaded) {
+      void loadCatalogProducts();
+    }
+  }, [isCreatePanelOpen, catalogLoaded]);
+
+  const handleSelectCustomer = (customer: CustomerSearchResult) => {
+    setCreateOrderForm((prev) => ({
+      ...prev,
+      customerName: customer.fullName || '',
+      customerId: customer.id
+    }));
+    setCustomerSearchQuery(customer.phone || customer.fullName || '');
+    setShowCustomerDropdown(false);
+  };
+
+  const handleSelectProduct = (index: number, productId: string) => {
+    const product = catalogProducts.find((p) => p.id === productId);
+    if (!product) return;
+    setCreateOrderForm((prev) => ({
+      ...prev,
+      items: prev.items.map((item, i) => {
+        if (i !== index) return item;
+        return {
+          ...item,
+          productId: product.id,
+          productName: product.name || '',
+          unitPrice: Number(product.price ?? 0)
+        };
+      })
+    }));
+  };
+
   const columns: ColumnDefinition<SalesOrder>[] = [
     {
       key: 'orderNo',
@@ -406,10 +689,14 @@ export function SalesOperationsBoard() {
     },
     {
       key: 'invoices',
-      label: 'Hóa đơn liên kết',
+      label: 'Hóa đơn',
       sortable: false,
       sortDisabledTooltip: 'Sắp xếp theo hóa đơn liên kết chưa hỗ trợ ở đợt này.',
-      render: (order) => order.invoices?.[0]?.invoiceNo ?? '--'
+      render: (order) => {
+        const ref = order.invoices?.[0];
+        if (!ref) return <span style={{ color: 'var(--muted)' }}>--</span>;
+        return <Badge variant={statusToBadge(ref.status)}>{ref.invoiceNo || ref.status || '--'}</Badge>;
+      }
     },
     {
       key: 'createdBy',
@@ -575,9 +862,12 @@ export function SalesOperationsBoard() {
 
     const normalizedItems = createOrderForm.items
       .map((item) => ({
+        productId: item.productId || undefined,
         productName: item.productName.trim(),
         quantity: Number(item.quantity),
-        unitPrice: Number(item.unitPrice)
+        unitPrice: Number(item.unitPrice),
+        discountType: item.discountType || undefined,
+        discountValue: item.discountValue ? Number(item.discountValue) : undefined
       }))
       .filter((item) => item.productName && item.quantity > 0 && item.unitPrice > 0);
 
@@ -585,8 +875,8 @@ export function SalesOperationsBoard() {
       setErrorMessage(`Tạo checkout thất bại: chưa cấu hình template cho nhóm ${createOrderForm.orderGroup}.`);
       return;
     }
-    if (!createOrderForm.customerName.trim()) {
-      setErrorMessage('Tạo checkout thất bại: cần nhập customer name.');
+    if (!createOrderForm.customerId) {
+      setErrorMessage('Vui lòng chọn khách hàng từ hệ thống bằng cách tìm theo SĐT.');
       return;
     }
     if (normalizedItems.length === 0) {
@@ -621,7 +911,10 @@ export function SalesOperationsBoard() {
           items: normalizedItems
         }
       });
-      setResultMessage(`Đã tạo đơn nháp ${createdOrder.orderNo || createdOrder.id.slice(-8)}. Bấm "Gửi đơn" để chuyển sang chờ thanh toán.`);
+      const approvalNote = (createdOrder as Record<string, unknown>).needsDiscountApproval
+        ? ' ⚠️ Chiết khấu vượt ngưỡng — đơn đang chờ quản lý duyệt.'
+        : '';
+      setResultMessage(`Đã tạo đơn nháp ${createdOrder.orderNo || createdOrder.id.slice(-8)}. Bấm "Gửi đơn" để chuyển sang chờ thanh toán.${approvalNote}`);
       setIsCreatePanelOpen(false);
       setCreateOrderForm(makeInitialCreateCheckoutForm());
       await loadData();
@@ -710,6 +1003,48 @@ export function SalesOperationsBoard() {
       setResultMessage(`Đã upload file: ${file.name}`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? `Upload thất bại: ${error.message}` : 'Upload thất bại.');
+    }
+  };
+
+  // C1: OCR extraction for insurance certificates
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [ocrResult, setOcrResult] = useState<{ success: boolean; fields: Record<string, string> } | null>(null);
+
+  const handleOcrExtract = async (file: File) => {
+    if (!file) return;
+    setIsOcrProcessing(true);
+    setOcrResult(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const result = await fetch('/api/v1/sales/checkout/files/ocr-extract', {
+        method: 'POST',
+        body: formData
+      });
+      if (!result.ok) {
+        const err = await result.json().catch(() => ({}));
+        throw new Error((err as Record<string, string>).message || 'OCR thất bại');
+      }
+      const data = await result.json() as { success: boolean; fields: Record<string, string>; rawText: string };
+      setOcrResult(data);
+
+      // Auto-fill template fields from OCR result
+      if (data.success && data.fields) {
+        setCreateOrderForm((prev) => {
+          const updated = { ...prev.templateFields };
+          for (const [key, value] of Object.entries(data.fields)) {
+            if (value) updated[key] = String(value);
+          }
+          return { ...prev, templateFields: updated };
+        });
+        setResultMessage('🤖 AI đã trích xuất thông tin từ giấy chứng nhận thành công!');
+      } else {
+        setErrorMessage('AI không thể đọc được thông tin từ file. Vui lòng nhập thủ công.');
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? `OCR: ${error.message}` : 'Trích xuất OCR thất bại.');
+    } finally {
+      setIsOcrProcessing(false);
     }
   };
 
@@ -819,6 +1154,22 @@ export function SalesOperationsBoard() {
     }
   };
 
+  const handleShowVietQR = async () => {
+    if (!selectedOrder || isLoadingQr) return;
+    setIsLoadingQr(true);
+    setVietQrData(null);
+    try {
+      const result = await apiRequest<{ qrUrl: string; amount: number; transferContent: string }>(
+        `/sales/checkout/orders/${selectedOrder.id}/vietqr`
+      );
+      setVietQrData(result);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể tạo mã QR thanh toán.');
+    } finally {
+      setIsLoadingQr(false);
+    }
+  };
+
   return (
     <div className="sales-board">
       {errorMessage && (
@@ -832,6 +1183,28 @@ export function SalesOperationsBoard() {
           <span><strong>Thành công:</strong> {resultMessage}</span>
           <button onClick={() => setResultMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
         </div>
+      )}
+
+      {draftWarningCounts.nearExpiry > 0 && (
+        <div className="finance-alert finance-alert-danger" style={{ marginBottom: '0.75rem' }}>
+          <span>
+            <strong>⚠ Cảnh báo:</strong>{' '}
+            Bạn có <strong>{draftWarningCounts.nearExpiry}</strong> đơn hàng nháp sắp bị hủy tự động.
+            Vui lòng gửi đơn hoặc hoàn tất thanh toán.
+          </span>
+        </div>
+      )}
+      {draftWarningCounts.total > 0 && draftWarningCounts.nearExpiry === 0 && (
+        <div className="finance-alert" style={{ marginBottom: '0.75rem', background: 'var(--surface-hover)', border: '1px solid var(--warning)', borderRadius: 'var(--radius-md)', padding: '0.65rem 1rem' }}>
+          <span>
+            📋 Bạn có <strong>{draftWarningCounts.total}</strong> đơn hàng nháp đang chờ xử lý.
+          </span>
+        </div>
+      )}
+
+      {/* C3: Manager Sales Error Dashboard */}
+      {canApprove && (
+        <SalesErrorDashboard apiRequest={apiRequest} toCurrency={toCurrency} />
       )}
 
       <div className="metrics-grid" style={{ marginBottom: '2rem', gridTemplateColumns: 'repeat(4, 1fr)' }}>
@@ -861,7 +1234,7 @@ export function SalesOperationsBoard() {
         isLoading={isLoading}
         storageKey={SALES_COLUMN_SETTINGS_KEY}
         toolbarLeftContent={(
-          <div className="field" style={{ width: '320px' }}>
+          <div className="field" style={{ width: '320px', marginBottom: 0 }}>
             <div style={{ position: 'relative' }}>
               <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
               <input
@@ -947,6 +1320,53 @@ export function SalesOperationsBoard() {
             <div style={{ padding: '1rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-lg)' }}>
               <p style={{ color: 'var(--muted)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.25rem' }}>Tổng giá trị đơn</p>
               <h2 style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--primary)' }}>{toCurrency(selectedOrder.totalAmount ?? 0)}</h2>
+            </div>
+
+            {/* VietQR Payment Section */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ width: '100%' }}
+                onClick={handleShowVietQR}
+                disabled={isLoadingQr}
+              >
+                {isLoadingQr ? '⏳ Đang tạo QR...' : '💳 Tạo mã QR thanh toán (VietQR)'}
+              </button>
+              {vietQrData && (
+                <div style={{
+                  padding: '1rem',
+                  background: 'var(--surface)',
+                  border: '2px solid var(--primary)',
+                  borderRadius: 'var(--radius-lg)',
+                  textAlign: 'center'
+                }}>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>
+                    Quét mã QR để thanh toán
+                  </p>
+                  <img
+                    src={vietQrData.qrUrl}
+                    alt="VietQR Payment"
+                    style={{ maxWidth: '240px', width: '100%', margin: '0 auto', display: 'block', borderRadius: 'var(--radius-md)' }}
+                  />
+                  <div style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                    <p style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                      Số tiền: {toCurrency(vietQrData.amount)}
+                    </p>
+                    <p style={{ color: 'var(--muted)', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                      Nội dung CK: <strong>{vietQrData.transferContent}</strong>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}
+                    onClick={() => setVietQrData(null)}
+                  >
+                    Đóng QR
+                  </button>
+                </div>
+              )}
             </div>
 
             <div>
@@ -1169,6 +1589,35 @@ export function SalesOperationsBoard() {
                       {createOrderForm.templateFields[fieldKey] ? (
                         <small className="muted">✅ File ID: {createOrderForm.templateFields[fieldKey]}</small>
                       ) : null}
+                      {/* C1: OCR button for insurance certificates */}
+                      {createOrderForm.orderGroup === 'INSURANCE' && (
+                        <div style={{ marginTop: '0.25rem' }}>
+                          <input
+                            type="file"
+                            id={`ocr-${fieldKey}`}
+                            accept=".png,.jpg,.jpeg"
+                            style={{ display: 'none' }}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleOcrExtract(file);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                            disabled={isOcrProcessing}
+                            onClick={() => document.getElementById(`ocr-${fieldKey}`)?.click()}
+                          >
+                            {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ ảnh GCN'}
+                          </button>
+                          {ocrResult?.success && (
+                            <small style={{ display: 'block', color: 'var(--success)', fontSize: '0.7rem', marginTop: '0.1rem' }}>
+                              ✅ Đã trích xuất {Object.keys(ocrResult.fields).length} trường
+                            </small>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -1222,6 +1671,35 @@ export function SalesOperationsBoard() {
                       {createOrderForm.templateFields[fieldKey] ? (
                         <small className="muted">✅ File ID: {createOrderForm.templateFields[fieldKey]}</small>
                       ) : null}
+                      {/* C1: OCR extraction for insurance certificates (optional file fields) */}
+                      {createOrderForm.orderGroup === 'INSURANCE' && (
+                        <div style={{ marginTop: '0.25rem' }}>
+                          <input
+                            type="file"
+                            id={`ocr-opt-${fieldKey}`}
+                            accept=".png,.jpg,.jpeg"
+                            style={{ display: 'none' }}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleOcrExtract(file);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                            disabled={isOcrProcessing}
+                            onClick={() => document.getElementById(`ocr-opt-${fieldKey}`)?.click()}
+                          >
+                            {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ ảnh GCN'}
+                          </button>
+                          {ocrResult?.success && (
+                            <small style={{ display: 'block', color: 'var(--success)', fontSize: '0.7rem', marginTop: '0.1rem' }}>
+                              ✅ Đã trích xuất {Object.keys(ocrResult.fields).length} trường
+                            </small>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -1253,34 +1731,89 @@ export function SalesOperationsBoard() {
             </div>
           ) : null}
 
-          <div className="field">
-            <label>Customer name *</label>
-            <input
-              required
-              value={createOrderForm.customerName}
-              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, customerName: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label>Customer ID</label>
-            <input
-              value={createOrderForm.customerId}
-              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, customerId: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label>Employee ID</label>
-            <input
-              value={createOrderForm.employeeId}
-              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, employeeId: event.target.value }))}
-            />
-          </div>
-          <div className="field">
-            <label>Created By</label>
-            <input
-              value={createOrderForm.createdBy}
-              onChange={(event) => setCreateOrderForm((prev) => ({ ...prev, createdBy: event.target.value }))}
-            />
+          <div className="field" style={{ position: 'relative' }}>
+            <label>Khách hàng (tìm theo SĐT) *</label>
+            <div style={{ position: 'relative' }}>
+              <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+              <input
+                required={!createOrderForm.customerId}
+                type="tel"
+                placeholder="Nhập số điện thoại khách hàng..."
+                style={{ paddingLeft: '32px' }}
+                value={customerSearchQuery}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setCustomerSearchQuery(value);
+                  // Clear previous selection when user edits
+                  if (createOrderForm.customerId) {
+                    setCreateOrderForm((prev) => ({
+                      ...prev,
+                      customerName: '',
+                      customerId: ''
+                    }));
+                  }
+                }}
+                onFocus={() => {
+                  if (customerSearchResults.length > 0) setShowCustomerDropdown(true);
+                }}
+                onBlur={() => {
+                  setTimeout(() => setShowCustomerDropdown(false), 200);
+                }}
+                readOnly={Boolean(createOrderForm.customerId)}
+              />
+              {isSearchingCustomer && (
+                <small className="muted" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)' }}>Đang tìm...</small>
+              )}
+            </div>
+            {showCustomerDropdown && customerSearchResults.length > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                background: 'var(--surface)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-md)',
+                maxHeight: '280px', overflowY: 'auto'
+              }}>
+                {customerSearchResults.map((customer) => (
+                  <button
+                    key={customer.id}
+                    type="button"
+                    style={{
+                      width: '100%', textAlign: 'left', padding: '0.75rem',
+                      border: 'none', background: 'transparent', cursor: 'pointer',
+                      borderBottom: '1px solid var(--line)', fontSize: '0.875rem'
+                    }}
+                    onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(customer); }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <strong>{customer.fullName || '--'}</strong>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>{customer.phone || ''}</span>
+                    </div>
+                    {customer.address && <div style={{ color: 'var(--muted)', fontSize: '0.8rem', marginTop: '2px' }}>📍 {customer.address}</div>}
+                    <div style={{ display: 'flex', gap: '1rem', marginTop: '4px', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                      <span>🛒 {customer.totalOrders ?? 0} đơn</span>
+                      <span>💰 {toCurrency(Number(customer.totalSpent ?? 0))} chi tiêu</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {createOrderForm.customerId ? (
+              <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', background: 'var(--surface-hover)', borderRadius: 'var(--radius-md)', border: '1px solid var(--success)', fontSize: '0.875rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: 'var(--success)', fontWeight: 600 }}>✓ {createOrderForm.customerName}</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem' }}
+                    onClick={() => {
+                      setCreateOrderForm((prev) => ({ ...prev, customerName: '', customerId: '' }));
+                      setCustomerSearchQuery('');
+                    }}
+                  >
+                    Đổi KH
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: '1rem', display: 'grid', gap: '0.75rem' }}>
@@ -1291,15 +1824,31 @@ export function SalesOperationsBoard() {
             {createOrderForm.items.map((item, index) => (
               <div key={`item-${index}`} style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
                 <div className="field">
-                  <label>Product name</label>
-                  <input
-                    value={item.productName}
-                    onChange={(event) => handleUpdateItem(index, 'productName', event.target.value)}
-                  />
+                  <label>Sản phẩm / dịch vụ</label>
+                  {catalogProducts.length > 0 ? (
+                    <select
+                      value={item.productId}
+                      onChange={(event) => handleSelectProduct(index, event.target.value)}
+                    >
+                      <option value="">-- Chọn sản phẩm --</option>
+                      {catalogProducts.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name || product.sku || product.id.slice(-8)} — {toCurrency(Number(product.price ?? 0))}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={item.productName}
+                      onChange={(event) => handleUpdateItem(index, 'productName', event.target.value)}
+                      placeholder={isLoadingCatalog ? 'Đang tải danh mục...' : 'Nhập tên sản phẩm'}
+                    />
+                  )}
+                  {item.productName && <small className="muted">{item.productName}</small>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem' }}>
                   <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Quantity</label>
+                    <label>Số lượng</label>
                     <input
                       type="number"
                       min={1}
@@ -1308,17 +1857,53 @@ export function SalesOperationsBoard() {
                     />
                   </div>
                   <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Unit Price</label>
+                    <label>Đơn giá{catalogProducts.length > 0 ? ' (tự động)' : ''}</label>
                     <input
                       type="number"
                       min={0}
                       value={item.unitPrice}
                       onChange={(event) => handleUpdateItem(index, 'unitPrice', event.target.value)}
+                      readOnly={catalogProducts.length > 0 && Boolean(item.productId)}
+                      style={catalogProducts.length > 0 && item.productId ? { background: 'var(--surface-hover)', cursor: 'not-allowed' } : {}}
                     />
                   </div>
                   <button type="button" className="btn btn-ghost" style={{ alignSelf: 'end' }} onClick={() => handleRemoveItem(index)}>
                     <Trash2 size={14} />
                   </button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', alignItems: 'end' }}>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Chiết khấu</label>
+                    <select
+                      value={item.discountType || ''}
+                      onChange={(event) => handleUpdateItem(index, 'discountType', event.target.value)}
+                    >
+                      <option value="">Không</option>
+                      <option value="PERCENT">% phần trăm</option>
+                      <option value="FIXED">Giá trị cố định (đ)</option>
+                    </select>
+                  </div>
+                  {item.discountType && (
+                    <div className="field" style={{ marginBottom: 0 }}>
+                      <label>{item.discountType === 'PERCENT' ? 'Tỷ lệ (%)' : 'Số tiền giảm'}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={item.discountType === 'PERCENT' ? 100 : undefined}
+                        value={item.discountValue}
+                        onChange={(event) => handleUpdateItem(index, 'discountValue', event.target.value)}
+                      />
+                    </div>
+                  )}
+                  {item.discountType && item.discountValue > 0 && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--warning)', paddingBottom: '0.4rem' }}>
+                      Giảm: {toCurrency(
+                        item.discountType === 'PERCENT'
+                          ? Math.round(item.unitPrice * item.quantity * item.discountValue / 100)
+                          : Math.min(item.discountValue, item.unitPrice * item.quantity)
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

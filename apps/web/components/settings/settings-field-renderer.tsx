@@ -4,6 +4,7 @@ import type { FieldConfig, SalesTaxonomyType, CrmTagRegistryType, SalesTaxonomyP
 import { toStringArray, toManagedListItems } from '../settings-center/domain-config';
 import { TaxonomyManagerField, type SalesTaxonomyItem } from '../settings-center/taxonomy-manager-field';
 import { SettingsListManagerField, type ManagedListPickerOption } from '../settings-center/settings-list-manager-field';
+import { SettingsKeyPoolField } from '../settings-center/settings-key-pool-field';
 
 type SettingsFieldRendererProps = {
   advancedMode?: boolean;
@@ -197,6 +198,22 @@ export function SettingsFieldRenderer({
               <label htmlFor={field.id}>{field.label}</label>
               <input id={field.id} type="password" value={String(value)} placeholder={field.placeholder} autoComplete="off" onChange={(event) => updateField(field, event.target.value)} />
               {field.helper && <small>{field.helper}</small>}
+              {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
+            </div>
+          );
+        }
+
+        if (field.type === 'keyPool') {
+          const poolKeys = Array.isArray(value) ? (value as string[]) : [];
+          return (
+            <div className="field" key={field.id} style={{ gridColumn: '1 / -1' }}>
+              <label>{field.label}</label>
+              <SettingsKeyPoolField
+                value={poolKeys}
+                onChange={(next) => updateField(field, next)}
+                disabled={busy}
+                helper={field.helper}
+              />
               {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
             </div>
           );

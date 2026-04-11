@@ -216,7 +216,43 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       sequencePadding: 5,
       compactLength: 8
     },
-    transactionCutoffHour: 23
+    transactionCutoffHour: 23,
+    paymentPolicy: {
+      partialPaymentEnabled: true,
+      overrideRoles: ['ADMIN'],
+      callbackTolerance: 300,
+      reconcileSchedule: '0 */2 * * *',
+      vietQR: {
+        bankCode: '',
+        accountNumber: '',
+        accountName: '',
+        transferContentTemplate: 'DH {orderNo}'
+      },
+      allowQrAtDraft: true
+    },
+    invoiceAutomation: {
+      INSURANCE: {
+        trigger: 'ON_ACTIVATED',
+        requireFullPayment: true
+      },
+      TELECOM: {
+        trigger: 'ON_PAID',
+        requireFullPayment: true
+      },
+      DIGITAL: {
+        trigger: 'ON_PAID',
+        requireFullPayment: true
+      }
+    },
+    orderNumberingPolicy: {
+      resetRule: 'DAILY',
+      sequencePadding: 4,
+      groupPrefixes: {
+        INSURANCE: 'INS',
+        TELECOM: 'TEL',
+        DIGITAL: 'DIG'
+      }
+    }
   },
   sales_crm_policies: {
     orderSettings: {
@@ -232,6 +268,9 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       allowNegativeBalance: false,
       maxCreditLimit: 0
     },
+    draftExpiryDays: 7,
+    draftWarningDays: 2,
+    draftDebtConversionDays: 0,
     customerTaxonomy: {
       stages: ['MOI', 'TIEP_CAN', 'DANG_CHAM_SOC', 'CHOT_DON'],
       sources: ['ONLINE', 'OFFLINE', 'CTV', 'REFERRAL']
@@ -257,7 +296,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
           label: 'Bảo hiểm ô tô',
           requiredFields: ['termDays', 'requestedEffectiveDate'],
           fieldConfig: {
-            termDays: { type: 'select', options: ['180', '360'], label: 'Chu kỳ (ngày)' },
+            termDays: { type: 'select', options: ['180', '365'], label: 'Chu kỳ (ngày)' },
             requestedEffectiveDate: { type: 'date', label: 'Ngày hiệu lực yêu cầu' },
             certificateLink: { type: 'text', label: 'Link giấy chứng nhận' },
             certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận (PDF/ảnh)' }
@@ -268,7 +307,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
           label: 'Bảo hiểm xe máy',
           requiredFields: ['termDays', 'requestedEffectiveDate'],
           fieldConfig: {
-            termDays: { type: 'select', options: ['180', '360'], label: 'Chu kỳ (ngày)' },
+            termDays: { type: 'select', options: ['180', '365'], label: 'Chu kỳ (ngày)' },
             requestedEffectiveDate: { type: 'date', label: 'Ngày hiệu lực yêu cầu' },
             certificateLink: { type: 'text', label: 'Link giấy chứng nhận' },
             certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận (PDF/ảnh)' }
@@ -282,7 +321,8 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
           requiredFields: ['packageCode', 'billingCycle', 'servicePhone'],
           fieldConfig: {
             packageCode: { type: 'text', label: 'Mã gói cước / SIM' },
-            billingCycle: { type: 'select', options: ['30', '60', '90', '120', '360'], label: 'Chu kỳ (ngày)' },
+            billingCycle: { type: 'select', options: ['30', '60', '90', '120', '180', '210', '270', '360', '420', '540', '720'], label: 'Chu kỳ (ngày)' },
+            startDate: { type: 'date', label: 'Ngày bắt đầu chu kỳ mới' },
             servicePhone: { type: 'tel', label: 'SĐT dùng dịch vụ' },
             differentServicePhone: { type: 'checkbox', label: 'SĐT dịch vụ khác SĐT liên lạc' }
           }
@@ -295,7 +335,7 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
           requiredFields: ['planCode', 'termDays', 'startDate'],
           fieldConfig: {
             planCode: { type: 'text', label: 'Mã gói dịch vụ' },
-            termDays: { type: 'select', options: ['30', '90', '180', '360'], label: 'Thời hạn (ngày)' },
+            termDays: { type: 'select', options: ['30', '90', '180', '365'], label: 'Thời hạn (ngày)' },
             startDate: { type: 'date', label: 'Ngày bắt đầu' }
           }
         }
@@ -305,7 +345,21 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       partialPaymentEnabled: true,
       overrideRoles: ['ADMIN'],
       callbackTolerance: 300,
-      reconcileSchedule: '0 */2 * * *'
+      reconcileSchedule: '0 */2 * * *',
+      vietQR: {
+        bankCode: '',
+        accountNumber: '',
+        accountName: '',
+        transferContentTemplate: 'DH {orderNo}'
+      },
+      allowQrAtDraft: true
+    },
+    aiIntegration: {
+      enabled: false,
+      provider: '',
+      apiKeyRef: 'AI_OPENAI_COMPAT_API_KEY',
+      ocrEnabled: false,
+      ocrModel: ''
     },
     invoiceAutomation: {
       INSURANCE: {
@@ -605,10 +659,20 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       baseUrl: '',
       apiKey: '',
       apiKeyRef: 'AI_OPENAI_COMPAT_API_KEY',
+      apiKeyPool: [] as string[],
+      keyRotationMode: 'fallback',
+      activeKeyIndex: 0,
       model: 'gpt-4o-mini',
       timeoutMs: 45000,
       lastHealthStatus: 'UNKNOWN',
       lastValidatedAt: null
+    },
+    aiOcr: {
+      enabled: false,
+      provider: '',
+      apiKeyRef: 'AI_OPENAI_COMPAT_API_KEY',
+      ocrEnabled: false,
+      ocrModel: ''
     },
     payments: {
       enabled: true,

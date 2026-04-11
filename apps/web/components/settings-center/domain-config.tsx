@@ -33,11 +33,6 @@ export const DOMAIN_GROUPS = [
     domains: ['org_profile', 'locale_calendar'] as const
   },
   {
-    id: 'appearance',
-    label: 'Appearance',
-    domains: ['org_profile'] as const
-  },
-  {
     id: 'security-access',
     label: 'Security & Access',
     domains: ['access_security', 'approval_matrix'] as const
@@ -49,7 +44,7 @@ export const DOMAIN_GROUPS = [
   },
   {
     id: 'finance',
-    label: 'Finance',
+    label: 'Finance & Accounting',
     domains: ['finance_controls'] as const
   },
   {
@@ -65,11 +60,16 @@ export const DOMAIN_GROUPS = [
   {
     id: 'integrations',
     label: 'Integrations',
-    domains: ['integrations', 'notifications_templates'] as const
+    domains: ['integrations'] as const
   },
   {
-    id: 'search-governance',
-    label: 'Search & Data Governance',
+    id: 'notifications',
+    label: 'Notifications',
+    domains: ['notifications_templates'] as const
+  },
+  {
+    id: 'system-ops',
+    label: 'System Operations',
     domains: ['search_performance', 'data_governance_backup'] as const
   }
 ];
@@ -141,6 +141,7 @@ export type FieldType =
   | 'multiSelect'
   | 'userDomainMap'
   | 'secret'
+  | 'keyPool'
   | 'color'
   | 'taxonomyManager';
 
@@ -841,7 +842,7 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
   },
   finance_controls: {
     title: 'Kiểm soát tài chính',
-    description: 'Quản lý khóa kỳ, cut-off và quy tắc đánh số chứng từ.',
+    description: 'Quản lý kỳ kế toán, đánh số chứng từ, thanh toán, VietQR và hóa đơn tự động.',
     sections: [
       {
         id: 'finance-period',
@@ -906,6 +907,47 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
             max: 20
           }
         ]
+      },
+      {
+        id: 'finance-order-numbering',
+        title: 'Mã đơn hàng theo nhóm',
+        description: 'Quy tắc sinh mã đơn hàng tự động theo nhóm sản phẩm (Insurance/Telecom/Digital).',
+        fields: [
+          { id: 'finance-order-number-reset-rule', path: 'orderNumberingPolicy.resetRule', label: 'Reset rule', type: 'select', options: CHECKOUT_ORDER_RESET_RULE_OPTIONS },
+          { id: 'finance-order-number-seq-padding', path: 'orderNumberingPolicy.sequencePadding', label: 'Độ dài số thứ tự', type: 'number', min: 3, max: 12 },
+          { id: 'finance-order-number-prefix-ins', path: 'orderNumberingPolicy.groupPrefixes.INSURANCE', label: 'INSURANCE - Prefix', type: 'text', placeholder: 'INS' },
+          { id: 'finance-order-number-prefix-tel', path: 'orderNumberingPolicy.groupPrefixes.TELECOM', label: 'TELECOM - Prefix', type: 'text', placeholder: 'TEL' },
+          { id: 'finance-order-number-prefix-dig', path: 'orderNumberingPolicy.groupPrefixes.DIGITAL', label: 'DIGITAL - Prefix', type: 'text', placeholder: 'DIG' }
+        ]
+      },
+      {
+        id: 'finance-payment-policy',
+        title: 'Thanh toán & VietQR',
+        description: 'Chính sách thanh toán, quyền override, lịch đối soát và cấu hình VietQR.',
+        fields: [
+          { id: 'finance-partial-payment', path: 'paymentPolicy.partialPaymentEnabled', label: 'Cho phép thanh toán một phần', type: 'switch' },
+          { id: 'finance-override-roles', path: 'paymentPolicy.overrideRoles', label: 'Vai trò được override thanh toán', type: 'multiSelect', options: CHECKOUT_OVERRIDE_ROLE_OPTIONS },
+          { id: 'finance-callback-tolerance', path: 'paymentPolicy.callbackTolerance', label: 'Tolerance callback', type: 'number', unit: 'giây', min: 10, max: 86400 },
+          { id: 'finance-reconcile-schedule', path: 'paymentPolicy.reconcileSchedule', label: 'Lịch reconcile (cron)', type: 'text', placeholder: '0 */2 * * *' },
+          { id: 'finance-qr-at-draft', path: 'paymentPolicy.allowQrAtDraft', label: 'Cho phép tạo QR ở đơn nháp', type: 'switch' },
+          { id: 'finance-vietqr-bank', path: 'paymentPolicy.vietQR.bankCode', label: 'VietQR - Mã ngân hàng', type: 'text', placeholder: 'VD: MB, VCB, TCB...' },
+          { id: 'finance-vietqr-account', path: 'paymentPolicy.vietQR.accountNumber', label: 'VietQR - Số tài khoản', type: 'text' },
+          { id: 'finance-vietqr-name', path: 'paymentPolicy.vietQR.accountName', label: 'VietQR - Tên tài khoản', type: 'text' },
+          { id: 'finance-vietqr-template', path: 'paymentPolicy.vietQR.transferContentTemplate', label: 'VietQR - Mẫu nội dung CK', type: 'text', placeholder: 'DH {orderNo}' }
+        ]
+      },
+      {
+        id: 'finance-invoice-automation',
+        title: 'Hóa đơn tự động',
+        description: 'Quy tắc tự động tạo hóa đơn theo nhóm sản phẩm.',
+        fields: [
+          { id: 'finance-invoice-ins-trigger', path: 'invoiceAutomation.INSURANCE.trigger', label: 'INSURANCE - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
+          { id: 'finance-invoice-ins-full', path: 'invoiceAutomation.INSURANCE.requireFullPayment', label: 'INSURANCE - Yêu cầu thanh toán đủ', type: 'switch' },
+          { id: 'finance-invoice-tel-trigger', path: 'invoiceAutomation.TELECOM.trigger', label: 'TELECOM - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
+          { id: 'finance-invoice-tel-full', path: 'invoiceAutomation.TELECOM.requireFullPayment', label: 'TELECOM - Yêu cầu thanh toán đủ', type: 'switch' },
+          { id: 'finance-invoice-dig-trigger', path: 'invoiceAutomation.DIGITAL.trigger', label: 'DIGITAL - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
+          { id: 'finance-invoice-dig-full', path: 'invoiceAutomation.DIGITAL.requireFullPayment', label: 'DIGITAL - Yêu cầu thanh toán đủ', type: 'switch' }
+        ]
       }
     ]
   },
@@ -939,28 +981,6 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         ]
       },
       {
-        id: 'sales-checkout-payment',
-        title: 'Payment policy',
-        fields: [
-          { id: 'sales-checkout-partial-payment', path: 'paymentPolicy.partialPaymentEnabled', label: 'Cho phép thanh toán một phần', type: 'switch' },
-          { id: 'sales-checkout-override-roles', path: 'paymentPolicy.overrideRoles', label: 'Vai trò được override thanh toán', type: 'multiSelect', options: CHECKOUT_OVERRIDE_ROLE_OPTIONS },
-          { id: 'sales-checkout-callback-tolerance', path: 'paymentPolicy.callbackTolerance', label: 'Tolerance callback', type: 'number', unit: 'giây', min: 10, max: 86400 },
-          { id: 'sales-checkout-reconcile-schedule', path: 'paymentPolicy.reconcileSchedule', label: 'Lịch reconcile (cron)', type: 'text', placeholder: '0 */2 * * *' }
-        ]
-      },
-      {
-        id: 'sales-checkout-invoice',
-        title: 'Invoice automation theo nhóm',
-        fields: [
-          { id: 'sales-checkout-invoice-ins-trigger', path: 'invoiceAutomation.INSURANCE.trigger', label: 'INSURANCE - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
-          { id: 'sales-checkout-invoice-ins-full', path: 'invoiceAutomation.INSURANCE.requireFullPayment', label: 'INSURANCE - Yêu cầu thanh toán đủ', type: 'switch' },
-          { id: 'sales-checkout-invoice-tel-trigger', path: 'invoiceAutomation.TELECOM.trigger', label: 'TELECOM - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
-          { id: 'sales-checkout-invoice-tel-full', path: 'invoiceAutomation.TELECOM.requireFullPayment', label: 'TELECOM - Yêu cầu thanh toán đủ', type: 'switch' },
-          { id: 'sales-checkout-invoice-dig-trigger', path: 'invoiceAutomation.DIGITAL.trigger', label: 'DIGITAL - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
-          { id: 'sales-checkout-invoice-dig-full', path: 'invoiceAutomation.DIGITAL.requireFullPayment', label: 'DIGITAL - Yêu cầu thanh toán đủ', type: 'switch' }
-        ]
-      },
-      {
         id: 'sales-checkout-activation',
         title: 'Activation policy theo nhóm',
         fields: [
@@ -982,17 +1002,6 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         ]
       },
       {
-        id: 'sales-checkout-numbering',
-        title: 'Order numbering policy',
-        fields: [
-          { id: 'sales-checkout-number-reset-rule', path: 'orderNumberingPolicy.resetRule', label: 'Reset rule', type: 'select', options: CHECKOUT_ORDER_RESET_RULE_OPTIONS },
-          { id: 'sales-checkout-number-seq-padding', path: 'orderNumberingPolicy.sequencePadding', label: 'Độ dài số thứ tự', type: 'number', min: 3, max: 12 },
-          { id: 'sales-checkout-number-prefix-ins', path: 'orderNumberingPolicy.groupPrefixes.INSURANCE', label: 'INSURANCE - Prefix', type: 'text', placeholder: 'INS' },
-          { id: 'sales-checkout-number-prefix-tel', path: 'orderNumberingPolicy.groupPrefixes.TELECOM', label: 'TELECOM - Prefix', type: 'text', placeholder: 'TEL' },
-          { id: 'sales-checkout-number-prefix-dig', path: 'orderNumberingPolicy.groupPrefixes.DIGITAL', label: 'DIGITAL - Prefix', type: 'text', placeholder: 'DIG' }
-        ]
-      },
-      {
         id: 'sales-discount-credit',
         title: 'Chiết khấu và tín dụng',
         fields: [
@@ -1000,6 +1009,15 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'sales-discount-approval', path: 'discountPolicy.requireApprovalAbovePercent', label: 'Vượt mức này phải duyệt', type: 'number', unit: '%', min: 0, max: 100 },
           { id: 'sales-negative-balance', path: 'creditPolicy.allowNegativeBalance', label: 'Cho phép công nợ âm', type: 'switch' },
           { id: 'sales-credit-limit', path: 'creditPolicy.maxCreditLimit', label: 'Hạn mức tín dụng tối đa', type: 'number', unit: 'VND', min: 0 }
+        ]
+      },
+      {
+        id: 'sales-draft-expiry',
+        title: 'Đơn nháp tự động hủy',
+        fields: [
+          { id: 'sales-draft-expiry-days', path: 'draftExpiryDays', label: 'Tự hủy đơn nháp sau', type: 'number', unit: 'ngày', min: 1, max: 90 },
+          { id: 'sales-draft-warning-days', path: 'draftWarningDays', label: 'Cảnh báo trước khi hủy', type: 'number', unit: 'ngày', min: 1, max: 30 },
+          { id: 'sales-draft-debt-days', path: 'draftDebtConversionDays', label: 'Chuyển nợ sau (ngày)', type: 'number', unit: 'ngày', min: 0, max: 365 }
         ]
       },
       {
@@ -1270,8 +1288,8 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
     ]
   },
   integrations: {
-    title: 'Tích hợp hệ thống',
-    description: 'Quản lý kết nối tích hợp, khóa API/token và trạng thái kết nối.',
+    title: 'Kết nối & Tích hợp',
+    description: 'Quản lý kết nối tích hợp, khóa API/token, AI OCR và AI Routing.',
     sections: [
       {
         id: 'integration-bhtot',
@@ -1309,9 +1327,29 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'int-ai-base-url', path: 'ai.baseUrl', label: 'AI base URL', type: 'text', isAdvanced: true },
           { id: 'int-ai-model', path: 'ai.model', label: 'Model mặc định', type: 'text', placeholder: 'gpt-4o-mini', isAdvanced: true },
           { id: 'int-ai-api-key', path: 'ai.apiKey', label: 'AI API key (nhập trực tiếp)', type: 'secret', helper: 'Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
+          { id: 'int-ai-key-pool', path: 'ai.apiKeyPool', label: 'Bể API key (Key Pool)', type: 'keyPool', helper: 'Nhập nhiều key để xoay vòng tự động. Hệ thống sẽ dùng key tiếp theo khi key hiện tại bị lỗi quota.' },
+          { id: 'int-ai-key-rotation-mode', path: 'ai.keyRotationMode', label: 'Chế độ xoay key', type: 'select', options: [{ value: 'fallback', label: 'Fallback khi lỗi' }, { value: 'round_robin', label: 'Round-robin mỗi request' }, { value: 'manual', label: 'Chọn thủ công' }] },
           { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
           { id: 'int-ai-timeout', path: 'ai.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000, isAdvanced: true }
         ]
+      },
+      {
+        id: 'integration-ai-ocr',
+        title: 'AI OCR (Giấy chứng nhận)',
+        description: 'Cấu hình nhà cung cấp AI để trích xuất thông tin từ giấy chứng nhận bảo hiểm. Chuyển từ module bán hàng về đây để quản lý tập trung.',
+        fields: [
+          { id: 'int-ai-ocr-enabled', path: 'aiOcr.enabled', label: 'Bật tích hợp AI OCR', type: 'switch' },
+          { id: 'int-ai-ocr-provider', path: 'aiOcr.provider', label: 'URL nhà cung cấp', type: 'text', placeholder: 'https://api.openai.com/v1' },
+          { id: 'int-ai-ocr-key', path: 'aiOcr.apiKeyRef', label: 'SecretRef API key', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-ai-ocr-switch', path: 'aiOcr.ocrEnabled', label: 'Bật OCR giấy chứng nhận', type: 'switch' },
+          { id: 'int-ai-ocr-model', path: 'aiOcr.ocrModel', label: 'Model OCR', type: 'text', placeholder: 'gpt-4o-mini' }
+        ]
+      },
+      {
+        id: 'integration-ai-routing',
+        title: 'AI Routing',
+        description: 'Quản trị webhook n8n, bảng chia nick/kênh theo ngành. Panel điều khiển riêng biệt.',
+        fields: []
       },
       {
         id: 'integration-payments',

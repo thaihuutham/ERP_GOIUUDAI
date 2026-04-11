@@ -8,21 +8,24 @@ type SettingsConnectionPanelProps = {
   selectedDomain: DomainKey;
   submissionData: Record<string, unknown>;
   testResult: Record<string, unknown> | null;
+  activeTab?: string;
 };
 
 export function SettingsConnectionPanel({
   selectedDomain,
   submissionData,
   testResult,
+  activeTab,
 }: SettingsConnectionPanelProps) {
   const showConnectorPanel = selectedDomain === 'integrations' || selectedDomain === 'search_performance';
-  const showAiRouting = selectedDomain === 'integrations';
+  // AI Routing now only renders on its dedicated tab
+  const showAiRouting = selectedDomain === 'integrations' && activeTab === 'integration-ai-routing';
 
   if (!showConnectorPanel && !showAiRouting) return null;
 
   return (
     <>
-      {showConnectorPanel && (
+      {showConnectorPanel && !showAiRouting && (
         <section style={{ border: '1px dashed var(--line)', borderRadius: '10px', padding: '0.65rem', marginTop: '0.9rem' }}>
           <strong style={{ fontSize: '0.86rem' }}>Trạng thái kết nối</strong>
           {selectedDomain === 'integrations' ? (
@@ -68,3 +71,4 @@ export function SettingsConnectionPanel({
     </>
   );
 }
+

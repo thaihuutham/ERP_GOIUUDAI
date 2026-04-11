@@ -76,6 +76,20 @@ export class SalesCheckoutController {
   reEvaluateInvoice(@Param('id') orderId: string, @Body() body: ReEvaluateInvoiceActionDto) {
     return this.checkoutService.reEvaluateInvoiceAction(orderId, body);
   }
+
+  @Get('orders/:id/vietqr')
+  getVietQRData(@Param('id') orderId: string) {
+    return this.checkoutService.generateVietQRData(orderId);
+  }
+
+  @Post('orders/:id/create-invoice')
+  @AuditAction({ action: 'CHECKOUT_CREATE_INVOICE', entityType: 'Invoice', entityIdParam: 'id' })
+  createInvoiceFromOrder(
+    @Param('id') orderId: string,
+    @Body() body: { amount?: number; note?: string }
+  ) {
+    return this.checkoutService.createInvoiceFromOrder(orderId, body);
+  }
 }
 
 @Controller('integrations/payments')

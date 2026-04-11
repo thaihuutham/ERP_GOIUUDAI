@@ -79,4 +79,9 @@ export class SalesController {
   reject(@Param('id') id: string) {
     return this.salesService.reject(id);
   }
+
+  @Get('dashboard/errors')
+  getSalesErrorDashboard(@Query('days') days?: string) {
+    return this.salesService.getSalesErrorDashboard(Number(days || 30));
+  }
 }

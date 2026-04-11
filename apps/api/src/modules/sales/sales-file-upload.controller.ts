@@ -14,6 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import { SalesFileUploadService } from './sales-file-upload.service';
+import { SalesOcrService } from './sales-ocr.service';
 
 const MIME_MAP: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -24,7 +25,10 @@ const MIME_MAP: Record<string, string> = {
 
 @Controller('sales/checkout/files')
 export class SalesFileUploadController {
-  constructor(private readonly uploadService: SalesFileUploadService) {}
+  constructor(
+    private readonly uploadService: SalesFileUploadService,
+    private readonly ocrService: SalesOcrService
+  ) {}
 
   @Post('upload')
   @UseInterceptors(
@@ -42,6 +46,19 @@ export class SalesFileUploadController {
     // tenantId placeholder — in production, extract from JWT / request context
     const tenantId = 'default';
     return this.uploadService.uploadFile(file, tenantId, orderId || undefined);
+  }
+
+  @Post('ocr-extract')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: {
+        fileSize: 5 * 1024 * 1024 // 5 MB
+      }
+    })
+  )
+  async ocrExtract(@UploadedFile() file: Express.Multer.File) {
+    return this.ocrService.extractCertificateData(file.buffer, file.mimetype);
   }
 
   @Get(':fileId')

@@ -54,6 +54,17 @@ export class SalesCheckoutOrderItemDto {
   @IsOptional()
   @IsObject()
   serviceMetaJson?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  discountType?: 'PERCENT' | 'FIXED';
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsNumber()
+  @Min(0)
+  discountValue?: number;
 }
 
 export class CreateSalesCheckoutOrderDto {

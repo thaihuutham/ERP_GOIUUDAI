@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { GenericStatus, Prisma } from '@prisma/client';
+import { CheckoutOrderStatus, GenericStatus, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import {
   buildCursorListResponse,
@@ -900,6 +900,97 @@ export class SalesService {
     return {
       companyWide: scope.companyWide,
       employeeIds: scope.employeeIds
+    };
+  }
+
+  // ── C3: Manager Sales Error Dashboard ──────────────────────────────
+  async getSalesErrorDashboard(days: number) {
+    const tenantId = this.prisma.getTenantId();
+    const since = new Date();
+    since.setDate(since.getDate() - Math.min(Math.max(days, 1), 365));
+
+    // 1. Cancelled orders
+    const cancelledOrders = await this.prisma.client.order.findMany({
+      where: {
+        tenant_Id: tenantId,
+        updatedAt: { gte: since },
+        OR: [
+          { status: GenericStatus.ARCHIVED },
+          { checkoutStatus: CheckoutOrderStatus.CANCELLED }
+        ]
+      },
+      select: {
+        id: true,
+        orderNo: true,
+        customerName: true,
+        totalAmount: true,
+        createdBy: true,
+        updatedAt: true,
+        status: true,
+        checkoutStatus: true
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 50
+    });
+
+    // 2. Discount approvals (pending + resolved)
+    const discountApprovals = await this.prisma.client.approval.findMany({
+      where: {
+        tenant_Id: tenantId,
+        targetType: 'DISCOUNT_APPROVAL',
+        createdAt: { gte: since }
+      },
+      select: {
+        id: true,
+        targetId: true,
+        requesterId: true,
+        status: true,
+        contextJson: true,
+        decisionNote: true,
+        decidedAt: true,
+        createdAt: true
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    });
+
+    // 3. Payment overrides (manual adjustments logged by staff)
+    const paymentOverrides = await this.prisma.client.paymentOverrideLog.findMany({
+      where: {
+        tenant_Id: tenantId,
+        createdAt: { gte: since }
+      },
+      select: {
+        id: true,
+        amount: true,
+        reason: true,
+        note: true,
+        overrideBy: true,
+        overrideRole: true,
+        createdAt: true,
+        intentId: true
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    });
+
+    // 4. Summary stats
+    const cancelCount = cancelledOrders.length;
+    const pendingDiscountApprovals = discountApprovals.filter((a) => String(a.status) === 'PENDING').length;
+    const overrideCount = paymentOverrides.length;
+
+    return {
+      period: { days, since: since.toISOString() },
+      summary: {
+        cancelledOrders: cancelCount,
+        pendingDiscountApprovals,
+        totalDiscountApprovals: discountApprovals.length,
+        paymentOverrides: overrideCount,
+        totalIssues: cancelCount + discountApprovals.length + overrideCount
+      },
+      cancelledOrders,
+      discountApprovals,
+      paymentOverrides
     };
   }
 }

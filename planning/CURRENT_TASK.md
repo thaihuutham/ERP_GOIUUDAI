@@ -1,10 +1,44 @@
 # CURRENT_TASK
 
 ## Trạng thái tổng quan
-- Phase: Sales Checkout v2 — Open Questions Resolution (Template Split + effectiveTo + File Upload)
-- Last updated: 2026-04-10 21:40 +07
-- Owner: Codex session
+- Phase: Sales Workflow Optimization — Phase A+B Complete (11/13 GAPs done)
+- Last updated: 2026-04-10 23:48 +07
+- Owner: Antigravity session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+## Session Update 2026-04-10 23:48 +07 (A4 Discount + B1 VietQR + B2 n8n Invoice)
+- Newly completed:
+  - **A4**: Chiết khấu/giảm giá (PERCENT/FIXED) — schema, DTO, service, frontend UI
+  - **B1**: VietQR thanh toán — backend API + UI QR display trong chi tiết đơn
+  - **B2**: API `POST /sales/checkout/orders/:id/create-invoice` cho n8n automation
+  - **Feedback corrections**: BH 180/365, DV số bỏ 360, nút bên phải, SĐT-only search
+- Remaining (Phase C): C1 AI/OCR, C2 discount approval flow, C3 manager dashboard
+## Session Update 2026-04-10 22:57 +07 (Sales Workflow Phase A+B: 6 GAP fixes)
+- User request:
+  - Triển khai 13 GAP fixes cho quy trình bán hàng bán lẻ, bắt đầu từ Phase A (Sale-friendly UX) và Phase B (Thanh toán & Hiển thị).
+- Đã triển khai (6/13 items):
+  - **A1**: Bổ sung chu kỳ Viễn thông (180/210/270/420/540/720) & Dịch vụ số (365). Thêm field startDate cho TELECOM.
+    - File: `apps/api/src/modules/settings/settings-policy.types.ts`
+  - **A2**: Customer autocomplete by phone/name — debounced search dropdown using CRM `/customers?q=` API.
+    - File: `apps/web/components/sales-operations-board.tsx`
+  - **A3**: Product selection from catalog — dropdown from `/catalog/products`, auto-fill price, readonly unitPrice khi đã chọn.
+    - File: `apps/web/components/sales-operations-board.tsx`
+  - **A5**: Auto-cancel expired DRAFT orders — hourly cron, configurable `draftExpiryDays` (default 7).
+    - Files: NEW `apps/api/src/modules/sales/sales-draft-cleanup.service.ts`, `sales.module.ts`, `settings-policy.types.ts`
+  - **B3**: Invoice column hiển thị Badge with status color thay vì text.
+    - File: `apps/web/components/sales-operations-board.tsx`
+  - **B4**: Nút tạo đơn hàng đổi sang góc trên bên trái, inline với search bar.
+    - File: `apps/web/components/sales-operations-board.tsx`
+- Labels: customer autocomplete, catalog product picker, tiếng Việt.
+- Verification:
+  - `npx tsc --noEmit` (API): ✅
+  - `npx tsc --noEmit` (Web): ✅
+- Remaining GAPs (7 items):
+  - A4: Discount policy logic
+  - B1: VietQR format + bank account settings
+  - B2: Cancel draft button on UI
+  - C1: Cancel PENDING_PAYMENT approval flow
+  - C2: Manager error dashboard
+  - C3: Auto-activate for AUTO policy groups
 ## Session Update 2026-04-10 21:40 +07 (Hotfix: settings runtime `normalizeListPayload is not defined`)
 - User request:
   - báo lỗi trang Cấu hình hệ thống: `normalizeListPayload is not defined`.

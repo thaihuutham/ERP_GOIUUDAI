@@ -255,6 +255,7 @@ export function SettingsCenter() {
             selectedDomain={s.selectedDomain}
             submissionData={s.submissionData}
             testResult={s.testResult}
+            activeTab={s.resolvedActiveDomainTab}
           />
 
           {/* ── Domain actions ────────────────── */}

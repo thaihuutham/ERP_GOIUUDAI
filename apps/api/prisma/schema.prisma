@@ -1052,6 +1052,9 @@ model OrderItem {
   activatedAt  DateTime?
   activationRef String?
   serviceMetaJson Json?
+  discountType    String?
+  discountValue   Decimal? @db.Decimal(18, 2)
+  discountAmount  Decimal? @db.Decimal(18, 2)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

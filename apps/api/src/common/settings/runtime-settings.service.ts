@@ -411,7 +411,10 @@ export class RuntimeSettingsService {
   }
 
   async getSalesCrmPolicyRuntime() {
-    const domain = await this.getDomain('sales_crm_policies');
+    const [domain, financeDomain] = await Promise.all([
+      this.getDomain('sales_crm_policies'),
+      this.getDomain('finance_controls')
+    ]);
     const orderSettings = this.toRecord(domain.orderSettings);
     const discountPolicy = this.toRecord(domain.discountPolicy);
     const creditPolicy = this.toRecord(domain.creditPolicy);
@@ -420,11 +423,18 @@ export class RuntimeSettingsService {
     const renewalReminder = this.toRecord(domain.renewalReminder);
     const productLeadDays = this.toRecord(renewalReminder.productLeadDays);
     const checkoutTemplates = this.toRecord(domain.checkoutTemplates);
-    const paymentPolicy = this.toRecord(domain.paymentPolicy);
-    const invoiceAutomation = this.toRecord(domain.invoiceAutomation);
+    // Cross-domain fallback: read from finance_controls first, then sales_crm_policies
+    const financePaymentPolicy = this.toRecord(financeDomain.paymentPolicy);
+    const salesPaymentPolicy = this.toRecord(domain.paymentPolicy);
+    const paymentPolicy = Object.keys(financePaymentPolicy).length > 0 ? financePaymentPolicy : salesPaymentPolicy;
+    const financeInvoiceAutomation = this.toRecord(financeDomain.invoiceAutomation);
+    const salesInvoiceAutomation = this.toRecord(domain.invoiceAutomation);
+    const invoiceAutomation = Object.keys(financeInvoiceAutomation).length > 0 ? financeInvoiceAutomation : salesInvoiceAutomation;
     const activationPolicy = this.toRecord(domain.activationPolicy);
     const effectiveDateMapping = this.toRecord(domain.effectiveDateMapping);
-    const orderNumberingPolicy = this.toRecord(domain.orderNumberingPolicy);
+    const financeOrderNumberingPolicy = this.toRecord(financeDomain.orderNumberingPolicy);
+    const salesOrderNumberingPolicy = this.toRecord(domain.orderNumberingPolicy);
+    const orderNumberingPolicy = Object.keys(financeOrderNumberingPolicy).length > 0 ? financeOrderNumberingPolicy : salesOrderNumberingPolicy;
     const readOptionalLeadDays = (value: unknown) => {
       const parsed = Number(value);
       if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
