@@ -62,6 +62,13 @@ export class CustomerDistributionService {
     @Inject(RuntimeSettingsService) private readonly runtimeSettings: RuntimeSettingsService
   ) {}
 
+  /** Resolve tenant ID from runtime settings or fallback */
+  private getTenantId(): string {
+    return (this.runtimeSettings as any).tenantId
+      ?? process.env.DEFAULT_TENANT_ID
+      ?? 'default';
+  }
+
   // ── Public: full cycle ────────────────────────────────────────────
 
   async runDistributionCycle(): Promise<DistributionResult> {
@@ -502,9 +509,10 @@ export class CustomerDistributionService {
   }
 
   private async addToBlacklist(customerId: string, staffId: string) {
+    const tenantId = this.getTenantId();
     try {
       await this.prisma.client.customerRotationBlacklist.create({
-        data: { customerId, staffId, tenant_Id: 'default' }
+        data: { customerId, staffId, tenant_Id: tenantId }
       });
     } catch {
       // Ignore unique constraint violations (already blacklisted)
@@ -523,6 +531,7 @@ export class CustomerDistributionService {
     rotationRound: number,
     triggeredBy: string
   ) {
+    const tenantId = this.getTenantId();
     await this.prisma.client.$transaction([
       this.prisma.client.customer.update({
         where: { id: customerId },
@@ -530,7 +539,7 @@ export class CustomerDistributionService {
       }),
       this.prisma.client.customerAssignmentLog.create({
         data: {
-          tenant_Id: 'default',
+          tenant_Id: tenantId,
           customerId,
           fromStaffId,
           toStaffId,

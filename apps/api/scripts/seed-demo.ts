@@ -1,4 +1,5 @@
 import {
+  CustomerAssignmentAction,
   CustomerCareStatus,
   EmploymentType,
   GenericStatus,
@@ -143,6 +144,10 @@ async function ensureTenant() {
 
 async function resetTenantData(tenantId: string) {
   const where: WithTenant = { tenant_Id: tenantId };
+
+  // ── CRM Distribution (phải xóa trước Customer) ──
+  await prisma.customerAssignmentLog.deleteMany({ where });
+  await prisma.customerRotationBlacklist.deleteMany({ where });
 
   await prisma.hrGoal.deleteMany({ where });
   await prisma.personalIncomeTaxRecord.deleteMany({ where });
@@ -441,12 +446,47 @@ async function seed() {
   });
   const approvers = users.filter((user) => user.role === UserRole.ADMIN || user.role === UserRole.USER);
 
+  // ── Nhân viên sales (dùng cho gán owner) ──
+  const salesDeptIds = departmentEntities
+    .filter((d) => d.name.includes('Kinh doanh'))
+    .map((d) => d.id);
+  const salesEmployees = employees.filter(
+    (e) => e.status === GenericStatus.ACTIVE && salesDeptIds.includes(e.departmentId ?? '')
+  );
+  const activeSalesStaff = salesEmployees.length > 0 ? salesEmployees : employees.filter((e) => e.status === GenericStatus.ACTIVE).slice(0, 20);
+
   const customerRows = Array.from({ length: COUNTS.customers }, (_, idx) => {
     const i = idx + 1;
     const phone = demoPhone(i);
     const email = demoEmail('customer', i).toLowerCase();
     const stage = pick(customerStages);
     const tags = ['demo', stage.toLowerCase(), pick(['ban_le', 'vip', 'online', 'tai_cua_hang'])];
+
+    // Pool ownership rule:
+    // - KH 1-30: pool (ownerStaffId=null, status=MOI_CHUA_TU_VAN) → test chia tự động
+    // - KH 31-60: gán cho NV sales cụ thể → test reclaim/rotation
+    // - KH 61-120: gán ngẫu nhiên → test thống kê
+    let ownerStaffId: string | null = null;
+    let customerStatus: CustomerCareStatus;
+
+    if (i <= 30) {
+      // Pool customers — chờ chia
+      ownerStaffId = null;
+      customerStatus = CustomerCareStatus.MOI_CHUA_TU_VAN;
+    } else if (i <= 60) {
+      // Gán cho NV sales — test pending/reclaim
+      ownerStaffId = activeSalesStaff[idx % activeSalesStaff.length].id;
+      customerStatus = pick([
+        CustomerCareStatus.MOI_CHUA_TU_VAN,
+        CustomerCareStatus.DANG_SUY_NGHI,
+        CustomerCareStatus.KH_TU_CHOI,
+        CustomerCareStatus.KHONG_NGHE_MAY_LAN_1
+      ]);
+    } else {
+      // Gán ngẫu nhiên
+      ownerStaffId = pick(activeSalesStaff).id;
+      customerStatus = pick(customerCareStatuses);
+    }
 
     return {
       tenant_Id: TENANT_ID,
@@ -458,13 +498,13 @@ async function seed() {
       emailNormalized: email,
       tags: Array.from(new Set(tags)),
       customerStage: stage,
-      ownerStaffId: pick(employees).code,
+      ownerStaffId,
       consentStatus: pick(['DONG_Y', 'CHUA_XAC_NHAN', 'TU_CHOI']),
       segment: pick(customerSegments),
       source: pick(customerSources),
       totalOrders: 0,
       totalSpent: decimal(0),
-      status: pick(customerCareStatuses),
+      status: customerStatus,
       createdAt: randomPastDate(420),
       updatedAt: new Date()
     };
@@ -1187,6 +1227,71 @@ async function seed() {
   });
   await prisma.customerInteraction.createMany({ data: customerInteractionRows });
 
+  // ── CRM Distribution: Assignment Logs ──────────────────────────
+  const assignmentActions: CustomerAssignmentAction[] = [
+    CustomerAssignmentAction.AUTO_ASSIGNED,
+    CustomerAssignmentAction.MANUAL_ASSIGNED,
+    CustomerAssignmentAction.RECLAIMED_IDLE,
+    CustomerAssignmentAction.RECLAIMED_FAILED,
+    CustomerAssignmentAction.ROTATION,
+    CustomerAssignmentAction.RETURNED_TO_POOL
+  ];
+  const assignmentReasons = [
+    'Chia tự động (ROUND_ROBIN)',
+    'Chia tự động (LEAST_PENDING)',
+    'Chia tự động khi tạo KH (CAP_FILL)',
+    'Gán bởi admin',
+    'Thu hồi: không chăm sóc sau 24h',
+    'Thu hồi do tư vấn thất bại',
+    'Quay vòng lần 1: NV cũ tư vấn thất bại',
+    'Quay vòng lần 2: NV cũ tư vấn thất bại',
+    'Hết vòng quay (3 lần). Cần admin xử lý.',
+    'Không còn NV nào chưa chăm sóc KH này.'
+  ];
+  const strategies = ['ROUND_ROBIN', 'LEAST_PENDING', 'CAP_FILL', 'KPI_WEIGHTED'];
+  const triggeredBys = ['system-scheduler', 'system-auto', 'admin:user.0001@demo-erp.local'];
+
+  const assignmentLogRows = Array.from({ length: 40 }, (_, idx) => {
+    const customer = customers[idx % customers.length];
+    const action = assignmentActions[idx % assignmentActions.length];
+    const fromStaff = idx % 3 === 0 ? null : activeSalesStaff[idx % activeSalesStaff.length].id;
+    const toStaff = action === CustomerAssignmentAction.RETURNED_TO_POOL || action === CustomerAssignmentAction.RECLAIMED_IDLE
+      ? null
+      : activeSalesStaff[(idx + 1) % activeSalesStaff.length].id;
+    return {
+      tenant_Id: TENANT_ID,
+      customerId: customer.id,
+      fromStaffId: fromStaff,
+      toStaffId: toStaff,
+      action,
+      reason: assignmentReasons[idx % assignmentReasons.length],
+      strategyUsed: action === CustomerAssignmentAction.AUTO_ASSIGNED ? pick(strategies) : null,
+      rotationRound: action === CustomerAssignmentAction.ROTATION ? (idx % 3) + 1 : 0,
+      triggeredBy: pick(triggeredBys),
+      createdAt: randomPastDate(60)
+    };
+  });
+  await prisma.customerAssignmentLog.createMany({ data: assignmentLogRows });
+
+  // ── CRM Distribution: Rotation Blacklist ───────────────────────
+  const blacklistPairs = new Set<string>();
+  const blacklistRows: Array<{ tenant_Id: string; customerId: string; staffId: string; blockedAt: Date }> = [];
+  for (let idx = 0; idx < 10; idx++) {
+    const customer = customers[(idx * 3) % customers.length];
+    const staff = activeSalesStaff[idx % activeSalesStaff.length];
+    const key = `${customer.id}:${staff.id}`;
+    if (!blacklistPairs.has(key)) {
+      blacklistPairs.add(key);
+      blacklistRows.push({
+        tenant_Id: TENANT_ID,
+        customerId: customer.id,
+        staffId: staff.id,
+        blockedAt: randomPastDate(30)
+      });
+    }
+  }
+  await prisma.customerRotationBlacklist.createMany({ data: blacklistRows });
+
   const customerMergeLogRows = Array.from({ length: COUNTS.customerMergeLogs }, (_, idx) => {
     const primary = customers[idx % customers.length];
     const merged = customers[(customers.length - 1 - idx + customers.length) % customers.length];
@@ -1550,6 +1655,47 @@ async function seed() {
           value: COUNTS.journalEntries + 2000,
           updatedAt: new Date().toISOString()
         } as any
+      },
+      {
+        tenant_Id: TENANT_ID,
+        settingKey: 'settings.sales_crm_policies.v1',
+        settingValue: {
+          customerTaxonomy: {
+            stages: [
+              { key: 'MOI', label: 'Mới', color: '#3b82f6', isDefault: true },
+              { key: 'DA_TU_VAN', label: 'Đã tư vấn', color: '#f59e0b' },
+              { key: 'QUAN_TAM', label: 'Quan tâm', color: '#10b981' },
+              { key: 'DA_MUA', label: 'Đã mua', color: '#8b5cf6' },
+              { key: 'KHONG_TIEP_TUC', label: 'Không tiếp tục', color: '#ef4444' }
+            ],
+            sources: [
+              { key: 'Zalo', label: 'Zalo', isDefault: true },
+              { key: 'Facebook', label: 'Facebook' },
+              { key: 'Giới thiệu', label: 'Giới thiệu' },
+              { key: 'Website', label: 'Website' },
+              { key: 'Cửa hàng', label: 'Cửa hàng' }
+            ]
+          },
+          tagRegistry: { customerTags: ['demo', 'vip', 'ban_le', 'online'], interactionTags: ['quan_tam', 'can_goi_lai', 'da_chot', 'tam_dung'] },
+          customerDistribution: {
+            enabled: true,
+            strategy: 'ROUND_ROBIN',
+            capFillTarget: 20,
+            kpiMetric: 'revenue',
+            kpiPeriod: 'month',
+            eligibleStaffFilter: 'all_active',
+            eligibleDepartmentIds: [],
+            eligiblePositionIds: [],
+            duplicateCheckFields: ['phone', 'email'],
+            reclaimIdleEnabled: true,
+            reclaimIdleAfterHours: 24,
+            reclaimFailedEnabled: true,
+            reclaimFailedAfterDays: 7,
+            rotationMaxRounds: 3,
+            failedStatuses: ['KH_TU_CHOI', 'NGUOI_NHA_LAM_THUE_BAO', 'KHONG_NGHE_MAY_LAN_1', 'KHONG_NGHE_MAY_LAN_2'],
+            schedulerIntervalMinutes: 15
+          }
+        } as any
       }
     ]
   });
@@ -1677,6 +1823,8 @@ async function seed() {
     hrEvents: await prisma.hrEvent.count({ where: { tenant_Id: TENANT_ID } }),
     customers: await prisma.customer.count({ where: { tenant_Id: TENANT_ID } }),
     customerInteractions: await prisma.customerInteraction.count({ where: { tenant_Id: TENANT_ID } }),
+    customerAssignmentLogs: await prisma.customerAssignmentLog.count({ where: { tenant_Id: TENANT_ID } }),
+    customerRotationBlacklist: await prisma.customerRotationBlacklist.count({ where: { tenant_Id: TENANT_ID } }),
     paymentRequests: await prisma.paymentRequest.count({ where: { tenant_Id: TENANT_ID } }),
     products: await prisma.product.count({ where: { tenant_Id: TENANT_ID } }),
     orders: await prisma.order.count({ where: { tenant_Id: TENANT_ID } }),
