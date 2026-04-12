@@ -6,6 +6,7 @@ import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { CrmContractsService } from './crm-contracts.service';
 import { CrmService } from './crm.service';
+import { CustomerDistributionService } from './customer-distribution.service';
 
 class MarkPaymentRequestPaidDto {
   @IsString()
@@ -29,7 +30,8 @@ export class CrmController {
   constructor(
     @Inject(CrmService) private readonly crmService: CrmService,
     @Inject(CrmContractsService) private readonly crmContractsService: CrmContractsService,
-    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService
+    @Inject(CustomFieldsService) private readonly customFields: CustomFieldsService,
+    @Inject(CustomerDistributionService) private readonly distributionService: CustomerDistributionService
   ) {}
 
   @Get('customers')
@@ -305,5 +307,63 @@ export class CrmController {
   @AuditAction({ action: 'APPROVE_POLICY_DOCUMENT', entityType: 'InboundPolicyDocument', entityIdParam: 'id' })
   approvePolicyDocument(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     return this.crmContractsService.approvePolicyDocument(id, body);
+  }
+
+  // ── Distribution endpoints ──────────────────────────────────────
+
+  @Get('distribution/status')
+  getDistributionStatus() {
+    return this.distributionService.getDistributionStatus();
+  }
+
+  @Post('distribution/run')
+  @AuditAction({ action: 'RUN_CUSTOMER_DISTRIBUTION', entityType: 'Customer' })
+  runDistribution() {
+    return this.distributionService.runDistributionCycle();
+  }
+
+  @Get('distribution/logs')
+  getDistributionLogs(
+    @Query() query: PaginationQueryDto,
+    @Query('customerId') customerId?: string,
+    @Query('staffId') staffId?: string,
+    @Query('action') action?: string
+  ) {
+    return this.distributionService.getAssignmentLogs({
+      customerId,
+      staffId,
+      action,
+      take: query.limit
+    });
+  }
+
+  @Post('distribution/assign')
+  @AuditAction({ action: 'MANUAL_ASSIGN_CUSTOMER', entityType: 'Customer' })
+  manualAssign(@Body() body: Record<string, unknown>, @Req() req?: any) {
+    const customerId = String(body.customerId ?? '');
+    const toStaffId = String(body.toStaffId ?? '');
+    const adminId = String(req?.user?.id ?? 'admin');
+    return this.distributionService.manualAssign(customerId, toStaffId, adminId);
+  }
+
+  @Post('distribution/reclaim')
+  @AuditAction({ action: 'MANUAL_RECLAIM_CUSTOMER', entityType: 'Customer' })
+  manualReclaim(@Body() body: Record<string, unknown>, @Req() req?: any) {
+    const customerId = String(body.customerId ?? '');
+    const adminId = String(req?.user?.id ?? 'admin');
+    return this.distributionService.manualReclaim(customerId, adminId);
+  }
+
+  @Get('distribution/staff-stats')
+  getStaffStats() {
+    return this.distributionService.getStaffStats();
+  }
+
+  @Get('distribution/duplicate-check')
+  checkDuplicate(
+    @Query('phone') phone?: string,
+    @Query('email') email?: string
+  ) {
+    return this.distributionService.checkDuplicate(phone, email);
   }
 }

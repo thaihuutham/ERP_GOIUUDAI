@@ -1575,6 +1575,9 @@ export function CrmCustomersBoard() {
             <a className="btn btn-ghost" href="/modules/crm/vehicles">
               <Car size={16} /> Quản lý xe
             </a>
+            <a className="btn btn-ghost" href="/modules/crm/distribution">
+              <Target size={16} /> Chia khách
+            </a>
             {canCreate && (
               <button
                 className="btn btn-primary"

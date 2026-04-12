@@ -768,6 +768,13 @@ export class CrmService {
       };
     }
 
+    // ── Pool ownership rule ──────────────────────────────────────
+    // Employee (USER role) tạo KH → KH thuộc NV đó, không vào pool.
+    // Admin tạo / import / API → ownerStaffId = null → vào pool chia tự động.
+    const resolvedOwnerStaffId = await this.resolveOwnerStaffIdForCreate(
+      this.optionalString(payload.ownerStaffId)
+    );
+
     const created = await this.prisma.client.customer.create({
       data: {
         tenant_Id: this.prisma.getTenantId(),
@@ -780,7 +787,7 @@ export class CrmService {
         segment: this.optionalString(payload.segment) ?? null,
         source: normalizedTaxonomy.source ?? defaultCustomerSource ?? null,
         needsSummary: this.optionalString(payload.needsSummary) ?? null,
-        ownerStaffId: this.optionalString(payload.ownerStaffId) ?? null,
+        ownerStaffId: resolvedOwnerStaffId,
         consentStatus: this.optionalString(payload.consentStatus) ?? null,
         customerStage: this.resolveCustomerStageForStatus(
           normalizedTaxonomy.stage,
@@ -796,7 +803,9 @@ export class CrmService {
 
     return {
       deduplicated: false,
-      message: 'Đã tạo khách hàng mới.',
+      message: created.ownerStaffId
+        ? 'Đã tạo khách hàng mới (thuộc bạn).'
+        : 'Đã tạo khách hàng mới (vào Pool chia tự động).',
       customer: created
     };
   }
@@ -2828,5 +2837,44 @@ export class CrmService {
       sub,
       email,
     };
+  }
+
+  /**
+   * Pool ownership rule:
+   * - NV tự tạo KH → ownerStaffId = employeeId của NV đó (KH thuộc NV, không vào pool)
+   * - Admin / import / API → ownerStaffId = null (KH vào pool, hệ thống chia tự động)
+   * - Nếu payload đã chỉ định ownerStaffId → dùng giá trị đó (admin gán thủ công)
+   */
+  private async resolveOwnerStaffIdForCreate(
+    explicitOwnerStaffId: string | null | undefined
+  ): Promise<string | null> {
+    // If payload already specifies an owner → use it (admin manually assigning)
+    if (explicitOwnerStaffId) {
+      return explicitOwnerStaffId;
+    }
+
+    const actor = this.resolveCustomerActor();
+
+    // Admin role → null → vào pool chia tự động
+    if (!actor.role || actor.role === UserRole.ADMIN) {
+      return null;
+    }
+
+    // USER role → look up their employeeId
+    if (actor.role === UserRole.USER && actor.userId) {
+      try {
+        const user = await this.prisma.client.user.findFirst({
+          where: { id: actor.userId },
+          select: { employeeId: true }
+        });
+        if (user?.employeeId) {
+          return user.employeeId;
+        }
+      } catch {
+        // Graceful fallback: if lookup fails, go to pool
+      }
+    }
+
+    return null;
   }
 }

@@ -109,6 +109,22 @@ enum CustomerCareStatus {
   SAI_SO_KHONG_TON_TAI_BO_QUA_XOA
 }
 
+enum CustomerDistributionStrategy {
+  ROUND_ROBIN
+  LEAST_PENDING
+  CAP_FILL
+  KPI_WEIGHTED
+}
+
+enum CustomerAssignmentAction {
+  AUTO_ASSIGNED
+  MANUAL_ASSIGNED
+  RECLAIMED_IDLE
+  RECLAIMED_FAILED
+  ROTATION
+  RETURNED_TO_POOL
+}
+
 enum CustomerZaloNickType {
   CHUA_KIEM_TRA
   CHUA_CO_NICK_ZALO
@@ -822,6 +838,7 @@ model Customer {
   primaryMergeLogs CustomerMergeLog[] @relation("primaryCustomer")
   mergedFromLogs   CustomerMergeLog[] @relation("mergedCustomer")
   conversationThreads ConversationThread[]
+  assignmentLogs CustomerAssignmentLog[]
 
   @@unique([tenant_Id, code])
   @@unique([tenant_Id, phoneNormalized])
@@ -3720,3 +3737,35 @@ model DailyQuizSession {
   @@index([tenant_Id, employeeId, completed])
 }
 
+model CustomerAssignmentLog {
+  id            String                    @id @default(cuid())
+  tenant_Id     String
+  customerId    String
+  fromStaffId   String?
+  toStaffId     String?
+  action        CustomerAssignmentAction
+  reason        String?
+  strategyUsed  String?
+  rotationRound Int                       @default(0)
+  triggeredBy   String?
+  createdAt     DateTime                  @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId])
+  @@index([tenant_Id, toStaffId])
+  @@index([tenant_Id, createdAt])
+}
+
+model CustomerRotationBlacklist {
+  id         String   @id @default(cuid())
+  tenant_Id  String
+  customerId String
+  staffId    String
+  blockedAt  DateTime @default(now())
+
+  @@unique([tenant_Id, customerId, staffId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, customerId])
+}

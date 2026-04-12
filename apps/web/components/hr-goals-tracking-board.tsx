@@ -255,7 +255,7 @@ export function HrGoalsTrackingBoard() {
   const query = useMemo(() => {
     const q: Record<string, string> = {
       scope,
-      limit: '300'
+      limit: '100'
     };
     if (keyword.trim()) q.q = keyword.trim();
     if (period.trim()) q.period = period.trim();

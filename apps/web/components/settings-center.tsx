@@ -28,6 +28,8 @@ export function SettingsCenter() {
   const s = useSettingsState();
 
   const selectedDomainState = s.center?.domainStates.find((item) => item.domain === s.selectedDomain);
+  const shouldShowSettingsOpsPanel =
+    s.selectedDomain === 'data_governance_backup' && s.activeTabConfig?.showSettingsOpsPanel === true;
 
   const renderOrgTreeNodes = (nodes: Record<string, unknown>[], depth = 0): ReactNode[] => {
     return nodes.flatMap((node) => {
@@ -250,6 +252,19 @@ export function SettingsCenter() {
             />
           )}
 
+          {shouldShowSettingsOpsPanel && (
+            <SettingsRightSidebar
+              center={s.center}
+              role={s.role}
+              validationErrors={s.validationErrors}
+              validationWarnings={s.validationWarnings}
+              selectedSnapshotId={s.selectedSnapshotId}
+              onSelectSnapshot={s.setSelectedSnapshotId}
+              onRestoreSnapshot={s.handleRestoreSnapshot}
+              busy={s.busy}
+            />
+          )}
+
           {/* ── Connection panel ──────────────── */}
           <SettingsConnectionPanel
             selectedDomain={s.selectedDomain}
@@ -276,18 +291,6 @@ export function SettingsCenter() {
             globalValidationErrors={s.globalValidationErrors}
           />
         </main>
-
-        {/* ── Right sidebar ───────────────────── */}
-        <SettingsRightSidebar
-          center={s.center}
-          role={s.role}
-          validationErrors={s.validationErrors}
-          validationWarnings={s.validationWarnings}
-          selectedSnapshotId={s.selectedSnapshotId}
-          onSelectSnapshot={s.setSelectedSnapshotId}
-          onRestoreSnapshot={s.handleRestoreSnapshot}
-          busy={s.busy}
-        />
       </section>
     </article>
   );

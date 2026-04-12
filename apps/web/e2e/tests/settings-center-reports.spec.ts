@@ -769,6 +769,8 @@ test.describe('Settings Center reports alignment', () => {
     await expect(page.getByRole('tab', { name: 'Vòng đời dữ liệu' })).toBeVisible();
     await clickRoleControl(page, 'tab', 'Chính sách export');
     await expect(page.getByRole('heading', { name: 'Chính sách export' })).toBeVisible();
+    await clickRoleControl(page, 'tab', 'Checklist & audit');
+    await expect(page.getByRole('heading', { name: 'Checklist khởi tạo' })).toBeVisible();
   });
 
   test('uses layout metadata endpoint when available and keeps fallback-safe behavior', async ({ page }) => {

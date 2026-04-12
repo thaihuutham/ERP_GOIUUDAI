@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-12 17:08 +07
+- Time: 2026-04-12 19:14 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-12_1708_codex.md`
+- Session Log: `.agent/sessions/2026-04-12_1914_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,116 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+## Update 2026-04-12 19:14 (Fix runtime DB schema missing tables for Prisma)
+- User report:
+  - API/UI phát sinh hàng loạt lỗi Prisma:
+    - `The table public.Setting does not exist`,
+    - `public.Position`, `public.User`, `public.Customer`, `public.zalo_campaigns`... không tồn tại.
+- Root cause:
+  - DB runtime mà `erp-api` đang kết nối chưa được apply migrations.
+  - kiểm tra trực tiếp trong `erp-postgres` cho thấy schema `public` ban đầu không có bảng nghiệp vụ.
+- Đã xử lý:
+  - chạy migrate deploy vào đúng DB runtime:
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api`
+  - 28 migrations được apply đầy đủ.
+- Verification:
+  - `DATABASE_URL=... npm run prisma:migrate:status --workspace @erp/api` ✅ up-to-date
+  - `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'` -> `133` ✅
+  - endpoints kiểm tra:
+    - `GET /api/v1/settings/center` -> `200` ✅
+    - `GET /api/v1/settings/positions?limit=5` -> `200` ✅
+    - `GET /api/v1/crm/customers?limit=5` -> `200` ✅
+  - log mới của API không còn lỗi `table does not exist` ✅
+  - system stability gate:
+    - `docker ps` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=... npm run prisma:migrate:status --workspace @erp/api` ✅
+- Notes:
+  - Không thay đổi code nghiệp vụ, chỉ khôi phục schema DB qua migration chuẩn.
+  - Không cần ADR mới.
+## Update 2026-04-12 18:57 (Dashboard: remove GOIUUDAI slogan line)
+- User request:
+  - xóa dòng slogan hiển thị ở hero dashboard:
+    - `GOIUUDAI • Sản phẩm số - Dịch vụ số • 2.000.000 khách hàng • 50 nhân viên. Linh hoạt phân tán.`
+- Đã xử lý:
+  - `apps/web/components/home-dashboard.tsx`:
+    - xóa block `<p>` subtitle ngay dưới `SYSTEM_PROFILE.systemName` trong hero panel.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (re-run sau build)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+- Notes:
+  - Chỉ thay đổi text hiển thị UI dashboard, không ảnh hưởng logic nghiệp vụ.
+  - Không cần ADR mới.
+## Update 2026-04-12 18:24 (Settings Center: move right sidebar into Data & backup tab)
+- User request:
+  - đưa cột phải của `/modules/settings` vào 1 tab thuộc miền `Dữ liệu & backup` để giao diện gọn hơn.
+- Đã xử lý:
+  - frontend:
+    - `apps/web/components/settings-center/view-model.ts`:
+      - thêm tab `data-ops-panel` (`Checklist & audit`) với cờ `showSettingsOpsPanel`.
+    - `apps/web/components/settings-center/domain-config.tsx`:
+      - parse thêm `showSettingsOpsPanel` từ payload `/settings/layout`.
+    - `apps/web/components/settings-center.tsx`:
+      - bỏ `SettingsRightSidebar` render cố định ở cột phải,
+      - chỉ render panel này khi domain `data_governance_backup` + tab `data-ops-panel`.
+    - `apps/web/app/styles/modules/workbench.css`:
+      - layout settings center đổi từ 3 cột -> 2 cột.
+  - backend metadata:
+    - `apps/api/src/modules/settings/settings-layout.metadata.ts`:
+      - bổ sung `showSettingsOpsPanel` trong kiểu tab hint.
+      - thêm tab `data-ops-panel` cho `data_governance_backup`.
+  - tests:
+    - `apps/web/components/settings-center/__tests__/view-model.test.ts` cập nhật expected tab list.
+    - `apps/web/e2e/tests/settings-center-reports.spec.ts` thêm assert tab mới + heading `Checklist khởi tạo`.
+    - `apps/api/test/settings-policy.service.test.ts`:
+      - bổ sung assert tabs cho `data_governance_backup`,
+      - đồng bộ kỳ vọng grouped sidebar = 10 nhóm (bao gồm `elearning`).
+- Verification:
+  - `npm run test:unit --workspace @erp/web -- components/settings-center/__tests__/view-model.test.ts` ✅
+  - `npm run test --workspace @erp/api -- test/settings-policy.service.test.ts` ✅
+  - `npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/settings-center-reports.spec.ts -g "renders phase-2 domain tabs for remaining settings domains"` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+- Notes:
+  - Chỉ thay đổi bố cục/UI settings, không đổi logic nghiệp vụ ERP.
+  - Không cần ADR mới.
+## Update 2026-04-12 18:04 (HR goals page: fix limit > 100 validation error)
+- User report:
+  - `/modules/hr/goals` lỗi `limit must not be greater than 100`.
+- Root cause:
+  - frontend `hr-goals-tracking-board` gửi `limit=300` cho `/hr/goals/tracker` và `/hr/goals/overview`.
+  - backend `PaginationQueryDto` giới hạn `limit <= 100`.
+- Đã xử lý:
+  - `apps/web/components/hr-goals-tracking-board.tsx`: đổi query `limit` từ `300` sang `100`.
+  - rebuild `erp-web` để áp dụng runtime patch.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - Playwright runtime:
+    - `/api/v1/hr/goals/overview?scope=self&limit=100` -> `200` ✅
+    - `/api/v1/hr/goals/tracker?scope=self&limit=100` -> `200` ✅
+    - không còn text lỗi `limit must not be greater than 100` ✅
+  - stability gate:
+    - `docker ps` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - phát hiện DB pending migration sau khi recreate runtime:
+      - chạy `npm run prisma:migrate:deploy --workspace @erp/api` ✅
+      - re-check `npm run prisma:migrate:status --workspace @erp/api` -> up to date ✅
+- Notes:
+  - Sửa đúng API contract pagination; không đổi logic nghiệp vụ HR goals.
+  - Không cần ADR.
 ## Update 2026-04-12 17:08 (Settings VietQR: add VIETBANK + transfer template guide modal)
 - User request:
   - bổ sung ngân hàng `VIETBANK` trong dropdown VietQR.

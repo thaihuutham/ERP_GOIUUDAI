@@ -536,9 +536,6 @@ export function HomeDashboard() {
           <h1>
             {SYSTEM_PROFILE.systemName}
           </h1>
-          <p>
-            {`${SYSTEM_PROFILE.companyName} • ${SYSTEM_PROFILE.businessDomain} • ${SYSTEM_PROFILE.scale}. ${SYSTEM_PROFILE.operatingModel}.`}
-          </p>
         </div>
         <div className="hero-right">
           <div className="hero-badge">

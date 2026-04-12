@@ -5,6 +5,7 @@ export type DomainTabConfig = {
   showOrgStructure?: boolean;
   showHrAccounts?: boolean;
   showAccessMatrix?: boolean;
+  showSettingsOpsPanel?: boolean;
 };
 
 type RoleKey = 'ADMIN' | 'USER';
@@ -105,7 +106,8 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
   ],
   data_governance_backup: [
     { key: 'data-retention', label: 'Vòng đời dữ liệu', sectionIds: ['data-retention'] },
-    { key: 'data-export-policy', label: 'Chính sách export', sectionIds: ['data-export-policy'] }
+    { key: 'data-export-policy', label: 'Chính sách export', sectionIds: ['data-export-policy'] },
+    { key: 'data-ops-panel', label: 'Checklist & audit', sectionIds: [], showSettingsOpsPanel: true }
   ]
 };
 

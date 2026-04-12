@@ -144,7 +144,7 @@ describe('SettingsPolicyService', () => {
 
     expect(metadata.version).toBe(1);
     expect(metadata.rolloutPhase).toBe('phase_2');
-    expect(metadata.groupedSidebar).toHaveLength(9);
+    expect(metadata.groupedSidebar).toHaveLength(10);
     expect(metadata.groupedSidebar.map((group) => group.id)).toEqual([
       'general',
       'security-access',
@@ -154,7 +154,8 @@ describe('SettingsPolicyService', () => {
       'hr',
       'integrations',
       'notifications',
-      'system-ops'
+      'system-ops',
+      'elearning'
     ]);
     expect(metadata.advancedMode.defaultByRole).toEqual({
       ADMIN: true,
@@ -182,6 +183,11 @@ describe('SettingsPolicyService', () => {
       'integration-ai-ocr',
       'integration-ai-routing',
       'integration-payments'
+    ]);
+    expect(metadata.domainTabs.data_governance_backup.map((tab) => tab.key)).toEqual([
+      'data-retention',
+      'data-export-policy',
+      'data-ops-panel'
     ]);
     expect(metadata.compatibility.preserveDomainLevelSubmitFlow).toBe(true);
     expect(metadata.compatibility.preserveValidateSaveSnapshotContracts).toBe(true);

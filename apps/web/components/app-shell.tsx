@@ -247,6 +247,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         pathname === '/modules/crm'
         || pathname.startsWith('/modules/crm/vehicles')
         || pathname.startsWith('/modules/crm/customers')
+        || pathname.startsWith('/modules/crm/distribution')
       );
     }
     if (moduleKey === 'hr') {

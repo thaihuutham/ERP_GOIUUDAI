@@ -400,6 +400,29 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
         TELECOM: 'TEL',
         DIGITAL: 'DIG'
       }
+    },
+    customerDistribution: {
+      enabled: false,
+      strategy: 'ROUND_ROBIN',
+      capFillTarget: 20,
+      kpiMetric: 'revenue',
+      kpiPeriod: 'month',
+      eligibleStaffFilter: 'all_active',
+      eligibleDepartmentIds: [] as string[],
+      eligiblePositionIds: [] as string[],
+      duplicateCheckFields: ['phone'] as string[],
+      reclaimIdleEnabled: false,
+      reclaimIdleAfterHours: 24,
+      reclaimFailedEnabled: false,
+      reclaimFailedAfterDays: 7,
+      rotationMaxRounds: 3,
+      failedStatuses: [
+        'KH_TU_CHOI',
+        'NGUOI_NHA_LAM_THUE_BAO',
+        'KHONG_NGHE_MAY_LAN_1',
+        'KHONG_NGHE_MAY_LAN_2'
+      ],
+      schedulerIntervalMinutes: 15
     }
   },
   catalog_scm_policies: {

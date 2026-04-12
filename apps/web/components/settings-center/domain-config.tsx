@@ -539,6 +539,9 @@ export function normalizeLayoutDomainTabs(layout: SettingsLayoutPayload | null, 
     if (tab.showAccessMatrix === true) {
       next.showAccessMatrix = true;
     }
+    if (tab.showSettingsOpsPanel === true) {
+      next.showSettingsOpsPanel = true;
+    }
     normalized.push(next);
   }
 
@@ -1290,6 +1293,103 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
             min: 1,
             max: 365,
             allowEmpty: true
+          }
+        ]
+      },
+      {
+        id: 'customer-distribution',
+        title: '🔄 Chia khách tự động',
+        description: 'Thiết lập cơ chế phân phối khách hàng mới cho nhân viên kinh doanh.',
+        fields: [
+          { id: 'cd-enabled', path: 'customerDistribution.enabled', label: 'Bật chia khách tự động', type: 'switch', helper: 'Khi bật, hệ thống tự động gán khách hàng mới cho nhân viên theo chiến lược đã chọn.' },
+          {
+            id: 'cd-strategy', path: 'customerDistribution.strategy', label: 'Chiến lược chia khách',
+            type: 'select',
+            options: [
+              { label: 'Chia đều lần lượt (Round Robin)', value: 'ROUND_ROBIN' },
+              { label: 'Ưu tiên NV ít khách chưa chăm sóc', value: 'LEAST_PENDING' },
+              { label: 'Giữ số khách pending = X (Cap Fill)', value: 'CAP_FILL' },
+              { label: 'Ưu tiên NV có KPI cao', value: 'KPI_WEIGHTED' }
+            ],
+            helper: 'Chọn cách hệ thống phân bổ khách mới:\n• Chia đều: lần lượt cho từng nhân viên\n• Ít khách pending: ưu tiên NV đang rảnh\n• Cap Fill: giữ số khách chưa CS = con số cố định\n• KPI: ưu tiên NV có doanh số/tỷ lệ chốt cao'
+          },
+          { id: 'cd-cap-target', path: 'customerDistribution.capFillTarget', label: 'Số khách pending tối đa/NV', type: 'number', min: 1, max: 200, helper: 'Chỉ áp dụng khi chiến lược là "Cap Fill". Hệ thống sẽ luôn giữ cho mỗi nhân viên có đúng X khách ở trạng thái chưa tư vấn.', unit: 'khách' },
+          {
+            id: 'cd-kpi-metric', path: 'customerDistribution.kpiMetric', label: 'Chỉ số KPI ưu tiên',
+            type: 'select',
+            options: [
+              { label: 'Doanh số (revenue)', value: 'revenue' },
+              { label: 'Tỷ lệ chốt đơn (close rate)', value: 'close_rate' }
+            ],
+            helper: 'Chỉ áp dụng khi chiến lược là "KPI". Chọn chỉ số để xếp hạng nhân viên: doanh số cao hay tỷ lệ chốt đơn cao sẽ được chia khách trước.'
+          },
+          {
+            id: 'cd-kpi-period', path: 'customerDistribution.kpiPeriod', label: 'Chu kỳ tính KPI',
+            type: 'select',
+            options: [
+              { label: 'Tuần này', value: 'week' },
+              { label: 'Tháng này', value: 'month' },
+              { label: 'Quý này', value: 'quarter' }
+            ],
+            helper: 'Khoảng thời gian để tính KPI nhân viên. Ví dụ: "Tháng này" = chỉ tính doanh số/tỷ lệ chốt của tháng hiện tại.'
+          },
+          {
+            id: 'cd-staff-filter', path: 'customerDistribution.eligibleStaffFilter', label: 'Lọc NV tham gia chia khách',
+            type: 'select',
+            options: [
+              { label: 'Tất cả NV đang hoạt động', value: 'all_active' },
+              { label: 'Theo phòng ban', value: 'by_department' },
+              { label: 'Theo chức vụ', value: 'by_position' }
+            ],
+            helper: 'Chọn nhóm nhân viên sẽ tham gia nhận khách. "Tất cả NV đang hoạt động" là mặc định.'
+          },
+          { id: 'cd-scheduler-interval', path: 'customerDistribution.schedulerIntervalMinutes', label: 'Chu kỳ chạy chia khách', type: 'number', min: 5, max: 1440, unit: 'phút', helper: 'Hệ thống kiểm tra và chia khách mới mỗi X phút. Mặc định 15 phút.' }
+        ]
+      },
+      {
+        id: 'customer-duplicate-check',
+        title: '🔍 Kiểm tra trùng khách hàng',
+        description: 'Tránh việc 1 khách hàng có nhiều nhân viên chăm sóc cùng lúc.',
+        fields: [
+          {
+            id: 'cd-dup-fields', path: 'customerDistribution.duplicateCheckFields', label: 'Kiểm tra trùng bằng',
+            type: 'multiSelect',
+            options: [
+              { label: 'Số điện thoại', value: 'phone' },
+              { label: 'Email', value: 'email' }
+            ],
+            helper: 'Khi tạo khách mới, hệ thống sẽ kiểm tra SĐT và/hoặc email đã tồn tại chưa. Nếu trùng sẽ không cho tạo mới mà thông báo khách đã có nhân viên chăm sóc.'
+          }
+        ]
+      },
+      {
+        id: 'customer-reclaim-idle',
+        title: '⏰ Thu hồi khách không chăm sóc',
+        description: 'Tự động thu hồi khách hàng nếu nhân viên không liên hệ trong thời gian quy định.',
+        fields: [
+          { id: 'cd-reclaim-idle-on', path: 'customerDistribution.reclaimIdleEnabled', label: 'Bật thu hồi tự động', type: 'switch', helper: 'Khi bật, khách hàng sẽ tự động bị thu hồi nếu nhân viên không có bất kỳ tương tác nào (gọi, nhắn, gặp mặt...) trong khoảng thời gian quy định.' },
+          { id: 'cd-reclaim-idle-hours', path: 'customerDistribution.reclaimIdleAfterHours', label: 'Thu hồi sau', type: 'number', min: 1, max: 720, unit: 'giờ', helper: 'Nếu nhân viên không chăm sóc khách sau X giờ kể từ khi được chia, hệ thống tự động thu hồi khách về pool chung và chia cho người khác.' }
+        ]
+      },
+      {
+        id: 'customer-reclaim-rotation',
+        title: '🔄 Thu hồi & quay vòng khách thất bại',
+        description: 'Chuyển khách hàng bị từ chối/không liên lạc được sang nhân viên khác.',
+        fields: [
+          { id: 'cd-reclaim-fail-on', path: 'customerDistribution.reclaimFailedEnabled', label: 'Bật quay vòng thất bại', type: 'switch', helper: 'Khi bật, khách ở trạng thái thất bại (từ chối, thuê bao, không nghe máy) sẽ được chuyển cho nhân viên khác sau số ngày quy định.' },
+          { id: 'cd-reclaim-fail-days', path: 'customerDistribution.reclaimFailedAfterDays', label: 'Chuyển sau', type: 'number', min: 1, max: 180, unit: 'ngày', helper: 'Sau X ngày ở trạng thái thất bại, khách sẽ được chuyển cho nhân viên tiếp theo. Nhân viên cũ không nhận lại khách này.' },
+          { id: 'cd-rotation-max', path: 'customerDistribution.rotationMaxRounds', label: 'Số lần quay vòng tối đa', type: 'number', min: 0, max: 50, helper: 'Tối đa bao nhiêu nhân viên được thử chăm sóc 1 khách. Đặt 0 nếu muốn quay vòng không giới hạn. Khi hết vòng, admin cần tự quyết định.', unit: 'lần' },
+          {
+            id: 'cd-failed-statuses', path: 'customerDistribution.failedStatuses', label: 'Trạng thái coi là thất bại',
+            type: 'multiSelect',
+            options: [
+              { label: 'KH từ chối', value: 'KH_TU_CHOI' },
+              { label: 'Người nhà làm thuê bao', value: 'NGUOI_NHA_LAM_THUE_BAO' },
+              { label: 'Không nghe máy lần 1', value: 'KHONG_NGHE_MAY_LAN_1' },
+              { label: 'Không nghe máy lần 2', value: 'KHONG_NGHE_MAY_LAN_2' },
+              { label: 'Sai số / Không tồn tại', value: 'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA' }
+            ],
+            helper: 'Chọn các trạng thái được coi là "tư vấn thất bại". Khi khách ở những trạng thái này quá lâu sẽ được chuyển cho NV khác.'
           }
         ]
       }

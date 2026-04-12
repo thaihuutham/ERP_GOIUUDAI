@@ -110,7 +110,8 @@ describe('settings view model', () => {
     ]);
     expect(resolveDomainTabs('data_governance_backup').map((item) => item.key)).toEqual([
       'data-retention',
-      'data-export-policy'
+      'data-export-policy',
+      'data-ops-panel'
     ]);
   });
 
