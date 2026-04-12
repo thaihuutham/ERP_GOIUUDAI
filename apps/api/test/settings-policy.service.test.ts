@@ -147,14 +147,14 @@ describe('SettingsPolicyService', () => {
     expect(metadata.groupedSidebar).toHaveLength(9);
     expect(metadata.groupedSidebar.map((group) => group.id)).toEqual([
       'general',
-      'appearance',
       'security-access',
       'sales-crm',
       'finance',
       'scm',
       'hr',
       'integrations',
-      'search-governance'
+      'notifications',
+      'system-ops'
     ]);
     expect(metadata.advancedMode.defaultByRole).toEqual({
       ADMIN: true,
@@ -166,10 +166,22 @@ describe('SettingsPolicyService', () => {
       'org-appearance',
       'org-structure'
     ]);
+    expect(metadata.domainTabs.sales_crm_policies.map((tab) => tab.key)).toEqual([
+      'sales-orders',
+      'sales-checkout-core',
+      'sales-credit',
+      'sales-draft',
+      'sales-taxonomy',
+      'sales-tags',
+      'sales-renewal'
+    ]);
     expect(metadata.domainTabs.integrations.map((tab) => tab.key)).toEqual([
       'integration-bhtot',
       'integration-zalo',
-      'integration-ai'
+      'integration-ai',
+      'integration-ai-ocr',
+      'integration-ai-routing',
+      'integration-payments'
     ]);
     expect(metadata.compatibility.preserveDomainLevelSubmitFlow).toBe(true);
     expect(metadata.compatibility.preserveValidateSaveSnapshotContracts).toBe(true);

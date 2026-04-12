@@ -1,5 +1,5 @@
 import type { HttpMethod } from './module-ui';
-import { readStoredAuthSession } from './auth-session';
+import { AUTH_SESSION_EXPIRED_EVENT, clearStoredAuthSession, readStoredAuthSession } from './auth-session';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1').replace(/\/$/, '');
 const API_REQUEST_TIMEOUT_MS = (() => {
@@ -12,6 +12,7 @@ const API_REQUEST_TIMEOUT_MS = (() => {
 const WEB_ROLE_STORAGE_KEY = 'erp_web_role';
 const WEB_USER_ID_STORAGE_KEY = 'erp_web_user_id';
 const DEV_ROLES = new Set(['USER', 'ADMIN']);
+let lastAuthExpiryBroadcastAt = 0;
 
 export type ApiListPageInfo = {
   limit: number;
@@ -123,10 +124,28 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
 
   if (!res.ok) {
     const message = extractApiErrorMessage(payload) ?? `Request failed (${res.status})`;
+    if (res.status === 401 && !options.skipAuth) {
+      handleAuthSessionExpired();
+    }
     throw new Error(message);
   }
 
   return payload as T;
+}
+
+function handleAuthSessionExpired() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  clearStoredAuthSession();
+  const now = Date.now();
+  if (now - lastAuthExpiryBroadcastAt < 1500) {
+    return;
+  }
+  lastAuthExpiryBroadcastAt = now;
+
+  window.dispatchEvent(new Event(AUTH_SESSION_EXPIRED_EVENT));
 }
 
 function isAbortError(error: unknown): boolean {

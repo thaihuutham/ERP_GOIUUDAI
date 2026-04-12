@@ -2,7 +2,12 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { readStoredAuthSession, writeStoredAuthSession, type WebAuthSession } from '../lib/auth-session';
+import {
+  AUTH_SESSION_EXPIRED_EVENT,
+  readStoredAuthSession,
+  writeStoredAuthSession,
+  type WebAuthSession
+} from '../lib/auth-session';
 import { apiRequest } from '../lib/api-client';
 import { DEFAULT_WEB_ROLE, type UserRole } from '../lib/rbac';
 
@@ -82,6 +87,25 @@ export function UserRoleProvider({ children }: { children: ReactNode }) {
     } finally {
       setReady(true);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!AUTH_ENABLED || typeof window === 'undefined') {
+      return;
+    }
+
+    const handleSessionExpired = () => {
+      setAuthSession(null);
+      writeStoredAuthSession(null);
+      setMfaChallengeToken(null);
+      setMfaChallengeEmail(null);
+      setRoleState(DEFAULT_WEB_ROLE);
+    };
+
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    };
   }, []);
 
   const setRole = (nextRole: UserRole) => {

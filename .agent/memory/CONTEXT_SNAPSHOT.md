@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-10 21:40 +07
+- Time: 2026-04-11 13:30 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-10_2140_codex.md`
+- Session Log: `.agent/sessions/2026-04-11_1330_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,65 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+## Update 2026-04-11 13:30 (fix loop lỗi `Token không hợp lệ hoặc đã hết hạn`)
+- User confirmation:
+  - user báo lỗi lặp token invalid/expired khi vào app.
+- Root cause:
+  - token cũ lưu localStorage bị invalid (JWT secret/runtime auth đã đổi),
+  - frontend chưa auto reset auth state khi backend trả `401`.
+- Đã xử lý:
+  - `apps/web/lib/auth-session.ts`:
+    - thêm `AUTH_SESSION_EXPIRED_EVENT`,
+    - thêm `clearStoredAuthSession()`.
+  - `apps/web/lib/api-client.ts`:
+    - detect `401` cho request có auth,
+    - clear stored auth session,
+    - broadcast event session-expired (throttle 1.5s).
+  - `apps/web/components/user-role-context.tsx`:
+    - subscribe event session-expired,
+    - reset auth state về logged-out (role/mfa/session).
+  - rebuild/restart web container:
+    - `docker compose --env-file /tmp/erp-vm-deploy.env build web`
+    - `docker compose --env-file /tmp/erp-vm-deploy.env up -d web`
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `scripts/deploy/healthcheck.sh` ✅
+- Notes:
+  - Không đổi business logic ERP.
+  - Không cần ADR mới.
+## Update 2026-04-11 13:22 (VM-style Docker Compose deploy + bootstrap admin account)
+- User confirmation:
+  - user yêu cầu khởi chạy project bằng Docker Compose theo luồng deploy VM Proxmox và set admin quyền cao nhất:
+    - email: `admin@goiuudai.vn`
+    - password: `1A2B3C@`.
+- Đã xử lý:
+  - tạo runtime env profile deploy tại `/tmp/erp-vm-deploy.env`:
+    - `AUTH_ENABLED=true`,
+    - `NEXT_PUBLIC_AUTH_ENABLED=true`,
+    - `DEV_AUTH_BYPASS_ENABLED=false`,
+    - các biến DB/Redis/Meili/MinIO theo `docker-compose.yml`.
+  - chạy luồng deploy tương đương script VM (không dùng `git reset --hard`):
+    1. `docker compose --env-file /tmp/erp-vm-deploy.env build`
+    2. `docker compose --env-file /tmp/erp-vm-deploy.env up -d postgres redis meilisearch minio`
+    3. `docker compose --env-file /tmp/erp-vm-deploy.env run --rm api npx prisma migrate deploy --schema apps/api/prisma/schema.prisma`
+    4. `docker compose --env-file /tmp/erp-vm-deploy.env up -d api web`
+    5. `scripts/deploy/healthcheck.sh`
+  - bootstrap admin trực tiếp qua Prisma trong container `erp-api`:
+    - tạo/cập nhật `User` tenant `GOIUUDAI`,
+    - ép role `ADMIN`, `isActive=true`, `mustChangePassword=false`,
+    - set password hash cho mật khẩu `1A2B3C@`.
+- Verification:
+  - `docker compose --env-file /tmp/erp-vm-deploy.env ps` ✅ (6 services đều Up).
+  - migrate deploy ✅ (`No pending migrations to apply.`).
+  - healthcheck ✅ (`API and Web OK at attempt 1`).
+  - login verify:
+    - `POST http://127.0.0.1:3001/api/v1/auth/login`
+    - body `{\"email\":\"admin@goiuudai.vn\",\"password\":\"1A2B3C@\"}`
+    - result ✅ trả `accessToken`, `user.role=ADMIN`, `mustChangePassword=false`.
+- Notes:
+  - Không thay đổi code nghiệp vụ/domain logic.
+  - Không có ADR mới.
 ## Update 2026-04-10 21:40 (gate stabilization: fix type/test blockers to green)
 - User confirmation:
   - user yêu cầu xử lý các lỗi type/test chặn gate.

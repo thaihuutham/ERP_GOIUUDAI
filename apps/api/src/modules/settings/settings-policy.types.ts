@@ -294,23 +294,19 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
         {
           code: 'AUTO_INSURANCE_STD',
           label: 'Bảo hiểm ô tô',
-          requiredFields: ['termDays', 'requestedEffectiveDate'],
+          requiredFields: ['certificateFileId'],
           fieldConfig: {
-            termDays: { type: 'select', options: ['180', '365'], label: 'Chu kỳ (ngày)' },
-            requestedEffectiveDate: { type: 'date', label: 'Ngày hiệu lực yêu cầu' },
-            certificateLink: { type: 'text', label: 'Link giấy chứng nhận' },
-            certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận (PDF/ảnh)' }
+            certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận BH (PDF/ảnh)' },
+            certificateLink: { type: 'text', label: 'Hoặc nhập link giấy chứng nhận BH' }
           }
         },
         {
           code: 'MOTO_INSURANCE_STD',
           label: 'Bảo hiểm xe máy',
-          requiredFields: ['termDays', 'requestedEffectiveDate'],
+          requiredFields: ['certificateFileId'],
           fieldConfig: {
-            termDays: { type: 'select', options: ['180', '365'], label: 'Chu kỳ (ngày)' },
-            requestedEffectiveDate: { type: 'date', label: 'Ngày hiệu lực yêu cầu' },
-            certificateLink: { type: 'text', label: 'Link giấy chứng nhận' },
-            certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận (PDF/ảnh)' }
+            certificateFileId: { type: 'file', label: 'Upload giấy chứng nhận BH (PDF/ảnh)' },
+            certificateLink: { type: 'text', label: 'Hoặc nhập link giấy chứng nhận BH' }
           }
         }
       ],
@@ -318,13 +314,13 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
         {
           code: 'TELECOM_STD',
           label: 'Mẫu viễn thông tiêu chuẩn',
-          requiredFields: ['packageCode', 'billingCycle', 'servicePhone'],
+          requiredFields: ['billingCycle', 'effectiveFrom'],
           fieldConfig: {
-            packageCode: { type: 'text', label: 'Mã gói cước / SIM' },
-            billingCycle: { type: 'select', options: ['30', '60', '90', '120', '180', '210', '270', '360', '420', '540', '720'], label: 'Chu kỳ (ngày)' },
-            startDate: { type: 'date', label: 'Ngày bắt đầu chu kỳ mới' },
-            servicePhone: { type: 'tel', label: 'SĐT dùng dịch vụ' },
-            differentServicePhone: { type: 'checkbox', label: 'SĐT dịch vụ khác SĐT liên lạc' }
+            billingCycle: { type: 'select', options: ['30', '60', '90', '120', '180', '210', '270', '360', '420', '540', '720'], label: 'Chu kỳ gói cước' },
+            effectiveFrom: { type: 'date', label: 'Hiệu lực từ' },
+            effectiveTo: { type: 'date', label: 'Hiệu lực đến (tự tính)' },
+            differentServicePhone: { type: 'checkbox', label: 'SĐT dịch vụ khác SĐT liên lạc' },
+            servicePhone: { type: 'tel', label: 'SĐT dùng dịch vụ (lưu vào hồ sơ KH)' }
           }
         }
       ],

@@ -2,9 +2,67 @@
 
 ## Trạng thái tổng quan
 - Phase: Sales Workflow Optimization — Phase A+B Complete (11/13 GAPs done)
-- Last updated: 2026-04-10 23:48 +07
-- Owner: Antigravity session
+- Last updated: 2026-04-11 13:30 +07
+- Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+## Session Update 2026-04-11 13:30 +07 (Auth token auto-expire handling)
+- User request:
+  - báo lỗi lặp: `Token không hợp lệ hoặc đã hết hạn.` khi vào hệ thống.
+- Root cause xác định:
+  - session token cũ trên browser không còn hợp lệ sau khi thay đổi runtime auth/JWT ở lần deploy trước;
+  - frontend chưa có cơ chế auto-clear session khi API trả `401`, nên UI giữ trạng thái đăng nhập cũ và spam lỗi.
+- Đã triển khai:
+  - cập nhật client auth session API:
+    - `apps/web/lib/auth-session.ts`
+      - thêm `AUTH_SESSION_EXPIRED_EVENT`,
+      - thêm helper `clearStoredAuthSession()`.
+  - cập nhật API client:
+    - `apps/web/lib/api-client.ts`
+      - khi gặp `401` (non-skipAuth): tự clear auth session,
+      - phát event `erp_web_auth_session_expired`,
+      - throttle broadcast 1.5s để tránh spam event.
+  - cập nhật UserRole context:
+    - `apps/web/components/user-role-context.tsx`
+      - lắng nghe event session-expired,
+      - reset auth state về logged-out (xoá session, role fallback, clear MFA challenge).
+  - rebuild + restart `erp-web` container trên stack docker hiện tại.
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `docker compose --env-file /tmp/erp-vm-deploy.env build web` ✅
+  - `docker compose --env-file /tmp/erp-vm-deploy.env up -d web` ✅
+  - `scripts/deploy/healthcheck.sh` ✅
+- Notes:
+  - Không đổi business logic ERP.
+  - Không cần ADR mới.
+## Session Update 2026-04-11 13:22 +07 (VM-style Docker Compose deploy + admin bootstrap)
+- User request:
+  - khởi chạy dự án bằng Docker Compose theo cách dùng deploy trên VM Proxmox.
+  - tài khoản admin quyền cao nhất: `admin@goiuudai.vn` / `1A2B3C@`.
+- Đã triển khai:
+  - đọc đầy đủ tài liệu bắt buộc theo `AGENTS.md` (CURRENT_TASK, CONTEXT_SNAPSHOT, PROJECT_OVERVIEW, CONVENTIONS, SCALING_DESIGN, VM_AUTODEPLOY).
+  - dựng runtime env file riêng theo profile deploy VM:
+    - path: `/tmp/erp-vm-deploy.env`
+    - bật `AUTH_ENABLED=true`, `NEXT_PUBLIC_AUTH_ENABLED=true`, tắt dev bypass.
+  - chạy luồng deploy tương đương VM:
+    - `docker compose --env-file /tmp/erp-vm-deploy.env build`
+    - `docker compose --env-file /tmp/erp-vm-deploy.env up -d postgres redis meilisearch minio`
+    - `docker compose --env-file /tmp/erp-vm-deploy.env run --rm api npx prisma migrate deploy --schema apps/api/prisma/schema.prisma`
+    - `docker compose --env-file /tmp/erp-vm-deploy.env up -d api web`
+    - `scripts/deploy/healthcheck.sh`
+  - bootstrap/cập nhật admin account trực tiếp qua Prisma trong container API:
+    - email: `admin@goiuudai.vn`
+    - role: `ADMIN`
+    - password: `1A2B3C@`
+    - `mustChangePassword=false`, `isActive=true`.
+- Verification:
+  - `docker compose --env-file /tmp/erp-vm-deploy.env ps` ✅ (đủ `erp-postgres`, `erp-redis`, `erp-meilisearch`, `erp-minio`, `erp-api`, `erp-web`).
+  - `npx prisma migrate deploy --schema apps/api/prisma/schema.prisma` (qua docker compose run) ✅ (`No pending migrations to apply`).
+  - `scripts/deploy/healthcheck.sh` ✅ (`API and Web OK`).
+  - `POST /api/v1/auth/login` với `admin@goiuudai.vn` / `1A2B3C@` ✅ (trả `accessToken`, role `ADMIN`).
+- Notes:
+  - Không thay đổi business logic ERP.
+  - Không phát sinh quyết định kiến trúc mới, không cần ADR.
 ## Session Update 2026-04-10 23:48 +07 (A4 Discount + B1 VietQR + B2 n8n Invoice)
 - Newly completed:
   - **A4**: Chiết khấu/giảm giá (PERCENT/FIXED) — schema, DTO, service, frontend UI

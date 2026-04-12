@@ -446,11 +446,28 @@ export class RuntimeSettingsService {
       const rawItems = Array.isArray(checkoutTemplates[groupKey]) ? checkoutTemplates[groupKey] : [];
       return rawItems
         .map((item) => this.toRecord(item))
-        .map((item, index) => ({
-          code: this.readString(item.code, `${groupKey}_TEMPLATE_${index + 1}`).toUpperCase(),
-          label: this.readString(item.label, `${groupKey} template ${index + 1}`),
-          requiredFields: this.toStringArray(item.requiredFields)
-        }))
+        .map((item, index) => {
+          const rawFieldConfig = this.toRecord(item.fieldConfig);
+          const fieldConfig: Record<string, Record<string, unknown>> = {};
+          for (const [fieldKey, fieldValue] of Object.entries(rawFieldConfig)) {
+            const fc = this.toRecord(fieldValue);
+            const entry: Record<string, unknown> = {};
+            const fcType = this.readString(fc.type, 'text');
+            entry.type = fcType;
+            const fcLabel = this.readString(fc.label);
+            if (fcLabel) entry.label = fcLabel;
+            if (Array.isArray(fc.options)) {
+              entry.options = fc.options.map((opt) => String(opt ?? ''));
+            }
+            fieldConfig[fieldKey] = entry;
+          }
+          return {
+            code: this.readString(item.code, `${groupKey}_TEMPLATE_${index + 1}`).toUpperCase(),
+            label: this.readString(item.label, `${groupKey} template ${index + 1}`),
+            requiredFields: this.toStringArray(item.requiredFields),
+            fieldConfig
+          };
+        })
         .filter((item) => item.code.length > 0);
     };
     const normalizeInvoiceTrigger = (value: unknown) => {

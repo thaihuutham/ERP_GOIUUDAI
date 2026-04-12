@@ -1,4 +1,5 @@
 export const WEB_AUTH_STORAGE_KEY = 'erp_web_auth_session_v1';
+export const AUTH_SESSION_EXPIRED_EVENT = 'erp_web_auth_session_expired';
 
 export type WebAuthUser = {
   id: string;
@@ -85,3 +86,6 @@ export function writeStoredAuthSession(session: WebAuthSession | null) {
   window.localStorage.setItem(WEB_AUTH_STORAGE_KEY, JSON.stringify(session));
 }
 
+export function clearStoredAuthSession() {
+  writeStoredAuthSession(null);
+}

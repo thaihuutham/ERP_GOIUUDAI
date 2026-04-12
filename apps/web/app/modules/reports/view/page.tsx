@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -16,6 +17,14 @@ import { StandardFunnelChart } from '../../../../components/charts/standard-funn
 import { Badge } from '../../../../components/ui';
 
 export default function ReportDrillThroughPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center items-center py-20"><span className="text-neutral-400">Đang tải...</span></div>}>
+      <ReportDrillThroughContent />
+    </Suspense>
+  );
+}
+
+function ReportDrillThroughContent() {
   const searchParams = useSearchParams();
   const moduleName = searchParams.get('moduleName') || 'sales';
   const range = searchParams.get('range') || 'THIS_WEEK';

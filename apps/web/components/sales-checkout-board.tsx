@@ -194,26 +194,40 @@ function formatTemplateFieldLabel(key: string) {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-function detectTemplateFieldInputType(key: string): 'text' | 'date' | 'number' | 'tel' {
+const FIELD_TYPE_MAP: Record<string, 'text' | 'date' | 'number' | 'tel' | 'checkbox' | 'file' | 'select'> = {
+  // Insurance
+  certificateFileId: 'file',
+  certificateLink: 'text',
+  requestedEffectiveDate: 'date',
+  // Telecom
+  billingCycle: 'select',
+  effectiveFrom: 'date',
+  effectiveTo: 'date',
+  servicePhone: 'tel',
+  differentServicePhone: 'checkbox',
+  startDate: 'date',
+  // Digital
+  planCode: 'text',
+  termDays: 'number',
+  // Common
+  packageCode: 'text',
+};
+
+function detectTemplateFieldInputType(key: string): 'text' | 'date' | 'number' | 'tel' | 'checkbox' | 'file' {
+  // 1) Check static map first
+  const mapped = FIELD_TYPE_MAP[key];
+  if (mapped && mapped !== 'select') return mapped;
+
+  // 2) Pattern-based fallback
   const lower = key.toLowerCase();
-  if (lower.includes('phone') || lower.includes('mobile')) {
-    return 'tel';
-  }
-  if (lower.includes('date') || lower.endsWith('at') || lower.includes('time')) {
-    return 'date';
-  }
+  if (lower.includes('phone') || lower.includes('mobile')) return 'tel';
+  if (lower.includes('date') || lower.endsWith('at') || lower.includes('time')) return 'date';
+  if (lower.endsWith('fileid') || lower.endsWith('file')) return 'file';
   if (
-    lower.includes('day')
-    || lower.includes('term')
-    || lower.includes('amount')
-    || lower.includes('price')
-    || lower.includes('qty')
-    || lower.includes('quantity')
-    || lower.includes('limit')
-    || lower.includes('count')
-  ) {
-    return 'number';
-  }
+    lower.includes('day') || lower.includes('term') || lower.includes('amount')
+    || lower.includes('price') || lower.includes('qty') || lower.includes('quantity')
+    || lower.includes('limit') || lower.includes('count') || lower.includes('seat')
+  ) return 'number';
   return 'text';
 }
 
@@ -521,20 +535,23 @@ export function SalesCheckoutBoard() {
         [fieldKey]: value
       };
 
-      // Auto-compute effectiveTo when termDays or startDate/requestedEffectiveDate changes
-      const termDaysKeys = ['termDays'];
-      const startDateKeys = ['startDate', 'requestedEffectiveDate'];
-      const isTermUpdate = termDaysKeys.includes(fieldKey);
+      // Auto-compute effectiveTo from duration + start date
+      // Supports: termDays+startDate (Digital), termDays+requestedEffectiveDate (legacy), billingCycle+effectiveFrom (Telecom)
+      const durationKeys = ['termDays', 'billingCycle'];
+      const startDateKeys = ['startDate', 'requestedEffectiveDate', 'effectiveFrom'];
+      const isDurationUpdate = durationKeys.includes(fieldKey);
       const isStartUpdate = startDateKeys.includes(fieldKey);
 
-      if (isTermUpdate || isStartUpdate) {
-        const termDaysValue = isTermUpdate ? value : (nextFields.termDays ?? '');
+      if (isDurationUpdate || isStartUpdate) {
+        const durationValue = isDurationUpdate
+          ? value
+          : (nextFields.billingCycle ?? nextFields.termDays ?? '');
         const startDateValue = isStartUpdate
           ? value
-          : (nextFields.startDate ?? nextFields.requestedEffectiveDate ?? '');
+          : (nextFields.effectiveFrom ?? nextFields.startDate ?? nextFields.requestedEffectiveDate ?? '');
 
-        if (termDaysValue && startDateValue) {
-          const days = Number(termDaysValue);
+        if (durationValue && startDateValue) {
+          const days = Number(durationValue);
           const start = new Date(startDateValue);
           if (Number.isFinite(days) && days > 0 && !Number.isNaN(start.getTime())) {
             const end = new Date(start);
@@ -795,7 +812,7 @@ export function SalesCheckoutBoard() {
 
           {selectedTemplate ? (
             <div style={{ border: '1px solid var(--line)', borderRadius: '8px', padding: '0.6rem', display: 'grid', gap: '0.45rem' }}>
-              <strong style={{ fontSize: '0.95rem' }}>Field bắt buộc theo template</strong>
+              <strong style={{ fontSize: '0.95rem' }}>Thông tin bắt buộc</strong>
               {selectedTemplate.requiredFields.length === 0 ? <p className="muted" style={{ margin: 0 }}>Template không có field bắt buộc.</p> : null}
               {selectedTemplate.requiredFields.map((fieldKey) => {
                 const fc = selectedTemplate.fieldConfig?.[fieldKey];
@@ -803,7 +820,8 @@ export function SalesCheckoutBoard() {
                 const fieldType = fc?.type || detectTemplateFieldInputType(fieldKey);
                 const fieldOptions = fc?.options;
 
-                if (fieldType === 'select' && fieldOptions && fieldOptions.length > 0) {
+                // Always render select if options are available (regardless of declared type)
+                if (fieldOptions && fieldOptions.length > 0) {
                   return (
                     <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
                       <label>{fieldLabel} *</label>
@@ -814,7 +832,7 @@ export function SalesCheckoutBoard() {
                       >
                         <option value="">-- Chọn --</option>
                         {fieldOptions.map((opt) => (
-                          <option key={opt} value={opt}>{opt}</option>
+                          <option key={opt} value={opt}>{opt} ngày</option>
                         ))}
                       </select>
                     </div>
@@ -863,17 +881,22 @@ export function SalesCheckoutBoard() {
                       required
                       value={createForm.templateFields[fieldKey] ?? ''}
                       onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
-                      placeholder={fieldKey}
+                      placeholder={fieldLabel}
                     />
                   </div>
                 );
               })}
 
-              {/* Render optional non-required fields from fieldConfig */}
+              {/* Render optional non-required fields from fieldConfig with conditional visibility */}
               {Object.entries(selectedTemplate.fieldConfig ?? {}).filter(([key]) => !selectedTemplate.requiredFields.includes(key)).map(([fieldKey, fc]) => {
                 const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
-                const fieldType = fc?.type || 'text';
+                const fieldType = fc?.type || detectTemplateFieldInputType(fieldKey);
                 const fieldOptions = fc?.options;
+
+                // Conditional visibility: servicePhone only shown when differentServicePhone is checked
+                if (fieldKey === 'servicePhone' && createForm.templateFields.differentServicePhone !== 'true') {
+                  return null;
+                }
 
                 if (fieldType === 'checkbox') {
                   return (
@@ -909,7 +932,8 @@ export function SalesCheckoutBoard() {
                   );
                 }
 
-                if (fieldType === 'select' && fieldOptions && fieldOptions.length > 0) {
+                // Render select if options exist
+                if (fieldOptions && fieldOptions.length > 0) {
                   return (
                     <div className="field" key={fieldKey} style={{ marginBottom: 0 }}>
                       <label>{fieldLabel}</label>
@@ -933,16 +957,16 @@ export function SalesCheckoutBoard() {
                       type={fieldType}
                       value={createForm.templateFields[fieldKey] ?? ''}
                       onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
-                      placeholder={fieldKey}
+                      placeholder={fieldLabel}
                     />
                   </div>
                 );
               })}
 
-              {/* Auto-computed effectiveTo */}
+              {/* Auto-computed effectiveTo (from billingCycle+effectiveFrom or termDays+startDate) */}
               {createForm.templateFields.effectiveTo ? (
                 <div className="field" style={{ marginBottom: 0 }}>
-                  <label>Ngày hết hiệu lực (tự tính, cho phép sửa)</label>
+                  <label>📅 Hiệu lực đến (tự tính từ chu kỳ, cho phép sửa)</label>
                   <input
                     type="date"
                     value={createForm.templateFields.effectiveTo ?? ''}

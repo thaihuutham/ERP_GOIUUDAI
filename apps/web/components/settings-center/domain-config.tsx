@@ -581,6 +581,139 @@ export const PERMISSION_MODULE_KEYS = [
   'integrations'
 ] as const;
 
+// ── Checkout required fields (từ fieldConfig mặc định) ──
+// Bảo hiểm: gồm trường nhập của Sale + trường trích xuất tự động từ giấy chứng nhận
+export const INSURANCE_REQUIRED_FIELD_OPTIONS: FieldOption[] = [
+  // ── Trường Sale nhập khi tạo đơn ──
+  { value: 'certificateLink', label: 'Link giấy chứng nhận BH' },
+  { value: 'certificateFileId', label: 'Upload giấy chứng nhận (PDF/ảnh)' },
+
+  // ── Trường VEHICLE (trích xuất tự động, dùng chung ô tô & xe máy) ──
+  { value: 'ownerFullName', label: '🚗 Tên chủ xe' },
+  { value: 'ownerAddress', label: '🚗 Địa chỉ chủ xe' },
+  { value: 'plateNumber', label: '🚗 Biển số' },
+  { value: 'chassisNumber', label: '🚗 Số khung' },
+  { value: 'engineNumber', label: '🚗 Số máy' },
+  { value: 'vehicleType', label: '🚗 Kiểu xe' },
+  { value: 'seatCount', label: '🚗 Số chỗ' },
+  { value: 'loadKg', label: '🚗 Tải trọng (kg)' },
+
+  // ── Trường AUTO INSURANCE POLICY DETAIL (BH ô tô) ──
+  { value: 'auto.soGCN', label: '🛡️ Ô tô – Số giấy chứng nhận' },
+  { value: 'auto.policyFromAt', label: '🛡️ Ô tô – Bắt đầu bảo hiểm' },
+  { value: 'auto.policyToAt', label: '🛡️ Ô tô – Kết thúc bảo hiểm' },
+  { value: 'auto.premiumWithVat', label: '🛡️ Ô tô – Phí BH TNDS gồm VAT' },
+  { value: 'auto.issuedAt', label: '🛡️ Ô tô – Ngày cấp' },
+  { value: 'auto.voluntary', label: '🛡️ Ô tô – Có tự nguyện?' },
+  { value: 'auto.tnDriverSeatCount', label: '🛡️ Ô tô – Số chỗ ngồi mua TN' },
+  { value: 'auto.tnPassengerSeatCount', label: '🛡️ Ô tô – Số hành khách mua TN' },
+  { value: 'auto.tnInsuredAmountPerEvent', label: '🛡️ Ô tô – Số tiền BH/người/vụ (TN)' },
+  { value: 'auto.tnPremium', label: '🛡️ Ô tô – Phí BH tự nguyện' },
+
+  // ── Trường MOTO INSURANCE POLICY DETAIL (BH xe máy) ──
+  { value: 'moto.soGCN', label: '🏍️ Xe máy – Số giấy chứng nhận' },
+  { value: 'moto.policyFromAt', label: '🏍️ Xe máy – Bắt đầu bảo hiểm' },
+  { value: 'moto.policyToAt', label: '🏍️ Xe máy – Kết thúc bảo hiểm' },
+  { value: 'moto.premiumWithVat', label: '🏍️ Xe máy – Phí BH TNDS gồm VAT' },
+  { value: 'moto.issuedAt', label: '🏍️ Xe máy – Ngày cấp' },
+  { value: 'moto.voluntary', label: '🏍️ Xe máy – Có tự nguyện?' },
+  { value: 'moto.tnInsuredPersons', label: '🏍️ Xe máy – Số người mua TN' },
+  { value: 'moto.tnInsuredAmountPerEvent', label: '🏍️ Xe máy – Số tiền BH/người/vụ (TN)' },
+  { value: 'moto.tnPremium', label: '🏍️ Xe máy – Phí BH tự nguyện' },
+
+  // ── Hiệu lực đơn (ánh xạ tự động từ policy) ──
+  { value: 'effectiveFrom', label: '📅 Hiệu lực từ (= policyFromAt)' },
+  { value: 'effectiveTo', label: '📅 Hiệu lực đến (= policyToAt)' }
+];
+
+// Viễn thông: trường cơ bản + chu kỳ + SĐT dùng dịch vụ
+export const TELECOM_REQUIRED_FIELD_OPTIONS: FieldOption[] = [
+  { value: 'packageCode', label: 'Mã gói cước / SIM' },
+  { value: 'billingCycle', label: 'Chu kỳ thanh toán (ngày)' },
+
+  // ── Hiệu lực theo chu kỳ ──
+  { value: 'effectiveFrom', label: '📅 Hiệu lực từ' },
+  { value: 'effectiveTo', label: '📅 Hiệu lực đến (= effectiveFrom + chu kỳ)' },
+
+  // ── SĐT dùng dịch vụ (mở khi tick "khác SĐT liên lạc") ──
+  { value: 'differentServicePhone', label: 'SĐT dịch vụ khác SĐT liên lạc' },
+  { value: 'servicePhone', label: '📱 SĐT dùng dịch vụ (lưu vào hồ sơ KH)' }
+];
+export const DIGITAL_REQUIRED_FIELD_OPTIONS: FieldOption[] = [
+  { value: 'planCode', label: 'Mã gói dịch vụ' },
+  { value: 'termDays', label: 'Thời hạn (ngày)' },
+  { value: 'startDate', label: 'Ngày bắt đầu' }
+];
+
+// ── Effective date mapping presets (dropdown thay cho nhập JSON path) ──
+export const EFFECTIVE_FROM_INS_OPTIONS: FieldOption[] = [
+  { value: 'autoPolicy.policyFromAt', label: 'Ngày BH ô tô bắt đầu (autoPolicy.policyFromAt)' },
+  { value: 'motoPolicy.policyFromAt', label: 'Ngày BH xe máy bắt đầu (motoPolicy.policyFromAt)' },
+  { value: 'autoPolicy.policyFromAt|motoPolicy.policyFromAt', label: 'Tự động theo loại BH (ô tô hoặc xe máy)' }
+];
+export const EFFECTIVE_TO_INS_OPTIONS: FieldOption[] = [
+  { value: 'autoPolicy.policyToAt', label: 'Ngày BH ô tô kết thúc (autoPolicy.policyToAt)' },
+  { value: 'motoPolicy.policyToAt', label: 'Ngày BH xe máy kết thúc (motoPolicy.policyToAt)' },
+  { value: 'autoPolicy.policyToAt|motoPolicy.policyToAt', label: 'Tự động theo loại BH (ô tô hoặc xe máy)' }
+];
+export const EFFECTIVE_FROM_TEL_OPTIONS: FieldOption[] = [
+  { value: 'activationAt', label: 'Ngày kích hoạt gói cước (activationAt)' }
+];
+export const EFFECTIVE_TO_TEL_OPTIONS: FieldOption[] = [
+  { value: 'telecom.currentExpiryAt', label: 'Ngày hết hạn gói hiện tại (telecom.currentExpiryAt)' }
+];
+export const EFFECTIVE_FROM_DIG_OPTIONS: FieldOption[] = [
+  { value: 'service.startsAt', label: 'Ngày bắt đầu dịch vụ (service.startsAt)' }
+];
+export const EFFECTIVE_TO_DIG_OPTIONS: FieldOption[] = [
+  { value: 'service.endsAt', label: 'Ngày kết thúc dịch vụ (service.endsAt)' }
+];
+
+// ── VietQR ngân hàng phổ biến ──
+export const VIETQR_BANK_OPTIONS: FieldOption[] = [
+  { value: '', label: '-- Chưa chọn ngân hàng --' },
+  { value: 'MB', label: 'MB Bank (Ngân hàng Quân đội)' },
+  { value: 'VCB', label: 'Vietcombank (Ngoại thương)' },
+  { value: 'TCB', label: 'Techcombank (Kỹ thương)' },
+  { value: 'ACB', label: 'ACB (Á Châu)' },
+  { value: 'VPB', label: 'VPBank (Việt Nam Thịnh Vượng)' },
+  { value: 'TPB', label: 'TPBank (Tiên Phong)' },
+  { value: 'BIDV', label: 'BIDV (Đầu tư & Phát triển)' },
+  { value: 'CTG', label: 'VietinBank (Công thương)' },
+  { value: 'STB', label: 'Sacombank' },
+  { value: 'HDB', label: 'HDBank (Phát triển TP.HCM)' },
+  { value: 'SHB', label: 'SHB (Sài Gòn - Hà Nội)' },
+  { value: 'MSB', label: 'MSB (Hàng Hải)' },
+  { value: 'OCB', label: 'OCB (Phương Đông)' },
+  { value: 'LPB', label: 'LienVietPostBank' },
+  { value: 'EIB', label: 'Eximbank (Xuất nhập khẩu)' },
+  { value: 'NAB', label: 'Nam A Bank' },
+  { value: 'SCB', label: 'SCB (Sài Gòn)' },
+  { value: 'VAB', label: 'VietABank (Việt Á)' },
+  { value: 'ABB', label: 'ABBank (An Bình)' },
+  { value: 'BAB', label: 'Bắc Á Bank' },
+  { value: 'CAKE', label: 'CAKE (VPBank số)' },
+  { value: 'UBANK', label: 'Ubank (VPBank số)' }
+];
+
+// ── Lịch đối soát (Reconcile schedule) presets ──
+export const RECONCILE_SCHEDULE_OPTIONS: FieldOption[] = [
+  { value: '0 */1 * * *', label: 'Mỗi 1 giờ' },
+  { value: '0 */2 * * *', label: 'Mỗi 2 giờ (mặc định)' },
+  { value: '0 */4 * * *', label: 'Mỗi 4 giờ' },
+  { value: '0 */6 * * *', label: 'Mỗi 6 giờ' },
+  { value: '0 */12 * * *', label: 'Mỗi 12 giờ' },
+  { value: '0 0 * * *', label: 'Mỗi ngày lúc 00:00' },
+  { value: '0 8 * * *', label: 'Mỗi ngày lúc 08:00 sáng' }
+];
+
+// ── Chế độ kích hoạt (với mô tả rõ) ──
+export const CHECKOUT_ACTIVATION_MODE_OPTIONS_V2: FieldOption[] = [
+  { value: 'AUTO', label: 'Tự động kích hoạt khi thanh toán đủ' },
+  { value: 'MANUAL', label: 'Chờ nhân viên kích hoạt thủ công' },
+  { value: 'HYBRID', label: 'Tự động + cho phép ghi đè thủ công' }
+];
+
 export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
   org_profile: {
     title: 'Hồ sơ doanh nghiệp',
@@ -923,106 +1056,116 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       {
         id: 'finance-payment-policy',
         title: 'Thanh toán & VietQR',
-        description: 'Chính sách thanh toán, quyền override, lịch đối soát và cấu hình VietQR.',
+        description: 'Chính sách thanh toán, chuyển khoản ngân hàng và lịch đối soát tự động.',
         fields: [
-          { id: 'finance-partial-payment', path: 'paymentPolicy.partialPaymentEnabled', label: 'Cho phép thanh toán một phần', type: 'switch' },
-          { id: 'finance-override-roles', path: 'paymentPolicy.overrideRoles', label: 'Vai trò được override thanh toán', type: 'multiSelect', options: CHECKOUT_OVERRIDE_ROLE_OPTIONS },
-          { id: 'finance-callback-tolerance', path: 'paymentPolicy.callbackTolerance', label: 'Tolerance callback', type: 'number', unit: 'giây', min: 10, max: 86400 },
-          { id: 'finance-reconcile-schedule', path: 'paymentPolicy.reconcileSchedule', label: 'Lịch reconcile (cron)', type: 'text', placeholder: '0 */2 * * *' },
-          { id: 'finance-qr-at-draft', path: 'paymentPolicy.allowQrAtDraft', label: 'Cho phép tạo QR ở đơn nháp', type: 'switch' },
-          { id: 'finance-vietqr-bank', path: 'paymentPolicy.vietQR.bankCode', label: 'VietQR - Mã ngân hàng', type: 'text', placeholder: 'VD: MB, VCB, TCB...' },
-          { id: 'finance-vietqr-account', path: 'paymentPolicy.vietQR.accountNumber', label: 'VietQR - Số tài khoản', type: 'text' },
-          { id: 'finance-vietqr-name', path: 'paymentPolicy.vietQR.accountName', label: 'VietQR - Tên tài khoản', type: 'text' },
-          { id: 'finance-vietqr-template', path: 'paymentPolicy.vietQR.transferContentTemplate', label: 'VietQR - Mẫu nội dung CK', type: 'text', placeholder: 'DH {orderNo}' }
+          { id: 'finance-partial-payment', path: 'paymentPolicy.partialPaymentEnabled', label: 'Cho phép thanh toán một phần', type: 'switch', helper: 'Khi bật, khách hàng có thể thanh toán trước một phần và trả nốt sau.' },
+          { id: 'finance-override-roles', path: 'paymentPolicy.overrideRoles', label: 'Vai trò được ghi đè trạng thái thanh toán', type: 'multiSelect', options: CHECKOUT_OVERRIDE_ROLE_OPTIONS, helper: 'Vai trò có quyền đánh dấu đơn hàng là "đã thanh toán" thủ công (bỏ qua luồng tự động).' },
+          { id: 'finance-callback-tolerance', path: 'paymentPolicy.callbackTolerance', label: 'Thời gian chờ xác nhận thanh toán', type: 'number', unit: 'giây', min: 10, max: 86400, helper: 'Thời gian tối đa hệ thống chờ ngân hàng xác nhận giao dịch trước khi đánh dấu thất bại.', isAdvanced: true },
+          { id: 'finance-reconcile-schedule', path: 'paymentPolicy.reconcileSchedule', label: 'Lịch đối soát tự động', type: 'select', options: RECONCILE_SCHEDULE_OPTIONS, helper: 'Hệ thống tự động kiểm tra và đối chiếu các giao dịch thanh toán theo lịch này.' },
+          { id: 'finance-qr-at-draft', path: 'paymentPolicy.allowQrAtDraft', label: 'Cho phép tạo mã QR ở đơn nháp', type: 'switch', helper: 'Khi bật, khách hàng có thể quét QR thanh toán ngay từ lúc đơn chưa được duyệt.' },
+          { id: 'finance-vietqr-bank', path: 'paymentPolicy.vietQR.bankCode', label: 'Ngân hàng nhận thanh toán (VietQR)', type: 'select', options: VIETQR_BANK_OPTIONS, helper: 'Chọn ngân hàng mà công ty sử dụng để nhận thanh toán qua mã QR.' },
+          { id: 'finance-vietqr-account', path: 'paymentPolicy.vietQR.accountNumber', label: 'Số tài khoản ngân hàng', type: 'text', helper: 'Số tài khoản ngân hàng của công ty, sẽ hiển thị trên mã QR thanh toán.', placeholder: 'Ví dụ: 0123456789' },
+          { id: 'finance-vietqr-name', path: 'paymentPolicy.vietQR.accountName', label: 'Tên tài khoản ngân hàng', type: 'text', helper: 'Tên chủ tài khoản (viết in hoa, không dấu). Ví dụ: CONG TY TNHH ABC', placeholder: 'CONG TY TNHH ABC' },
+          { id: 'finance-vietqr-template', path: 'paymentPolicy.vietQR.transferContentTemplate', label: 'Mẫu nội dung chuyển khoản', type: 'text', helper: 'Nội dung tự động điền khi khách chuyển khoản. Dùng {orderNo} để chèn mã đơn.', placeholder: 'DH {orderNo}' }
         ]
       },
       {
         id: 'finance-invoice-automation',
         title: 'Hóa đơn tự động',
-        description: 'Quy tắc tự động tạo hóa đơn theo nhóm sản phẩm.',
+        description: 'Quy tắc tự động tạo hóa đơn sau khi đơn hàng thanh toán hoặc kích hoạt, phân theo nhóm sản phẩm.',
         fields: [
-          { id: 'finance-invoice-ins-trigger', path: 'invoiceAutomation.INSURANCE.trigger', label: 'INSURANCE - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
-          { id: 'finance-invoice-ins-full', path: 'invoiceAutomation.INSURANCE.requireFullPayment', label: 'INSURANCE - Yêu cầu thanh toán đủ', type: 'switch' },
-          { id: 'finance-invoice-tel-trigger', path: 'invoiceAutomation.TELECOM.trigger', label: 'TELECOM - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
-          { id: 'finance-invoice-tel-full', path: 'invoiceAutomation.TELECOM.requireFullPayment', label: 'TELECOM - Yêu cầu thanh toán đủ', type: 'switch' },
-          { id: 'finance-invoice-dig-trigger', path: 'invoiceAutomation.DIGITAL.trigger', label: 'DIGITAL - Trigger', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS },
-          { id: 'finance-invoice-dig-full', path: 'invoiceAutomation.DIGITAL.requireFullPayment', label: 'DIGITAL - Yêu cầu thanh toán đủ', type: 'switch' }
+          { id: 'finance-invoice-ins-trigger', path: 'invoiceAutomation.INSURANCE.trigger', label: '🛡️ Bảo hiểm - Thời điểm tạo hóa đơn', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS, helper: 'Chọn thời điểm hệ thống tự động tạo hóa đơn cho đơn bảo hiểm.' },
+          { id: 'finance-invoice-ins-full', path: 'invoiceAutomation.INSURANCE.requireFullPayment', label: '🛡️ Bảo hiểm - Yêu cầu thanh toán đủ mới xuất hóa đơn', type: 'switch', helper: 'Khi bật, hóa đơn chỉ được tạo khi khách thanh toán 100% giá trị đơn.' },
+          { id: 'finance-invoice-tel-trigger', path: 'invoiceAutomation.TELECOM.trigger', label: '📱 Viễn thông - Thời điểm tạo hóa đơn', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS, helper: 'Chọn thời điểm hệ thống tự động tạo hóa đơn cho đơn viễn thông.' },
+          { id: 'finance-invoice-tel-full', path: 'invoiceAutomation.TELECOM.requireFullPayment', label: '📱 Viễn thông - Yêu cầu thanh toán đủ mới xuất hóa đơn', type: 'switch' },
+          { id: 'finance-invoice-dig-trigger', path: 'invoiceAutomation.DIGITAL.trigger', label: '💻 Dịch vụ số - Thời điểm tạo hóa đơn', type: 'select', options: CHECKOUT_INVOICE_TRIGGER_OPTIONS, helper: 'Chọn thời điểm hệ thống tự động tạo hóa đơn cho đơn dịch vụ số.' },
+          { id: 'finance-invoice-dig-full', path: 'invoiceAutomation.DIGITAL.requireFullPayment', label: '💻 Dịch vụ số - Yêu cầu thanh toán đủ mới xuất hóa đơn', type: 'switch' }
         ]
       }
     ]
   },
   sales_crm_policies: {
     title: 'Chính sách CRM/Bán hàng',
-    description: 'Quy định sửa đơn, chiết khấu, tín dụng và taxonomy khách hàng.',
+    description: 'Quy định sửa đơn, mẫu đơn hàng, chiết khấu, tín dụng và phân loại khách hàng.',
     sections: [
       {
         id: 'sales-order-policy',
         title: 'Quy tắc đơn hàng',
+        description: 'Thiết lập chính sách duyệt khi thay đổi giá trị đơn hàng.',
         fields: [
-          { id: 'sales-allow-increase', path: 'orderSettings.allowIncreaseWithoutApproval', label: 'Cho phép tăng giá trị đơn không cần duyệt', type: 'switch' },
-          { id: 'sales-require-decrease', path: 'orderSettings.requireApprovalForDecrease', label: 'Giảm giá trị đơn phải duyệt', type: 'switch' },
-          { id: 'sales-approver-id', path: 'orderSettings.approverId', label: 'Người duyệt mặc định (ID/email)', type: 'text' }
+          { id: 'sales-allow-increase', path: 'orderSettings.allowIncreaseWithoutApproval', label: 'Cho phép tăng giá trị đơn không cần duyệt', type: 'switch', helper: 'Khi bật, nhân viên có thể tăng giá trị đơn hàng mà không cần chờ duyệt.' },
+          { id: 'sales-require-decrease', path: 'orderSettings.requireApprovalForDecrease', label: 'Giảm giá trị đơn phải duyệt', type: 'switch', helper: 'Khi bật, mọi thao tác giảm giá trị đơn đều cần người có quyền duyệt xác nhận.' },
+          { id: 'sales-approver-id', path: 'orderSettings.approverId', label: 'Người duyệt mặc định', type: 'text', helper: 'Nhập email của người chịu trách nhiệm duyệt đơn hàng. Ví dụ: manager@company.com', placeholder: 'manager@company.com' }
         ]
       },
       {
         id: 'sales-checkout-templates',
-        title: 'Checkout templates theo nhóm sản phẩm',
-        description: 'Mẫu field bắt buộc cho luồng Sale Checkout v1.',
+        title: 'Mẫu đơn hàng (Checkout Templates)',
+        description: 'Cấu hình thông tin bắt buộc khi tạo đơn hàng theo từng nhóm sản phẩm. Trường "bắt buộc" là thông tin khách hàng PHẢI điền khi tạo đơn.',
         fields: [
-          { id: 'sales-checkout-template-ins-code', path: 'checkoutTemplates.INSURANCE.0.code', label: 'INSURANCE - Template code', type: 'text', placeholder: 'INSURANCE_STD' },
-          { id: 'sales-checkout-template-ins-label', path: 'checkoutTemplates.INSURANCE.0.label', label: 'INSURANCE - Nhãn template', type: 'text', placeholder: 'Mẫu bảo hiểm tiêu chuẩn' },
-          { id: 'sales-checkout-template-ins-required', path: 'checkoutTemplates.INSURANCE.0.requiredFields', label: 'INSURANCE - Required fields', type: 'tags', placeholder: 'insuranceType,termDays,requestedEffectiveDate' },
-          { id: 'sales-checkout-template-tel-code', path: 'checkoutTemplates.TELECOM.0.code', label: 'TELECOM - Template code', type: 'text', placeholder: 'TELECOM_STD' },
-          { id: 'sales-checkout-template-tel-label', path: 'checkoutTemplates.TELECOM.0.label', label: 'TELECOM - Nhãn template', type: 'text', placeholder: 'Mẫu viễn thông tiêu chuẩn' },
-          { id: 'sales-checkout-template-tel-required', path: 'checkoutTemplates.TELECOM.0.requiredFields', label: 'TELECOM - Required fields', type: 'tags', placeholder: 'packageCode,billingCycle,servicePhone' },
-          { id: 'sales-checkout-template-dig-code', path: 'checkoutTemplates.DIGITAL.0.code', label: 'DIGITAL - Template code', type: 'text', placeholder: 'DIGITAL_STD' },
-          { id: 'sales-checkout-template-dig-label', path: 'checkoutTemplates.DIGITAL.0.label', label: 'DIGITAL - Nhãn template', type: 'text', placeholder: 'Mẫu dịch vụ số tiêu chuẩn' },
-          { id: 'sales-checkout-template-dig-required', path: 'checkoutTemplates.DIGITAL.0.requiredFields', label: 'DIGITAL - Required fields', type: 'tags', placeholder: 'planCode,termDays,startDate' }
+          { id: 'sales-checkout-template-ins-code', path: 'checkoutTemplates.INSURANCE.0.code', label: '🛡️ BH ô tô - Mã template', type: 'text', helper: 'Mã nội bộ của template. Không nên thay đổi trừ khi được IT hướng dẫn.', isAdvanced: true, placeholder: 'AUTO_INSURANCE_STD' },
+          { id: 'sales-checkout-template-ins-label', path: 'checkoutTemplates.INSURANCE.0.label', label: '🛡️ BH ô tô - Tên hiển thị', type: 'text', helper: 'Tên này sẽ xuất hiện trong dropdown khi nhân viên tạo đơn bảo hiểm ô tô.', placeholder: 'Bảo hiểm ô tô' },
+          { id: 'sales-checkout-template-ins-required', path: 'checkoutTemplates.INSURANCE.0.requiredFields', label: '🛡️ BH ô tô - Trường bắt buộc', type: 'multiSelect', options: INSURANCE_REQUIRED_FIELD_OPTIONS, helper: 'Chọn các thông tin mà khách hàng BẮT BUỘC phải điền khi tạo đơn BH ô tô. Các trường không chọn sẽ là tùy chọn.' },
+          { id: 'sales-checkout-template-moto-code', path: 'checkoutTemplates.INSURANCE.1.code', label: '🏍️ BH xe máy - Mã template', type: 'text', helper: 'Mã nội bộ của template bảo hiểm xe máy. Không nên thay đổi trừ khi được IT hướng dẫn.', isAdvanced: true, placeholder: 'MOTO_INSURANCE_STD' },
+          { id: 'sales-checkout-template-moto-label', path: 'checkoutTemplates.INSURANCE.1.label', label: '🏍️ BH xe máy - Tên hiển thị', type: 'text', helper: 'Tên này sẽ xuất hiện trong dropdown khi nhân viên tạo đơn bảo hiểm xe máy.', placeholder: 'Bảo hiểm xe máy' },
+          { id: 'sales-checkout-template-moto-required', path: 'checkoutTemplates.INSURANCE.1.requiredFields', label: '🏍️ BH xe máy - Trường bắt buộc', type: 'multiSelect', options: INSURANCE_REQUIRED_FIELD_OPTIONS, helper: 'Chọn các thông tin mà khách hàng BẮT BUỘC phải điền khi tạo đơn BH xe máy.' },
+          { id: 'sales-checkout-template-tel-code', path: 'checkoutTemplates.TELECOM.0.code', label: '📱 Viễn thông - Mã template', type: 'text', helper: 'Mã nội bộ của template. Không nên thay đổi trừ khi được IT hướng dẫn.', isAdvanced: true, placeholder: 'TELECOM_STD' },
+          { id: 'sales-checkout-template-tel-label', path: 'checkoutTemplates.TELECOM.0.label', label: '📱 Viễn thông - Tên hiển thị', type: 'text', helper: 'Tên này sẽ xuất hiện khi nhân viên chọn loại đơn viễn thông.', placeholder: 'Mẫu viễn thông tiêu chuẩn' },
+          { id: 'sales-checkout-template-tel-required', path: 'checkoutTemplates.TELECOM.0.requiredFields', label: '📱 Viễn thông - Trường bắt buộc', type: 'multiSelect', options: TELECOM_REQUIRED_FIELD_OPTIONS, helper: 'Chọn các thông tin mà khách hàng BẮT BUỘC phải điền khi tạo đơn viễn thông.' },
+          { id: 'sales-checkout-template-dig-code', path: 'checkoutTemplates.DIGITAL.0.code', label: '💻 Dịch vụ số - Mã template', type: 'text', helper: 'Mã nội bộ của template. Không nên thay đổi trừ khi được IT hướng dẫn.', isAdvanced: true, placeholder: 'DIGITAL_STD' },
+          { id: 'sales-checkout-template-dig-label', path: 'checkoutTemplates.DIGITAL.0.label', label: '💻 Dịch vụ số - Tên hiển thị', type: 'text', helper: 'Tên này sẽ xuất hiện khi nhân viên chọn loại đơn dịch vụ số.', placeholder: 'Mẫu dịch vụ số tiêu chuẩn' },
+          { id: 'sales-checkout-template-dig-required', path: 'checkoutTemplates.DIGITAL.0.requiredFields', label: '💻 Dịch vụ số - Trường bắt buộc', type: 'multiSelect', options: DIGITAL_REQUIRED_FIELD_OPTIONS, helper: 'Chọn các thông tin mà khách hàng BẮT BUỘC phải điền khi tạo đơn dịch vụ số.' }
         ]
       },
       {
         id: 'sales-checkout-activation',
-        title: 'Activation policy theo nhóm',
+        title: 'Chế độ kích hoạt dịch vụ',
+        description: 'Quy định dịch vụ được kích hoạt tự động hay cần nhân viên xác nhận thủ công sau khi thanh toán.',
         fields: [
-          { id: 'sales-checkout-activation-ins', path: 'activationPolicy.INSURANCE', label: 'INSURANCE - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS },
-          { id: 'sales-checkout-activation-tel', path: 'activationPolicy.TELECOM', label: 'TELECOM - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS },
-          { id: 'sales-checkout-activation-dig', path: 'activationPolicy.DIGITAL', label: 'DIGITAL - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS }
+          { id: 'sales-checkout-activation-ins', path: 'activationPolicy.INSURANCE', label: '🛡️ Bảo hiểm - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS_V2, helper: 'Chọn cách kích hoạt hợp đồng bảo hiểm sau khi khách thanh toán.' },
+          { id: 'sales-checkout-activation-tel', path: 'activationPolicy.TELECOM', label: '📱 Viễn thông - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS_V2, helper: 'Chọn cách kích hoạt gói cước viễn thông sau khi khách thanh toán.' },
+          { id: 'sales-checkout-activation-dig', path: 'activationPolicy.DIGITAL', label: '💻 Dịch vụ số - Chế độ kích hoạt', type: 'select', options: CHECKOUT_ACTIVATION_MODE_OPTIONS_V2, helper: 'Chọn cách kích hoạt dịch vụ số sau khi khách thanh toán.' }
         ]
       },
       {
         id: 'sales-checkout-effective',
-        title: 'Canonical effective mapping',
+        title: 'Ánh xạ ngày hiệu lực tự động',
+        description: 'Hệ thống tự lấy ngày hiệu lực từ dữ liệu đơn hàng. Chọn trường nguồn phù hợp cho từng nhóm sản phẩm.',
+        isAdvanced: true,
         fields: [
-          { id: 'sales-checkout-effective-ins-from', path: 'effectiveDateMapping.INSURANCE.from', label: 'INSURANCE - Map effective_from', type: 'text', placeholder: 'autoPolicy.policyFromAt|motoPolicy.policyFromAt' },
-          { id: 'sales-checkout-effective-ins-to', path: 'effectiveDateMapping.INSURANCE.to', label: 'INSURANCE - Map effective_to', type: 'text', placeholder: 'autoPolicy.policyToAt|motoPolicy.policyToAt' },
-          { id: 'sales-checkout-effective-tel-from', path: 'effectiveDateMapping.TELECOM.from', label: 'TELECOM - Map effective_from', type: 'text', placeholder: 'activationAt' },
-          { id: 'sales-checkout-effective-tel-to', path: 'effectiveDateMapping.TELECOM.to', label: 'TELECOM - Map effective_to', type: 'text', placeholder: 'telecom.currentExpiryAt' },
-          { id: 'sales-checkout-effective-dig-from', path: 'effectiveDateMapping.DIGITAL.from', label: 'DIGITAL - Map effective_from', type: 'text', placeholder: 'service.startsAt' },
-          { id: 'sales-checkout-effective-dig-to', path: 'effectiveDateMapping.DIGITAL.to', label: 'DIGITAL - Map effective_to', type: 'text', placeholder: 'service.endsAt' }
+          { id: 'sales-checkout-effective-ins-from', path: 'effectiveDateMapping.INSURANCE.from', label: '🛡️ Bảo hiểm - Ngày bắt đầu hiệu lực', type: 'select', options: EFFECTIVE_FROM_INS_OPTIONS, helper: 'Chọn trường dữ liệu dùng làm ngày bắt đầu hợp đồng bảo hiểm.' },
+          { id: 'sales-checkout-effective-ins-to', path: 'effectiveDateMapping.INSURANCE.to', label: '🛡️ Bảo hiểm - Ngày kết thúc hiệu lực', type: 'select', options: EFFECTIVE_TO_INS_OPTIONS, helper: 'Chọn trường dữ liệu dùng làm ngày hết hạn hợp đồng bảo hiểm.' },
+          { id: 'sales-checkout-effective-tel-from', path: 'effectiveDateMapping.TELECOM.from', label: '📱 Viễn thông - Ngày bắt đầu hiệu lực', type: 'select', options: EFFECTIVE_FROM_TEL_OPTIONS, helper: 'Chọn trường dữ liệu dùng làm ngày kích hoạt gói cước.' },
+          { id: 'sales-checkout-effective-tel-to', path: 'effectiveDateMapping.TELECOM.to', label: '📱 Viễn thông - Ngày kết thúc hiệu lực', type: 'select', options: EFFECTIVE_TO_TEL_OPTIONS, helper: 'Chọn trường dữ liệu dùng làm ngày hết hạn gói cước.' },
+          { id: 'sales-checkout-effective-dig-from', path: 'effectiveDateMapping.DIGITAL.from', label: '💻 Dịch vụ số - Ngày bắt đầu hiệu lực', type: 'select', options: EFFECTIVE_FROM_DIG_OPTIONS, helper: 'Chọn trường dữ liệu dùng làm ngày bắt đầu dịch vụ số.' },
+          { id: 'sales-checkout-effective-dig-to', path: 'effectiveDateMapping.DIGITAL.to', label: '💻 Dịch vụ số - Ngày kết thúc hiệu lực', type: 'select', options: EFFECTIVE_TO_DIG_OPTIONS, helper: 'Chọn trường dữ liệu dùng làm ngày kết thúc dịch vụ số.' }
         ]
       },
       {
         id: 'sales-discount-credit',
         title: 'Chiết khấu và tín dụng',
+        description: 'Thiết lập giới hạn chiết khấu, ngưỡng cần duyệt, và chính sách công nợ khách hàng.',
         fields: [
-          { id: 'sales-max-discount', path: 'discountPolicy.maxDiscountPercent', label: 'Chiết khấu tối đa', type: 'number', unit: '%', min: 0, max: 100 },
-          { id: 'sales-discount-approval', path: 'discountPolicy.requireApprovalAbovePercent', label: 'Vượt mức này phải duyệt', type: 'number', unit: '%', min: 0, max: 100 },
-          { id: 'sales-negative-balance', path: 'creditPolicy.allowNegativeBalance', label: 'Cho phép công nợ âm', type: 'switch' },
-          { id: 'sales-credit-limit', path: 'creditPolicy.maxCreditLimit', label: 'Hạn mức tín dụng tối đa', type: 'number', unit: 'VND', min: 0 }
+          { id: 'sales-max-discount', path: 'discountPolicy.maxDiscountPercent', label: 'Chiết khấu tối đa cho phép', type: 'number', unit: '%', min: 0, max: 100, helper: 'Mức chiết khấu cao nhất mà nhân viên được phép áp dụng. Ví dụ: 30 = tối đa 30%.' },
+          { id: 'sales-discount-approval', path: 'discountPolicy.requireApprovalAbovePercent', label: 'Chiết khấu vượt mức này cần duyệt', type: 'number', unit: '%', min: 0, max: 100, helper: 'Khi chiết khấu vượt mức này, đơn sẽ chuyển sang trạng thái chờ duyệt. Ví dụ: 15 = vượt 15% phải duyệt.' },
+          { id: 'sales-negative-balance', path: 'creditPolicy.allowNegativeBalance', label: 'Cho phép công nợ âm (nợ vượt hạn mức)', type: 'switch', helper: 'Khi bật, khách hàng có thể mua hàng ngay cả khi công nợ vượt hạn mức tín dụng.' },
+          { id: 'sales-credit-limit', path: 'creditPolicy.maxCreditLimit', label: 'Hạn mức tín dụng tối đa mỗi khách', type: 'number', unit: 'VND', min: 0, helper: 'Số tiền tối đa mà một khách hàng được nợ. Đặt 0 = không cho phép công nợ.' }
         ]
       },
       {
         id: 'sales-draft-expiry',
         title: 'Đơn nháp tự động hủy',
+        description: 'Đơn hàng ở trạng thái nháp quá lâu sẽ được hệ thống tự động cảnh báo hoặc hủy để tránh tồn đọng.',
         fields: [
-          { id: 'sales-draft-expiry-days', path: 'draftExpiryDays', label: 'Tự hủy đơn nháp sau', type: 'number', unit: 'ngày', min: 1, max: 90 },
-          { id: 'sales-draft-warning-days', path: 'draftWarningDays', label: 'Cảnh báo trước khi hủy', type: 'number', unit: 'ngày', min: 1, max: 30 },
-          { id: 'sales-draft-debt-days', path: 'draftDebtConversionDays', label: 'Chuyển nợ sau (ngày)', type: 'number', unit: 'ngày', min: 0, max: 365 }
+          { id: 'sales-draft-expiry-days', path: 'draftExpiryDays', label: 'Tự hủy đơn nháp sau', type: 'number', unit: 'ngày', min: 1, max: 90, helper: 'Sau bao nhiêu ngày không xử lý, đơn nháp sẽ bị hệ thống tự động hủy.' },
+          { id: 'sales-draft-warning-days', path: 'draftWarningDays', label: 'Cảnh báo trước khi hủy', type: 'number', unit: 'ngày', min: 1, max: 30, helper: 'Số ngày trước khi hủy, hệ thống sẽ gửi cảnh báo cho nhân viên phụ trách.' },
+          { id: 'sales-draft-debt-days', path: 'draftDebtConversionDays', label: 'Chuyển thành công nợ sau', type: 'number', unit: 'ngày', min: 0, max: 365, helper: 'Sau bao nhiêu ngày, đơn chưa thanh toán sẽ tự chuyển thành công nợ. Đặt 0 = không tự chuyển.' }
         ]
       },
       {
         id: 'sales-taxonomy',
         title: 'Phân loại khách hàng',
+        description: 'Quản lý danh sách giai đoạn và nguồn khách hàng. Dữ liệu này dùng để phân nhóm và lọc khách trong CRM.',
         fields: [
           {
             id: 'sales-stages',
@@ -1044,12 +1187,13 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       },
       {
         id: 'sales-tag-registry',
-        title: 'CRM Tag Registry',
+        title: 'Quản lý nhãn (Tags)',
+        description: 'Danh sách nhãn (tags) dùng để phân loại nhanh khách hàng và tương tác. Thêm/sửa tag tại đây.',
         fields: [
           {
             id: 'sales-customer-tags-registry',
             path: 'tagRegistry.customerTags',
-            label: 'Customer tags',
+            label: 'Nhãn khách hàng',
             helper: 'Danh sách tag dùng cho hồ sơ khách hàng.',
             type: 'taxonomyManager',
             taxonomyType: 'customerTags'
@@ -1057,16 +1201,16 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           {
             id: 'sales-interaction-tags-registry',
             path: 'tagRegistry.interactionTags',
-            label: 'Interaction tags',
-            helper: 'Danh sách tag bổ sung khi ghi nhận interaction.',
+            label: 'Nhãn tương tác',
+            helper: 'Danh sách tag gắn vào khi ghi nhận tương tác với khách (gọi điện, chat, gặp mặt...).',
             type: 'taxonomyManager',
             taxonomyType: 'interactionTags'
           },
           {
             id: 'sales-interaction-result-tags-registry',
             path: 'tagRegistry.interactionResultTags',
-            label: 'Interaction result tags',
-            helper: 'Danh sách resultTag hợp lệ cho interaction.',
+            label: 'Nhãn kết quả tương tác',
+            helper: 'Kết quả sau mỗi lần tương tác (quan tâm, đã mua, không phản hồi...).',
             type: 'taxonomyManager',
             taxonomyType: 'interactionResultTags'
           }
@@ -1075,6 +1219,7 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       {
         id: 'sales-renewal-reminder',
         title: 'Nhắc gia hạn CRM',
+        description: 'Thiết lập số ngày nhắc trước khi hợp đồng/gói cước hết hạn, giúp nhân viên chủ động liên hệ khách.',
         fields: [
           {
             id: 'sales-renewal-global-days',
@@ -1326,7 +1471,7 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'int-ai-enabled', path: 'ai.enabled', label: 'Bật AI connector', type: 'switch' },
           { id: 'int-ai-base-url', path: 'ai.baseUrl', label: 'AI base URL', type: 'text', isAdvanced: true },
           { id: 'int-ai-model', path: 'ai.model', label: 'Model mặc định', type: 'text', placeholder: 'gpt-4o-mini', isAdvanced: true },
-          { id: 'int-ai-api-key', path: 'ai.apiKey', label: 'AI API key (nhập trực tiếp)', type: 'secret', helper: 'Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
+          { id: 'int-ai-api-key', path: 'ai.apiKey', label: '🔑 AI API key (nhập trực tiếp)', type: 'secret', helper: 'Key dùng cho tất cả tính năng AI: OCR giấy chứng nhận, AI Routing, phân tích hội thoại. Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
           { id: 'int-ai-key-pool', path: 'ai.apiKeyPool', label: 'Bể API key (Key Pool)', type: 'keyPool', helper: 'Nhập nhiều key để xoay vòng tự động. Hệ thống sẽ dùng key tiếp theo khi key hiện tại bị lỗi quota.' },
           { id: 'int-ai-key-rotation-mode', path: 'ai.keyRotationMode', label: 'Chế độ xoay key', type: 'select', options: [{ value: 'fallback', label: 'Fallback khi lỗi' }, { value: 'round_robin', label: 'Round-robin mỗi request' }, { value: 'manual', label: 'Chọn thủ công' }] },
           { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
