@@ -1263,6 +1263,7 @@ export class SettingsPolicyService {
       const integrations = this.ensureRecord(merged);
       const bhtot = this.ensureRecord(integrations.bhtot);
       const ai = this.ensureRecord(integrations.ai);
+      const aiOcr = this.ensureRecord(integrations.aiOcr);
       const zalo = this.ensureRecord(integrations.zalo);
       const payments = this.ensureRecord(integrations.payments);
 
@@ -1299,6 +1300,12 @@ export class SettingsPolicyService {
       const normalizedApiKey = this.readDecryptedSecret(bhtot.apiKey, 'integrations.bhtot.apiKey', { strict: false });
       const normalizedAiKeyRef = this.cleanString(ai.apiKeyRef);
       const normalizedAiApiKey = this.readDecryptedSecret(ai.apiKey, 'integrations.ai.apiKey', { strict: false });
+      const normalizedAiKeyPool = this.toStringArray(ai.apiKeyPool)
+        .map((item) => this.cleanString(item))
+        .filter(Boolean)
+        .filter((item, index, array) => array.indexOf(item) === index);
+      const normalizedAiRotationMode = this.cleanString(ai.keyRotationMode).toLowerCase();
+      const normalizedAiOcrKeyRef = this.cleanString(aiOcr.apiKeyRef);
       const normalizedZaloTokenRef = this.cleanString(zalo.accessTokenRef);
       const normalizedZaloAccessToken = this.readDecryptedSecret(zalo.accessToken, 'integrations.zalo.accessToken', { strict: false });
       const normalizedZaloWebhookSecretRef = this.cleanString(zalo.webhookSecretRef);
@@ -1321,8 +1328,22 @@ export class SettingsPolicyService {
           enabled: this.toBool(ai.enabled, false),
           apiKey: normalizedAiApiKey,
           apiKeyRef: normalizedAiKeyRef,
+          apiKeyPool: normalizedAiKeyPool,
+          keyRotationMode: ['fallback', 'round_robin', 'manual'].includes(normalizedAiRotationMode) ? normalizedAiRotationMode : 'fallback',
+          activeKeyIndex: this.toInt(ai.activeKeyIndex, 0, 0, 999),
           timeoutMs: this.toInt(ai.timeoutMs, 45000, 1000, 120000),
           lastValidatedAt: ai.lastValidatedAt ? String(ai.lastValidatedAt) : null
+        },
+        aiOcr: {
+          ...aiOcr,
+          enabled: this.toBool(aiOcr.enabled, false),
+          ocrEnabled: this.toBool(aiOcr.ocrEnabled, false),
+          providerKind: ['gemini', 'openai_compat'].includes(this.cleanString(aiOcr.providerKind).toLowerCase())
+            ? this.cleanString(aiOcr.providerKind).toLowerCase()
+            : 'gemini',
+          provider: this.cleanString(aiOcr.provider),
+          apiKeyRef: normalizedAiOcrKeyRef,
+          ocrModel: this.cleanString(aiOcr.ocrModel)
         },
         zalo: {
           ...zaloSafe,
@@ -1876,12 +1897,14 @@ export class SettingsPolicyService {
       const integrations = this.ensureRecord(value);
       const bhtot = this.ensureRecord(integrations.bhtot);
       const ai = this.ensureRecord(integrations.ai);
+      const aiOcr = this.ensureRecord(integrations.aiOcr);
       const zalo = this.ensureRecord(integrations.zalo);
       const payments = this.ensureRecord(integrations.payments);
 
       for (const [field, ref] of [
         ['integrations.bhtot.apiKeyRef', this.cleanString(bhtot.apiKeyRef)],
         ['integrations.ai.apiKeyRef', this.cleanString(ai.apiKeyRef)],
+        ['integrations.aiOcr.apiKeyRef', this.cleanString(aiOcr.apiKeyRef)],
         ['integrations.zalo.accessTokenRef', this.cleanString(zalo.accessTokenRef)],
         ['integrations.zalo.webhookSecretRef', this.cleanString(zalo.webhookSecretRef)],
         ['integrations.payments.bankWebhookSecretRef', this.cleanString(payments.bankWebhookSecretRef)]
@@ -1900,8 +1923,18 @@ export class SettingsPolicyService {
       if (this.toBool(ai.enabled, false) && !this.cleanString(ai.baseUrl)) {
         errors.push('AI enabled nhưng thiếu baseUrl.');
       }
-      if (this.toBool(ai.enabled, false) && !this.cleanString(ai.apiKey) && !this.cleanString(ai.apiKeyRef)) {
+      const aiKeyPool = this.toStringArray(ai.apiKeyPool);
+      if (this.toBool(ai.enabled, false) && !this.cleanString(ai.apiKey) && !this.cleanString(ai.apiKeyRef) && aiKeyPool.length === 0) {
         warnings.push('AI enabled nhưng chưa có apiKey hoặc apiKeyRef.');
+      }
+      if (
+        (this.toBool(aiOcr.enabled, false) || this.toBool(aiOcr.ocrEnabled, false))
+        && !this.cleanString(ai.apiKey)
+        && !this.cleanString(ai.apiKeyRef)
+        && !this.cleanString(aiOcr.apiKeyRef)
+        && aiKeyPool.length === 0
+      ) {
+        warnings.push('AI OCR bật nhưng chưa có key (ai.apiKey / ai.apiKeyRef / ai.apiKeyPool / aiOcr.apiKeyRef).');
       }
       if (this.toBool(zalo.enabled, false) && !this.cleanString(zalo.accessToken) && !this.cleanString(zalo.accessTokenRef)) {
         warnings.push('Zalo enabled nhưng chưa có accessToken hoặc accessTokenRef.');
@@ -1957,10 +1990,14 @@ export class SettingsPolicyService {
     const integrations = this.ensureRecord(value);
     const bhtot = this.ensureRecord(integrations.bhtot);
     const ai = this.ensureRecord(integrations.ai);
+    const aiOcr = this.ensureRecord(integrations.aiOcr);
     const zalo = this.ensureRecord(integrations.zalo);
     const payments = this.ensureRecord(integrations.payments);
     const bhtotSecret = this.resolveSecretValue(bhtot.apiKey, bhtot.apiKeyRef, 'BHTOT_API_KEY');
     const aiSecret = this.resolveSecretValue(ai.apiKey, ai.apiKeyRef, 'AI_OPENAI_COMPAT_API_KEY');
+    const aiPool = this.toStringArray(ai.apiKeyPool);
+    const aiOcrSecret = this.resolveSecretValue('', aiOcr.apiKeyRef, 'AI_GEMINI_API_KEY')
+      || this.resolveSecretValue('', aiOcr.apiKeyRef, 'AI_OPENAI_COMPAT_API_KEY');
     const zaloToken = this.resolveSecretValue(zalo.accessToken, zalo.accessTokenRef, 'ZALO_OA_ACCESS_TOKEN');
     const zaloWebhookSecret = this.resolveSecretValue(zalo.webhookSecret, zalo.webhookSecretRef, 'ZALO_OA_WEBHOOK_SECRET');
     const paymentsSecret = this.resolveSecretValue('', payments.bankWebhookSecretRef, 'PAYMENTS_BANK_WEBHOOK_SECRET');
@@ -1974,8 +2011,13 @@ export class SettingsPolicyService {
       },
       ai: {
         ...ai,
-        isConfigured: Boolean(this.cleanString(ai.baseUrl) && (this.cleanString(ai.apiKey) || this.cleanString(ai.apiKeyRef))),
-        hasSecret: Boolean(aiSecret)
+        isConfigured: Boolean(this.cleanString(ai.baseUrl) && (this.cleanString(ai.apiKey) || this.cleanString(ai.apiKeyRef) || aiPool.length > 0)),
+        hasSecret: Boolean(aiSecret || aiPool.length > 0)
+      },
+      aiOcr: {
+        ...aiOcr,
+        isConfigured: Boolean(this.toBool(aiOcr.enabled, false) && this.toBool(aiOcr.ocrEnabled, false)),
+        hasSecret: Boolean(aiSecret || aiPool.length > 0 || aiOcrSecret)
       },
       zalo: {
         ...zalo,

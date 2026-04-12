@@ -15,6 +15,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
 - `SETTINGS_ENCRYPTION_MASTER_KEY` (bắt buộc nếu lưu key trực tiếp từ UI; AES-256-GCM master key, 32-byte base64 hoặc hex)
 - `AI_OPENAI_COMPAT_BASE_URL`
 - `AI_OPENAI_COMPAT_API_KEY` (fallback khi UI chưa nhập `integrations.ai.apiKey`)
+- `AI_GEMINI_API_KEY` (optional fallback cho OCR Gemini khi chưa nhập key pool/UI)
 - `AI_OPENAI_COMPAT_MODEL` (optional)
 - `AI_OPENAI_COMPAT_TIMEOUT_MS` (optional)
 - `ZALO_OA_WEBHOOK_SECRET` (fallback khi UI chưa nhập `integrations.zalo.webhookSecret`)
@@ -69,6 +70,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `JWT_SECRET`
   - `DATABASE_URL` (nếu không dùng mặc định)
   - `AI_OPENAI_COMPAT_API_KEY` (optional fallback)
+  - `AI_GEMINI_API_KEY` (optional fallback cho OCR Gemini)
   - `ZALO_OA_WEBHOOK_SECRET` (optional fallback)
   - `ZALO_OA_ACCESS_TOKEN` (optional fallback)
   - `BHTOT_API_KEY` (optional fallback)
@@ -88,6 +90,7 @@ MacBook -> GitHub -> VM self-hosted runner -> docker compose build/up -> `prisma
   - `AI_OPENAI_COMPAT_BASE_URL`
   - `AI_OPENAI_COMPAT_MODEL`
   - `AI_OPENAI_COMPAT_TIMEOUT_MS`
+  - `AI_GEMINI_API_KEY` (optional)
   - `ZALO_OA_OUTBOUND_URL`
   - `ZALO_OA_API_BASE_URL`
   - `ZALO_OA_OUTBOUND_TIMEOUT_MS`

@@ -69,6 +69,7 @@ npm run test --workspace @erp/api
 - `JWT_SECRET`
 - `DATABASE_URL` (nếu không dùng default nội bộ compose)
 - `AI_OPENAI_COMPAT_API_KEY` (optional fallback nếu chưa nhập key tại Settings Center)
+- `AI_GEMINI_API_KEY` (optional fallback cho OCR Gemini)
 - `ZALO_OA_WEBHOOK_SECRET` (optional fallback nếu chưa nhập key tại Settings Center)
 - `ZALO_OA_ACCESS_TOKEN` (optional fallback nếu bật OA outbound qua official API)
 - `BHTOT_API_KEY` (optional fallback nếu chưa nhập key tại Settings Center)

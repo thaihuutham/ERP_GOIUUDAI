@@ -74,12 +74,15 @@ describe('settings view model', () => {
     ]);
     expect(resolveDomainTabs('finance_controls').map((item) => item.key)).toEqual([
       'finance-period',
-      'finance-numbering'
+      'finance-numbering',
+      'finance-payment',
+      'finance-invoice'
     ]);
     expect(resolveDomainTabs('sales_crm_policies').map((item) => item.key)).toEqual([
       'sales-orders',
       'sales-checkout-core',
       'sales-credit',
+      'sales-draft',
       'sales-taxonomy',
       'sales-tags',
       'sales-renewal'
@@ -92,6 +95,8 @@ describe('settings view model', () => {
       'integration-bhtot',
       'integration-zalo',
       'integration-ai',
+      'integration-ai-ocr',
+      'integration-ai-routing',
       'integration-payments'
     ]);
     expect(resolveDomainTabs('notifications_templates').map((item) => item.key)).toEqual([

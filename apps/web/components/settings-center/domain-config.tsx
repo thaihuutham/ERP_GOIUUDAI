@@ -358,6 +358,7 @@ export const SECRET_REF_OPTIONS: FieldOption[] = [
   { value: '', label: 'Chưa cấu hình' },
   { value: 'BHTOT_API_KEY', label: 'BHTOT_API_KEY' },
   { value: 'AI_OPENAI_COMPAT_API_KEY', label: 'AI_OPENAI_COMPAT_API_KEY' },
+  { value: 'AI_GEMINI_API_KEY', label: 'AI_GEMINI_API_KEY' },
   { value: 'ZALO_OA_ACCESS_TOKEN', label: 'ZALO_OA_ACCESS_TOKEN' },
   { value: 'ZALO_OA_WEBHOOK_SECRET', label: 'ZALO_OA_WEBHOOK_SECRET' },
   { value: 'PAYMENTS_BANK_WEBHOOK_SECRET', label: 'PAYMENTS_BANK_WEBHOOK_SECRET' },
@@ -712,6 +713,17 @@ export const CHECKOUT_ACTIVATION_MODE_OPTIONS_V2: FieldOption[] = [
   { value: 'AUTO', label: 'Tự động kích hoạt khi thanh toán đủ' },
   { value: 'MANUAL', label: 'Chờ nhân viên kích hoạt thủ công' },
   { value: 'HYBRID', label: 'Tự động + cho phép ghi đè thủ công' }
+];
+
+export const AI_OCR_PROVIDER_KIND_OPTIONS: FieldOption[] = [
+  { value: 'gemini', label: 'Gemini (khuyến nghị)' },
+  { value: 'openai_compat', label: 'OpenAI-compatible' }
+];
+
+export const AI_KEY_ROTATION_MODE_OPTIONS: FieldOption[] = [
+  { value: 'fallback', label: 'Fallback khi lỗi' },
+  { value: 'round_robin', label: 'Round-robin mỗi request' },
+  { value: 'manual', label: 'Chọn thủ công' }
 ];
 
 export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
@@ -1472,8 +1484,8 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'int-ai-base-url', path: 'ai.baseUrl', label: 'AI base URL', type: 'text', isAdvanced: true },
           { id: 'int-ai-model', path: 'ai.model', label: 'Model mặc định', type: 'text', placeholder: 'gpt-4o-mini', isAdvanced: true },
           { id: 'int-ai-api-key', path: 'ai.apiKey', label: '🔑 AI API key (nhập trực tiếp)', type: 'secret', helper: 'Key dùng cho tất cả tính năng AI: OCR giấy chứng nhận, AI Routing, phân tích hội thoại. Hỗ trợ OpenAI-compatible key; có hiệu lực ngay sau khi lưu.', placeholder: 'sk-...' },
-          { id: 'int-ai-key-pool', path: 'ai.apiKeyPool', label: 'Bể API key (Key Pool)', type: 'keyPool', helper: 'Nhập nhiều key để xoay vòng tự động. Hệ thống sẽ dùng key tiếp theo khi key hiện tại bị lỗi quota.' },
-          { id: 'int-ai-key-rotation-mode', path: 'ai.keyRotationMode', label: 'Chế độ xoay key', type: 'select', options: [{ value: 'fallback', label: 'Fallback khi lỗi' }, { value: 'round_robin', label: 'Round-robin mỗi request' }, { value: 'manual', label: 'Chọn thủ công' }] },
+          { id: 'int-ai-key-pool', path: 'ai.apiKeyPool', label: 'Bể API key (Key Pool)', type: 'keyPool', helper: 'Nhập nhiều key (Gemini/OpenAI). Hệ thống OCR sẽ xoay vòng key khi key hiện tại lỗi quota hoặc unauthorized.' },
+          { id: 'int-ai-key-rotation-mode', path: 'ai.keyRotationMode', label: 'Chế độ xoay key', type: 'select', options: AI_KEY_ROTATION_MODE_OPTIONS },
           { id: 'int-ai-secret-ref', path: 'ai.apiKeyRef', label: 'SecretRef API key (dự phòng)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
           { id: 'int-ai-timeout', path: 'ai.timeoutMs', label: 'Timeout', type: 'number', unit: 'ms', min: 1000, max: 120000, isAdvanced: true }
         ]
@@ -1481,13 +1493,17 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
       {
         id: 'integration-ai-ocr',
         title: 'AI OCR (Giấy chứng nhận)',
-        description: 'Cấu hình nhà cung cấp AI để trích xuất thông tin từ giấy chứng nhận bảo hiểm. Chuyển từ module bán hàng về đây để quản lý tập trung.',
+        description: 'OCR giấy chứng nhận BH. Hỗ trợ đọc từ file upload hoặc certificateLink URL. Ưu tiên Gemini + key pool.',
         fields: [
           { id: 'int-ai-ocr-enabled', path: 'aiOcr.enabled', label: 'Bật tích hợp AI OCR', type: 'switch' },
-          { id: 'int-ai-ocr-provider', path: 'aiOcr.provider', label: 'URL nhà cung cấp', type: 'text', placeholder: 'https://api.openai.com/v1' },
-          { id: 'int-ai-ocr-key', path: 'aiOcr.apiKeyRef', label: 'SecretRef API key', type: 'select', options: SECRET_REF_OPTIONS },
+          { id: 'int-ai-ocr-provider-kind', path: 'aiOcr.providerKind', label: 'Loại nhà cung cấp OCR', type: 'select', options: AI_OCR_PROVIDER_KIND_OPTIONS },
+          { id: 'int-ai-ocr-direct-key', path: 'ai.apiKey', label: '🔑 API key OCR (nhập trực tiếp)', type: 'secret', helper: 'Nhập trực tiếp API key dùng cho OCR. Có hiệu lực ngay sau khi Lưu cấu hình.' },
+          { id: 'int-ai-ocr-key-pool', path: 'ai.apiKeyPool', label: 'Bể API key OCR (nhiều key)', type: 'keyPool', helper: 'Bạn có thể thêm nhiều key Gemini/OpenAI-compatible. OCR sẽ tự xoay key theo chế độ bên dưới.' },
+          { id: 'int-ai-ocr-key-rotation-mode', path: 'ai.keyRotationMode', label: 'Chế độ xoay key OCR', type: 'select', options: AI_KEY_ROTATION_MODE_OPTIONS },
+          { id: 'int-ai-ocr-provider', path: 'aiOcr.provider', label: 'Base URL OCR (tuỳ chọn)', type: 'text', placeholder: 'Gemini: https://generativelanguage.googleapis.com/v1beta', isAdvanced: true },
+          { id: 'int-ai-ocr-key', path: 'aiOcr.apiKeyRef', label: 'SecretRef API key (fallback)', type: 'select', options: SECRET_REF_OPTIONS, isAdvanced: true },
           { id: 'int-ai-ocr-switch', path: 'aiOcr.ocrEnabled', label: 'Bật OCR giấy chứng nhận', type: 'switch' },
-          { id: 'int-ai-ocr-model', path: 'aiOcr.ocrModel', label: 'Model OCR', type: 'text', placeholder: 'gpt-4o-mini' }
+          { id: 'int-ai-ocr-model', path: 'aiOcr.ocrModel', label: 'Model OCR', type: 'text', placeholder: 'gemini-3-flash-preview' }
         ]
       },
       {
@@ -1990,6 +2006,10 @@ export function getFieldValue(field: FieldConfig, data: Record<string, unknown>)
     return raw === true;
   }
 
+  if (field.type === 'keyPool') {
+    return toStringArray(raw);
+  }
+
   if (field.type === 'managedList') {
     return toManagedListItems(field, raw);
   }
@@ -2022,6 +2042,10 @@ export function getFieldValue(field: FieldConfig, data: Record<string, unknown>)
 export function setFieldValue(field: FieldConfig, data: Record<string, unknown>, input: unknown) {
   if (field.type === 'switch') {
     return setByPath(data, field.path, input === true);
+  }
+
+  if (field.type === 'keyPool') {
+    return setByPath(data, field.path, toStringArray(input));
   }
 
   if (field.type === 'tags') {
@@ -2060,6 +2084,10 @@ export function setFieldValue(field: FieldConfig, data: Record<string, unknown>,
 }
 
 export function normalizeForComparison(field: FieldConfig, value: unknown) {
+  if (field.type === 'keyPool') {
+    return toStringArray(value).sort();
+  }
+
   if (field.type === 'managedList') {
     return toManagedListItems(field, value).sort();
   }
@@ -2088,6 +2116,11 @@ export function normalizeForComparison(field: FieldConfig, value: unknown) {
 }
 
 export function formatFieldValue(field: FieldConfig, value: unknown) {
+  if (field.type === 'keyPool') {
+    const keys = toStringArray(value);
+    return keys.length > 0 ? `${keys.length} key` : 'Chưa nhập';
+  }
+
   if (field.type === 'secret') {
     const normalized = String(value ?? '').trim();
     return normalized ? '********' : 'Chưa nhập';

@@ -226,11 +226,30 @@ function parseTemplateFieldValue(key: string, value: string): string | number {
   return Number.isFinite(asNumber) ? asNumber : normalized;
 }
 
+function isDifferentServicePhoneEnabled(templateFields: Record<string, string>) {
+  return templateFields.differentServicePhone === 'true';
+}
+
+function shouldRenderServicePhoneField(fieldKey: string, templateFields: Record<string, string>) {
+  if (fieldKey !== 'servicePhone') {
+    return true;
+  }
+  return isDifferentServicePhoneEnabled(templateFields);
+}
+
 function areTemplateFieldMapsEqual(left: Record<string, string>, right: Record<string, string>) {
   const leftKeys = Object.keys(left);
   const rightKeys = Object.keys(right);
   if (leftKeys.length !== rightKeys.length) return false;
   return leftKeys.every((key) => (left[key] ?? '') === (right[key] ?? ''));
+}
+
+function getCatalogProductSearchValue(product: CatalogProduct) {
+  const byName = String(product.name ?? '').trim();
+  if (byName) return byName;
+  const bySku = String(product.sku ?? '').trim();
+  if (bySku) return bySku;
+  return product.id.slice(-8);
 }
 
 // ── C3: Sales Error Dashboard (for managers) ──────────────────────────
@@ -463,6 +482,13 @@ export function SalesOperationsBoard() {
     for (const fieldKey of matched?.requiredFields ?? []) {
       nextFields[fieldKey] = currentFields[fieldKey] ?? '';
     }
+    const hasDifferentServicePhoneField = Boolean(
+      matched?.requiredFields?.includes('differentServicePhone')
+      || matched?.fieldConfig?.differentServicePhone
+    );
+    if (hasDifferentServicePhoneField) {
+      nextFields.differentServicePhone = currentFields.differentServicePhone === 'true' ? 'true' : 'false';
+    }
     return {
       nextCode,
       nextFields
@@ -659,11 +685,34 @@ export function SalesOperationsBoard() {
         return {
           ...item,
           productId: product.id,
-          productName: product.name || '',
+          productName: getCatalogProductSearchValue(product),
           unitPrice: Number(product.price ?? 0)
         };
       })
     }));
+  };
+
+  const handleProductSearchInput = (index: number, rawValue: string) => {
+    const normalized = rawValue.trim().toLowerCase();
+    if (!normalized) {
+      handleUpdateItem(index, 'productName', '');
+      return;
+    }
+
+    const matched = catalogProducts.find((product) => {
+      const name = String(product.name ?? '').trim().toLowerCase();
+      const sku = String(product.sku ?? '').trim().toLowerCase();
+      const id = String(product.id ?? '').trim().toLowerCase();
+      const searchValue = getCatalogProductSearchValue(product).toLowerCase();
+      return normalized === name || normalized === sku || normalized === id || normalized === searchValue;
+    });
+
+    if (matched) {
+      handleSelectProduct(index, matched.id);
+      return;
+    }
+
+    handleUpdateItem(index, 'productName', rawValue);
   };
 
   const columns: ColumnDefinition<SalesOrder>[] = [
@@ -885,11 +934,25 @@ export function SalesOperationsBoard() {
     }
 
     const templatePayload: Record<string, unknown> = {};
+    const differentServicePhoneEnabled = isDifferentServicePhoneEnabled(createOrderForm.templateFields);
     for (const fieldKey of selectedTemplate.requiredFields) {
+      if (fieldKey === 'servicePhone' && !differentServicePhoneEnabled) {
+        continue;
+      }
       const rawValue = (createOrderForm.templateFields[fieldKey] ?? '').trim();
       if (!rawValue) {
         setErrorMessage(`Tạo checkout thất bại: thiếu field bắt buộc ${fieldKey}.`);
         return;
+      }
+      templatePayload[fieldKey] = parseTemplateFieldValue(fieldKey, rawValue);
+    }
+    for (const [fieldKey, rawInput] of Object.entries(createOrderForm.templateFields)) {
+      if (fieldKey === 'servicePhone' && !differentServicePhoneEnabled) {
+        continue;
+      }
+      const rawValue = String(rawInput ?? '').trim();
+      if (!rawValue) {
+        continue;
       }
       templatePayload[fieldKey] = parseTemplateFieldValue(fieldKey, rawValue);
     }
@@ -954,6 +1017,9 @@ export function SalesOperationsBoard() {
         ...prev.templateFields,
         [fieldKey]: value
       };
+      if (fieldKey === 'differentServicePhone' && value !== 'true') {
+        delete nextFields.servicePhone;
+      }
 
       // Auto-compute effectiveTo when termDays or startDate/requestedEffectiveDate changes
       const termDaysKeys = ['termDays'];
@@ -990,15 +1056,10 @@ export function SalesOperationsBoard() {
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const result = await fetch('/api/v1/sales/checkout/files/upload', {
+      const data = await apiRequest<{ fileId: string; fileName: string; url: string }>('/sales/checkout/files/upload', {
         method: 'POST',
-        body: formData
+        body: formData as unknown
       });
-      if (!result.ok) {
-        const err = await result.json().catch(() => ({}));
-        throw new Error((err as Record<string, string>).message || 'Upload thất bại');
-      }
-      const data = await result.json() as { fileId: string; fileName: string; url: string };
       handleTemplateFieldChange(fieldKey, data.fileId);
       setResultMessage(`Đã upload file: ${file.name}`);
     } catch (error) {
@@ -1009,40 +1070,124 @@ export function SalesOperationsBoard() {
   // C1: OCR extraction for insurance certificates
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [ocrResult, setOcrResult] = useState<{ success: boolean; fields: Record<string, string> } | null>(null);
+  const [ocrFeedback, setOcrFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const applyOcrResult = (data: { success: boolean; fields: Record<string, string>; rawText: string }) => {
+    setOcrResult(data);
+
+    if (data.success && data.fields) {
+      setCreateOrderForm((prev) => {
+        const updated = { ...prev.templateFields };
+        for (const [key, value] of Object.entries(data.fields)) {
+          if (value) updated[key] = String(value);
+        }
+        return { ...prev, templateFields: updated };
+      });
+      setErrorMessage(null);
+      setOcrFeedback({
+        type: 'success',
+        message: `🤖 AI đã trích xuất ${Object.keys(data.fields).length} trường từ giấy chứng nhận.`
+      });
+      setResultMessage('🤖 AI đã trích xuất thông tin từ giấy chứng nhận thành công!');
+      return;
+    }
+
+    setOcrFeedback({
+      type: 'error',
+      message: 'AI không thể đọc đủ dữ liệu từ chứng nhận. Vui lòng kiểm tra key/cấu hình OCR hoặc nhập thủ công.'
+    });
+    setErrorMessage('AI không thể đọc được thông tin từ chứng nhận. Vui lòng nhập thủ công.');
+  };
 
   const handleOcrExtract = async (file: File) => {
     if (!file) return;
     setIsOcrProcessing(true);
     setOcrResult(null);
+    setOcrFeedback(null);
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const result = await fetch('/api/v1/sales/checkout/files/ocr-extract', {
-        method: 'POST',
-        body: formData
-      });
-      if (!result.ok) {
-        const err = await result.json().catch(() => ({}));
-        throw new Error((err as Record<string, string>).message || 'OCR thất bại');
-      }
-      const data = await result.json() as { success: boolean; fields: Record<string, string>; rawText: string };
-      setOcrResult(data);
-
-      // Auto-fill template fields from OCR result
-      if (data.success && data.fields) {
-        setCreateOrderForm((prev) => {
-          const updated = { ...prev.templateFields };
-          for (const [key, value] of Object.entries(data.fields)) {
-            if (value) updated[key] = String(value);
-          }
-          return { ...prev, templateFields: updated };
-        });
-        setResultMessage('🤖 AI đã trích xuất thông tin từ giấy chứng nhận thành công!');
-      } else {
-        setErrorMessage('AI không thể đọc được thông tin từ file. Vui lòng nhập thủ công.');
-      }
+      const data = await apiRequest<{ success: boolean; fields: Record<string, string>; rawText: string }>(
+        '/sales/checkout/files/ocr-extract',
+        {
+          method: 'POST',
+          body: formData as unknown
+        }
+      );
+      applyOcrResult(data);
     } catch (error) {
+      setOcrFeedback({
+        type: 'error',
+        message: error instanceof Error ? `OCR file thất bại: ${error.message}` : 'Trích xuất OCR thất bại.'
+      });
       setErrorMessage(error instanceof Error ? `OCR: ${error.message}` : 'Trích xuất OCR thất bại.');
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  };
+
+  const handleOcrExtractFromUploadedFile = async (uploadedFileId: string) => {
+    const fileId = String(uploadedFileId ?? '').trim();
+    if (!fileId) {
+      setOcrFeedback({
+        type: 'error',
+        message: 'Vui lòng upload file GCN trước khi chạy OCR.'
+      });
+      setErrorMessage('Vui lòng upload file GCN trước khi chạy OCR.');
+      return;
+    }
+
+    setIsOcrProcessing(true);
+    setOcrResult(null);
+    setOcrFeedback(null);
+    try {
+      const data = await apiRequest<{ success: boolean; fields: Record<string, string>; rawText: string }>(
+        '/sales/checkout/files/ocr-extract',
+        {
+          method: 'POST',
+          body: { fileId }
+        }
+      );
+      applyOcrResult(data);
+    } catch (error) {
+      setOcrFeedback({
+        type: 'error',
+        message: error instanceof Error ? `OCR file đã upload thất bại: ${error.message}` : 'OCR file đã upload thất bại.'
+      });
+      setErrorMessage(error instanceof Error ? `OCR upload: ${error.message}` : 'OCR file đã upload thất bại.');
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  };
+
+  const handleOcrExtractFromLink = async (certificateLink: string) => {
+    const link = String(certificateLink ?? '').trim();
+    if (!link) {
+      setOcrFeedback({
+        type: 'error',
+        message: 'Vui lòng nhập certificateLink trước khi chạy OCR.'
+      });
+      setErrorMessage('Vui lòng nhập certificateLink trước khi chạy OCR.');
+      return;
+    }
+
+    setIsOcrProcessing(true);
+    setOcrResult(null);
+    setOcrFeedback(null);
+    try {
+      const data = await apiRequest<{ success: boolean; fields: Record<string, string>; rawText: string }>(
+        '/sales/checkout/files/ocr-extract',
+        {
+          method: 'POST',
+          body: { certificateLink: link }
+        }
+      );
+      applyOcrResult(data);
+    } catch (error) {
+      setOcrFeedback({
+        type: 'error',
+        message: error instanceof Error ? `OCR link thất bại: ${error.message}` : 'Trích xuất OCR từ link thất bại.'
+      });
+      setErrorMessage(error instanceof Error ? `OCR link: ${error.message}` : 'Trích xuất OCR từ link thất bại.');
     } finally {
       setIsOcrProcessing(false);
     }
@@ -1057,6 +1202,13 @@ export function SalesOperationsBoard() {
           return {
             ...item,
             [key]: Number(value)
+          };
+        }
+        if (key === 'productName') {
+          return {
+            ...item,
+            productName: value,
+            productId: ''
           };
         }
         return {
@@ -1536,6 +1688,9 @@ export function SalesOperationsBoard() {
               <strong style={{ fontSize: '0.95rem' }}>Field bắt buộc theo template</strong>
               {selectedTemplate.requiredFields.length === 0 ? <p className="muted" style={{ margin: 0 }}>Template không có field bắt buộc.</p> : null}
               {selectedTemplate.requiredFields.map((fieldKey) => {
+                if (!shouldRenderServicePhoneField(fieldKey, createOrderForm.templateFields)) {
+                  return null;
+                }
                 const fc = selectedTemplate.fieldConfig?.[fieldKey];
                 const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
                 const fieldType = fc?.type || detectTemplateFieldInputType(fieldKey);
@@ -1592,30 +1747,33 @@ export function SalesOperationsBoard() {
                       {/* C1: OCR button for insurance certificates */}
                       {createOrderForm.orderGroup === 'INSURANCE' && (
                         <div style={{ marginTop: '0.25rem' }}>
-                          <input
-                            type="file"
-                            id={`ocr-${fieldKey}`}
-                            accept=".png,.jpg,.jpeg"
-                            style={{ display: 'none' }}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              if (file) void handleOcrExtract(file);
-                            }}
-                          />
                           <button
                             type="button"
                             className="btn btn-ghost"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                            disabled={isOcrProcessing}
-                            onClick={() => document.getElementById(`ocr-${fieldKey}`)?.click()}
+                            disabled={isOcrProcessing || !(createOrderForm.templateFields[fieldKey] ?? '').trim()}
+                            onClick={() => void handleOcrExtractFromUploadedFile(createOrderForm.templateFields[fieldKey] ?? '')}
                           >
-                            {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ ảnh GCN'}
+                            {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ file GCN đã upload'}
                           </button>
-                          {ocrResult?.success && (
+                          {ocrFeedback ? (
+                            <small
+                              style={{
+                                display: 'block',
+                                color: ocrFeedback.type === 'success' ? 'var(--success)' : 'var(--danger)',
+                                fontSize: '0.7rem',
+                                marginTop: '0.1rem'
+                              }}
+                            >
+                              {ocrFeedback.type === 'success' ? '✅ ' : '⚠️ '}
+                              {ocrFeedback.message}
+                            </small>
+                          ) : null}
+                          {ocrResult?.success ? (
                             <small style={{ display: 'block', color: 'var(--success)', fontSize: '0.7rem', marginTop: '0.1rem' }}>
                               ✅ Đã trích xuất {Object.keys(ocrResult.fields).length} trường
                             </small>
-                          )}
+                          ) : null}
                         </div>
                       )}
                     </div>
@@ -1632,12 +1790,33 @@ export function SalesOperationsBoard() {
                       onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
                       placeholder={fieldKey}
                     />
+                    {createOrderForm.orderGroup === 'INSURANCE' && fieldKey === 'certificateLink' ? (
+                      <div style={{ marginTop: '0.25rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                          disabled={isOcrProcessing || !(createOrderForm.templateFields[fieldKey] ?? '').trim()}
+                          onClick={() => void handleOcrExtractFromLink(createOrderForm.templateFields[fieldKey] ?? '')}
+                        >
+                          {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ link GCN'}
+                        </button>
+                        {ocrResult?.success ? (
+                          <small style={{ display: 'block', color: 'var(--success)', fontSize: '0.7rem', marginTop: '0.1rem' }}>
+                            ✅ Đã trích xuất {Object.keys(ocrResult.fields).length} trường
+                          </small>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
 
               {/* Render optional non-required fields from fieldConfig */}
               {Object.entries(selectedTemplate.fieldConfig ?? {}).filter(([key]) => !selectedTemplate.requiredFields.includes(key)).map(([fieldKey, fc]) => {
+                if (!shouldRenderServicePhoneField(fieldKey, createOrderForm.templateFields)) {
+                  return null;
+                }
                 const fieldLabel = fc?.label || formatTemplateFieldLabel(fieldKey);
                 const fieldType = fc?.type || 'text';
 
@@ -1674,30 +1853,33 @@ export function SalesOperationsBoard() {
                       {/* C1: OCR extraction for insurance certificates (optional file fields) */}
                       {createOrderForm.orderGroup === 'INSURANCE' && (
                         <div style={{ marginTop: '0.25rem' }}>
-                          <input
-                            type="file"
-                            id={`ocr-opt-${fieldKey}`}
-                            accept=".png,.jpg,.jpeg"
-                            style={{ display: 'none' }}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              if (file) void handleOcrExtract(file);
-                            }}
-                          />
                           <button
                             type="button"
                             className="btn btn-ghost"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                            disabled={isOcrProcessing}
-                            onClick={() => document.getElementById(`ocr-opt-${fieldKey}`)?.click()}
+                            disabled={isOcrProcessing || !(createOrderForm.templateFields[fieldKey] ?? '').trim()}
+                            onClick={() => void handleOcrExtractFromUploadedFile(createOrderForm.templateFields[fieldKey] ?? '')}
                           >
-                            {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ ảnh GCN'}
+                            {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ file GCN đã upload'}
                           </button>
-                          {ocrResult?.success && (
+                          {ocrFeedback ? (
+                            <small
+                              style={{
+                                display: 'block',
+                                color: ocrFeedback.type === 'success' ? 'var(--success)' : 'var(--danger)',
+                                fontSize: '0.7rem',
+                                marginTop: '0.1rem'
+                              }}
+                            >
+                              {ocrFeedback.type === 'success' ? '✅ ' : '⚠️ '}
+                              {ocrFeedback.message}
+                            </small>
+                          ) : null}
+                          {ocrResult?.success ? (
                             <small style={{ display: 'block', color: 'var(--success)', fontSize: '0.7rem', marginTop: '0.1rem' }}>
                               ✅ Đã trích xuất {Object.keys(ocrResult.fields).length} trường
                             </small>
-                          )}
+                          ) : null}
                         </div>
                       )}
                     </div>
@@ -1713,6 +1895,24 @@ export function SalesOperationsBoard() {
                       onChange={(event) => handleTemplateFieldChange(fieldKey, event.target.value)}
                       placeholder={fieldKey}
                     />
+                    {createOrderForm.orderGroup === 'INSURANCE' && fieldKey === 'certificateLink' ? (
+                      <div style={{ marginTop: '0.25rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                          disabled={isOcrProcessing || !(createOrderForm.templateFields[fieldKey] ?? '').trim()}
+                          onClick={() => void handleOcrExtractFromLink(createOrderForm.templateFields[fieldKey] ?? '')}
+                        >
+                          {isOcrProcessing ? '⏳ AI đang đọc...' : '🤖 AI trích xuất từ link GCN'}
+                        </button>
+                        {ocrResult?.success ? (
+                          <small style={{ display: 'block', color: 'var(--success)', fontSize: '0.7rem', marginTop: '0.1rem' }}>
+                            ✅ Đã trích xuất {Object.keys(ocrResult.fields).length} trường
+                          </small>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -1821,29 +2021,47 @@ export function SalesOperationsBoard() {
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Dòng dịch vụ / sản phẩm</h4>
               <button type="button" className="btn btn-ghost" onClick={handleAddItem}><Plus size={14} /> Thêm dòng</button>
             </div>
+            {catalogProducts.length > 0 ? (
+              <datalist id="sales-catalog-product-options">
+                {catalogProducts.map((product) => {
+                  const displayValue = getCatalogProductSearchValue(product);
+                  const metaLabel = [
+                    String(product.sku ?? '').trim() || null,
+                    toCurrency(Number(product.price ?? 0))
+                  ].filter(Boolean).join(' — ');
+                  return (
+                    <option
+                      key={product.id}
+                      value={displayValue}
+                      label={metaLabel || displayValue}
+                    />
+                  );
+                })}
+              </datalist>
+            ) : null}
             {createOrderForm.items.map((item, index) => (
               <div key={`item-${index}`} style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
                 <div className="field">
                   <label>Sản phẩm / dịch vụ</label>
-                  {catalogProducts.length > 0 ? (
-                    <select
-                      value={item.productId}
-                      onChange={(event) => handleSelectProduct(index, event.target.value)}
-                    >
-                      <option value="">-- Chọn sản phẩm --</option>
-                      {catalogProducts.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name || product.sku || product.id.slice(-8)} — {toCurrency(Number(product.price ?? 0))}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={item.productName}
-                      onChange={(event) => handleUpdateItem(index, 'productName', event.target.value)}
-                      placeholder={isLoadingCatalog ? 'Đang tải danh mục...' : 'Nhập tên sản phẩm'}
-                    />
-                  )}
+                  <input
+                    value={item.productName}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      if (catalogProducts.length > 0) {
+                        handleProductSearchInput(index, nextValue);
+                        return;
+                      }
+                      handleUpdateItem(index, 'productName', nextValue);
+                    }}
+                    list={catalogProducts.length > 0 ? 'sales-catalog-product-options' : undefined}
+                    placeholder={
+                      isLoadingCatalog
+                        ? 'Đang tải danh mục...'
+                        : catalogProducts.length > 0
+                          ? 'Gõ tên hoặc SKU để tìm sản phẩm...'
+                          : 'Nhập tên sản phẩm'
+                    }
+                  />
                   {item.productName && <small className="muted">{item.productName}</small>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem' }}>

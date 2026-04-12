@@ -747,6 +747,120 @@ test('runs CRM -> Sales -> Finance core flow via Operations Boards', async ({ pa
   expect(state.allocations[orderInvoice!.id]?.length ?? 0).toBe(1);
 });
 
+test('shows service phone field only when "different service phone" is checked in Sales create order form', async ({ page }) => {
+  const state: MockState = {
+    customers: [],
+    savedCustomerFilters: [],
+    defaultCustomerFilterId: null,
+    orders: [],
+    invoices: [],
+    approvals: [],
+    allocations: {},
+    seq: {
+      customer: 1,
+      filter: 1,
+      order: 1,
+      invoice: 1,
+      item: 1,
+      allocation: 1
+    }
+  };
+
+  await mockCoreErpApis(page, state);
+  await page.route('**/api/v1/sales/checkout/config', async (route) => {
+    return json(route, {
+      checkoutTemplates: {
+        INSURANCE: [
+          { code: 'AUTO_INSURANCE_STD', label: 'Bảo hiểm ô tô', requiredFields: [], fieldConfig: {} },
+          { code: 'MOTO_INSURANCE_STD', label: 'Bảo hiểm xe máy', requiredFields: [], fieldConfig: {} }
+        ],
+        TELECOM: [
+          {
+            code: 'TELECOM_STD',
+            label: 'Mẫu viễn thông tiêu chuẩn',
+            requiredFields: ['billingCycle', 'effectiveFrom', 'servicePhone'],
+            fieldConfig: {
+              billingCycle: { type: 'select', options: ['30'], label: 'Chu kỳ gói cước' },
+              effectiveFrom: { type: 'date', label: 'Hiệu lực từ' },
+              differentServicePhone: { type: 'checkbox', label: 'SĐT dịch vụ khác SĐT liên lạc' },
+              servicePhone: { type: 'tel', label: 'SĐT dùng dịch vụ (lưu vào hồ sơ KH)' }
+            }
+          }
+        ],
+        DIGITAL: [
+          { code: 'DIGITAL_BASE', label: 'Digital Base', requiredFields: [], fieldConfig: {} }
+        ]
+      }
+    });
+  });
+
+  await page.goto('/modules/sales');
+  await page.getByRole('button', { name: 'Tạo đơn hàng' }).first().click();
+
+  const createPanel = page.locator('.side-panel-container').filter({ hasText: 'Tạo đơn bán hàng' });
+  await createPanel.locator('label:has-text("Nhóm sản phẩm") + select').selectOption('TELECOM');
+
+  const servicePhoneInput = createPanel.locator('label:has-text("SĐT dùng dịch vụ (lưu vào hồ sơ KH)") + input');
+  await expect(servicePhoneInput).toHaveCount(0);
+
+  await createPanel.locator('label:has-text("SĐT dịch vụ khác SĐT liên lạc")').click();
+  await expect(servicePhoneInput).toHaveCount(1);
+
+  await servicePhoneInput.fill('0987654321');
+  await createPanel.locator('label:has-text("SĐT dịch vụ khác SĐT liên lạc")').click();
+  await expect(servicePhoneInput).toHaveCount(0);
+
+  await createPanel.locator('label:has-text("SĐT dịch vụ khác SĐT liên lạc")').click();
+  await expect(servicePhoneInput).toHaveValue('');
+});
+
+test('allows searching catalog products by name or SKU when creating sales order', async ({ page }) => {
+  const state: MockState = {
+    customers: [],
+    savedCustomerFilters: [],
+    defaultCustomerFilterId: null,
+    orders: [],
+    invoices: [],
+    approvals: [],
+    allocations: {},
+    seq: {
+      customer: 1,
+      filter: 1,
+      order: 1,
+      invoice: 1,
+      item: 1,
+      allocation: 1
+    }
+  };
+
+  await mockCoreErpApis(page, state);
+  await page.route('**/api/v1/catalog/products**', async (route) => {
+    return json(route, {
+      items: [
+        { id: 'prod_1', name: 'Gói Fiber 150Mbps', sku: 'FIBER150', price: 320000 },
+        { id: 'prod_2', name: 'Gói Fiber 200Mbps', sku: 'FIBER200', price: 450000 }
+      ]
+    });
+  });
+
+  await page.goto('/modules/sales');
+  await page.getByRole('button', { name: 'Tạo đơn hàng' }).first().click();
+
+  const createPanel = page.locator('.side-panel-container').filter({ hasText: 'Tạo đơn bán hàng' });
+  const productInput = createPanel.locator('label:has-text("Sản phẩm / dịch vụ") + input').first();
+  const unitPriceInput = createPanel.locator('label:has-text("Đơn giá") + input').first();
+
+  await expect(productInput).toBeVisible();
+  await expect(page.locator('#sales-catalog-product-options option')).toHaveCount(2);
+
+  await productInput.fill('Gói Fiber 150Mbps');
+  await expect(unitPriceInput).toHaveValue('320000');
+  await expect(unitPriceInput).toHaveAttribute('readonly', '');
+
+  await productInput.fill('FIBER200');
+  await expect(unitPriceInput).toHaveValue('450000');
+});
+
 test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)', async ({ page }) => {
   const state: MockState = {
     customers: [

@@ -4,6 +4,7 @@ import { ArrowLeft, Car, Plus, Trash2 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { readStoredAuthSession } from '../lib/auth-session';
+import { formatBulkSummary, runBulkOperation, type BulkExecutionResult } from '../lib/bulk-actions';
 import {
   apiRequest,
   normalizeListPayload,
@@ -18,7 +19,7 @@ import { ExcelImportBlock } from './ui/excel-import-block';
 import { useUserRole } from './user-role-context';
 import { Badge, statusToBadge } from './ui/badge';
 import { SidePanel } from './ui/side-panel';
-import { ColumnDefinition, StandardDataTable } from './ui/standard-data-table';
+import { ColumnDefinition, StandardDataTable, type StandardTableBulkAction } from './ui/standard-data-table';
 import { CreateEntityDialog } from './ui/create-entity-dialog';
 
 type VehicleKindOption = 'ALL' | 'AUTO' | 'MOTO';
@@ -98,6 +99,7 @@ const AUTH_ENABLED = String(process.env.NEXT_PUBLIC_AUTH_ENABLED ?? 'true').trim
 const FETCH_LIMIT = 200;
 const VEHICLE_TABLE_PAGE_SIZE = 25;
 const VEHICLE_COLUMN_SETTINGS_STORAGE_KEY = 'erp-retail.crm.vehicles-table-settings.v1';
+const VEHICLE_IMPORT_CHUNK_SIZE = 150;
 
 function toDateTime(value: string | null | undefined) {
   if (!value) return '--';
@@ -249,6 +251,17 @@ async function parseVehicleImportXlsx(file: File): Promise<VehicleImportRow[]> {
   return rows.filter((row) => Object.values(row).some((value) => value !== undefined && String(value).trim() !== ''));
 }
 
+function splitVehicleImportRows(rows: VehicleImportRow[], chunkSize: number): VehicleImportRow[][] {
+  if (chunkSize <= 0) {
+    return [rows];
+  }
+  const chunks: VehicleImportRow[][] = [];
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    chunks.push(rows.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
 function resolveCurrentActorIdentity(role: string) {
   const roleUpper = String(role ?? '').trim().toUpperCase();
   const normalizedRole = roleUpper === 'ADMIN' ? 'ADMIN' : 'USER';
@@ -298,6 +311,7 @@ export function CrmVehiclesBoard() {
   const [archivingVehicleId, setArchivingVehicleId] = useState<string | null>(null);
   const [isImportingFile, setIsImportingFile] = useState(false);
   const [importSummary, setImportSummary] = useState<VehicleImportResponse | null>(null);
+  const [selectedVehicleIds, setSelectedVehicleIds] = useState<(string | number)[]>([]);
   const vehicleTableFingerprint = useMemo(
     () =>
       JSON.stringify({
@@ -598,6 +612,87 @@ export function CrmVehiclesBoard() {
     }
   };
 
+  const runVehicleBulkAction = async (
+    actionLabel: string,
+    selectedRows: VehicleRecord[],
+    execute: (vehicle: VehicleRecord) => Promise<void>
+  ): Promise<BulkExecutionResult> => {
+    if (selectedRows.length === 0) {
+      return {
+        total: 0,
+        successCount: 0,
+        failedCount: 0,
+        failedIds: [],
+        failures: []
+      };
+    }
+
+    const rowsById = new Map<string, VehicleRecord>();
+    selectedRows.forEach((row) => rowsById.set(String(row.id), row));
+    const ids = selectedRows.map((row) => String(row.id));
+
+    const result = await runBulkOperation({
+      ids,
+      continueOnError: true,
+      chunkSize: 10,
+      execute: async (vehicleId) => {
+        const row = rowsById.get(String(vehicleId));
+        if (!row) {
+          throw new Error(`Không tìm thấy xe ${vehicleId}.`);
+        }
+        if (!canArchiveVehicle(row)) {
+          throw new Error(`Bạn không có quyền lưu trữ xe ${row.plateNumber || row.id}.`);
+        }
+        if (String(row.status || '').toUpperCase() === 'ARCHIVED') {
+          throw new Error(`Xe ${row.plateNumber || row.id} đã ở trạng thái ARCHIVED.`);
+        }
+        await execute(row);
+      }
+    });
+
+    const normalized: BulkExecutionResult = {
+      ...result,
+      actionLabel,
+      message: formatBulkSummary(
+        {
+          ...result,
+          actionLabel
+        },
+        actionLabel
+      )
+    };
+
+    if (normalized.successCount > 0) {
+      await loadVehicles();
+    }
+
+    setResultMessage(normalized.message ?? null);
+    if (normalized.failedCount > 0) {
+      setErrorMessage(`Một số xe lỗi khi chạy "${actionLabel}".`);
+    } else {
+      setErrorMessage(null);
+    }
+
+    return normalized;
+  };
+
+  const bulkActions: StandardTableBulkAction<VehicleRecord>[] = canDelete
+    ? [
+        {
+          key: 'bulk-archive-vehicles',
+          label: 'Lưu trữ',
+          tone: 'danger',
+          confirmMessage: (rows) => `Lưu trữ ${rows.length} xe đã chọn?`,
+          execute: async (selectedRows) =>
+            runVehicleBulkAction('Lưu trữ xe', selectedRows, async (vehicle) => {
+              await apiRequest(`/crm/vehicles/${vehicle.id}`, {
+                method: 'DELETE'
+              });
+            })
+        }
+      ]
+    : [];
+
   const handleImportVehicleFile = async (file: File) => {
     if (!file) {
       return;
@@ -625,19 +720,43 @@ export function CrmVehiclesBoard() {
         throw new Error('File Excel không có dữ liệu hợp lệ để import.');
       }
 
-      const summary = await apiRequest<VehicleImportResponse>('/crm/vehicles/import', {
-        method: 'POST',
-        body: {
-          fileName: file.name,
-          rows
-        }
-      });
+      const chunks = splitVehicleImportRows(rows, VEHICLE_IMPORT_CHUNK_SIZE);
+      const aggregatedSummary: VehicleImportResponse = {
+        totalRows: rows.length,
+        importedCount: 0,
+        skippedCount: 0,
+        errors: []
+      };
+      let processedRows = 0;
 
-      setImportSummary(summary);
-      if (summary.skippedCount === 0) {
-        setResultMessage(`Đã import thành công ${summary.importedCount}/${summary.totalRows} dòng xe.`);
+      for (const chunk of chunks) {
+        const chunkSummary = await apiRequest<VehicleImportResponse>('/crm/vehicles/import', {
+          method: 'POST',
+          body: {
+            fileName: file.name,
+            rows: chunk
+          }
+        });
+
+        aggregatedSummary.importedCount += chunkSummary.importedCount;
+        aggregatedSummary.skippedCount += chunkSummary.skippedCount;
+        if (chunkSummary.errors.length > 0) {
+          aggregatedSummary.errors.push(
+            ...chunkSummary.errors.map((error) => ({
+              ...error,
+              rowIndex: error.rowIndex + processedRows
+            }))
+          );
+        }
+        processedRows += chunk.length;
+      }
+
+      aggregatedSummary.errors.sort((left, right) => left.rowIndex - right.rowIndex);
+      setImportSummary(aggregatedSummary);
+      if (aggregatedSummary.skippedCount === 0) {
+        setResultMessage(`Đã import thành công ${aggregatedSummary.importedCount}/${aggregatedSummary.totalRows} dòng xe.`);
       } else {
-        setResultMessage(`Đã import ${summary.importedCount}/${summary.totalRows} dòng xe, bỏ qua ${summary.skippedCount} dòng lỗi.`);
+        setResultMessage(`Đã import ${aggregatedSummary.importedCount}/${aggregatedSummary.totalRows} dòng xe, bỏ qua ${aggregatedSummary.skippedCount} dòng lỗi.`);
       }
       await loadVehicles();
     } catch (error) {
@@ -893,9 +1012,11 @@ export function CrmVehiclesBoard() {
           fileLabel="File import xe"
           onDownloadTemplate={handleDownloadVehicleTemplate}
           onFileSelected={handleImportVehicleFile}
+          autoImportOnSelect={false}
+          importButtonLabel="Import file"
           isLoading={isImportingFile}
           loadingText="Đang parse và import file xe..."
-          helperText="Cột hỗ trợ: ownerCustomerId hoặc ownerCustomerPhone, ownerFullName, ownerAddress, plateNumber, chassisNumber, engineNumber, vehicleKind, vehicleType, seatCount, loadKg, status."
+          helperText="Cột hỗ trợ: ownerCustomerId hoặc ownerCustomerPhone, ownerFullName, ownerAddress, plateNumber, chassisNumber, engineNumber, vehicleKind, vehicleType, seatCount, loadKg, status. File lớn sẽ được tách lô tự động để tránh lỗi kích thước request."
           summary={importSummary}
           formatError={(error) => `Dòng ${error.rowIndex}${error.plateNumber ? ` (${error.plateNumber})` : ''}: ${error.message}`}
         />
@@ -967,6 +1088,12 @@ export function CrmVehiclesBoard() {
           setTableSortDir(sortDir);
         }}
         onRowClick={(vehicle) => setSelectedVehicle(vehicle)}
+        enableRowSelection
+        selectedRowIds={selectedVehicleIds}
+        onSelectedRowIdsChange={setSelectedVehicleIds}
+        bulkActions={bulkActions}
+        showDefaultBulkUtilities
+        bulkModalTitle="Thao tác hàng loạt xe"
       />
 
       <SidePanel

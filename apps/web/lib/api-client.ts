@@ -57,6 +57,11 @@ function buildUrl(path: string, query?: ApiRequestOptions['query']) {
   return url.toString();
 }
 
+function hasHeaderCaseInsensitive(headers: Record<string, string>, key: string) {
+  const normalizedKey = key.toLowerCase();
+  return Object.keys(headers).some((headerKey) => headerKey.toLowerCase() === normalizedKey);
+}
+
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}) {
   const method = options.method ?? 'GET';
 
@@ -90,18 +95,31 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
       }, API_REQUEST_TIMEOUT_MS)
     : null;
 
+  const isFormDataBody =
+    typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const requestHeaders: Record<string, string> = {
+    ...tenantHeaders,
+    ...authHeaders,
+    ...devIdentityHeaders,
+    ...(options.headers ?? {})
+  };
+
+  if (!isFormDataBody) {
+    if (!hasHeaderCaseInsensitive(requestHeaders, 'Content-Type')) {
+      requestHeaders['Content-Type'] = 'application/json';
+    }
+  }
+
+  const requestBody = options.body !== undefined
+    ? (isFormDataBody ? (options.body as FormData) : JSON.stringify(options.body))
+    : undefined;
+
   let res: Response;
   try {
     res = await fetch(buildUrl(path, options.query), {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...tenantHeaders,
-        ...authHeaders,
-        ...devIdentityHeaders,
-        ...(options.headers ?? {})
-      },
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      headers: requestHeaders,
+      body: requestBody,
       cache: 'no-store',
       signal: options.signal ?? abortController?.signal
     });

@@ -1,9 +1,9 @@
 # CONTEXT SNAPSHOT
 
 ## Last Updated
-- Time: 2026-04-11 13:30 +07
+- Time: 2026-04-12 16:36 +07
 - By: Codex
-- Session Log: `.agent/sessions/2026-04-11_1330_codex.md`
+- Session Log: `.agent/sessions/2026-04-12_1636_codex.md`
 
 ## Persistent Rule (System Stability Gate)
 - Nguồn yêu cầu: user (2026-04-01), áp dụng mặc định cho mọi session tiếp theo.
@@ -23,6 +23,276 @@
      - `npm run build --workspace @erp/web`
      - chạy e2e mục tiêu cho màn hình bị ảnh hưởng.
   5. Nếu còn lỗi (Docker, DB, CSS/TS, test, e2e): phải xử lý xong hoặc báo blocker rõ ràng, không chốt mơ hồ.
+## Update 2026-04-12 16:36 (Sales OCR form: fix relative API path + FormData auth flow)
+- User report:
+  - màn tạo đơn bán hàng:
+    - chọn file xong, nút AI đọc file bị disable/không bấm được.
+    - OCR từ link báo thất bại dù đã cấu hình key trong Settings.
+- Root cause:
+  - frontend đang gọi upload/OCR bằng `fetch('/api/v1/...')` relative path trong `sales-operations-board`, không dùng API client chuẩn.
+  - vì upload không thành công nên field fileId không được set vào template => nút AI file bị disabled.
+  - với một số URL chứng nhận, `content-type` không chuẩn; OCR provider cần MIME chuẩn để parse.
+- Đã xử lý:
+  - `apps/web/components/sales-operations-board.tsx`:
+    - đổi các call upload/OCR sang `apiRequest(...)` (upload file, OCR file, OCR fileId, OCR certificateLink).
+  - `apps/web/lib/api-client.ts`:
+    - bổ sung hỗ trợ `FormData` body:
+      - không ép `JSON.stringify`,
+      - không gắn `Content-Type: application/json` cho multipart,
+      - vẫn giữ tenant/auth/dev identity headers.
+  - `apps/api/src/modules/sales/sales-ocr.service.ts`:
+    - thêm detect MIME theo byte signature (PDF/PNG/JPEG/WEBP) khi header/url không xác định.
+  - runtime:
+    - rebuild/restart `erp-api` + `erp-web` (`docker compose up -d --build api web`).
+- Verification:
+  - compile/lint:
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ⚠️ fail pre-existing vì include `.next/types/**/*.ts` thiếu file.
+  - runtime Playwright (`http://127.0.0.1:3000/modules/sales`) ✅:
+    - sau upload file, `AI trích xuất từ file GCN đã upload` enabled (`fileBtnDisabled=false`),
+    - sau nhập link, `AI trích xuất từ link GCN` enabled (`linkBtnDisabledAfterFill=false`),
+    - lỗi hiển thị chi tiết (`Không tải được file từ link (403).`), không còn generic `OCR từ link thất bại`.
+  - stability gate:
+    - `docker ps` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+- Notes:
+  - Không thay đổi business logic domain.
+  - Không cần ADR mới.
+## Update 2026-04-12 16:17 (CRM Vehicles bulk selection + bulk archive)
+- User report:
+  - tại `/modules/crm/vehicles` chưa có chức năng chọn hàng loạt để xóa/lưu trữ hàng loạt.
+- Root cause:
+  - vehicles table chưa bật `enableRowSelection` và chưa khai báo `bulkActions`.
+- Đã xử lý:
+  - `apps/web/components/crm-vehicles-board.tsx`:
+    - thêm state `selectedVehicleIds` cho row selection,
+    - bật checkbox chọn dòng trong `StandardDataTable`,
+    - thêm bulk action `Lưu trữ` gọi `DELETE /crm/vehicles/:id` theo từng xe qua `runBulkOperation`,
+    - giữ nguyên guard quyền: admin được xử lý toàn bộ; non-admin chỉ xử lý xe thuộc owner staff id của chính mình,
+    - trả lỗi rõ khi xe đã `ARCHIVED` hoặc không có quyền.
+  - rebuild runtime local:
+    - `docker compose up -d --build web`.
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - Playwright runtime check `/modules/crm/vehicles` ✅:
+    - hiển thị checkbox chọn dòng ở table header,
+    - hiển thị nút `Bulk Actions`.
+  - System Stability Gate ✅:
+    - `docker ps`
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN`
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api`
+    - `npm run lint --workspace @erp/api`
+    - `npm run build --workspace @erp/api`
+- Notes:
+  - Không thay đổi business logic/domain rule.
+  - Không phát sinh ADR mới.
+## Update 2026-04-12 16:10 (Fix missing SETTINGS_ENCRYPTION_MASTER_KEY for integrations.ai.apiKey)
+- User report:
+  - lỗi khi lưu AI key: `integrations.ai.apiKey: SETTINGS_ENCRYPTION_MASTER_KEY chưa được cấu hình.`
+- Root cause:
+  - env `SETTINGS_ENCRYPTION_MASTER_KEY` trong `erp-api` rỗng (`key_length=0`).
+- Đã xử lý:
+  - sinh master key hợp lệ 32-byte (hex 64 ký tự) cho local runtime.
+  - cập nhật key vào `.env` và `.deploy.local.env`.
+  - recreate service `erp-api` bằng `docker compose up -d api`.
+- Verification:
+  - `docker exec erp-api` xác nhận `key_length=64` ✅
+  - `GET /api/v1/health` ✅
+  - gọi `PUT /api/v1/settings/domains/integrations` (dryRun + `ai.apiKey`) không còn báo thiếu `SETTINGS_ENCRYPTION_MASTER_KEY` ✅
+- Notes:
+  - Không thay đổi business logic.
+  - Không cần ADR.
+## Update 2026-04-12 16:06 (CRM Vehicles import: manual import button + chunking để tránh request entity too large)
+- User report:
+  - màn `/modules/crm/vehicles` không có nút `Import` trong block import Excel.
+  - file lớn (~6730 dòng) bị lỗi `request entity too large`.
+- Root cause:
+  - `ExcelImportBlock` trước đó chỉ có mode auto-import khi chọn file, không có nút import tường minh.
+  - frontend gửi toàn bộ rows vào một lần `POST /crm/vehicles/import`, payload JSON vượt giới hạn body parser runtime.
+- Đã xử lý:
+  - `apps/web/components/ui/excel-import-block.tsx`:
+    - thêm mode manual với nút `Import` qua props:
+      - `autoImportOnSelect` (default `true` để giữ tương thích),
+      - `importButtonLabel`.
+  - `apps/web/components/crm-vehicles-board.tsx`:
+    - bật manual import (`autoImportOnSelect={false}` + nút `Import file`).
+    - tách file import thành nhiều lô trước khi gọi API (`VEHICLE_IMPORT_CHUNK_SIZE=150`).
+    - cộng dồn summary toàn cục và rebase `rowIndex` lỗi theo offset từng lô.
+  - runtime:
+    - rebuild/restart `erp-web` container để áp dụng patch.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - Playwright runtime check `/modules/crm/vehicles`:
+    - nút `Import file` hiển thị ✅
+    - upload file 730 dòng => chia thành 5 request import (`150,150,150,150,130`) ✅
+    - không có 413, không xuất hiện `request entity too large` ✅
+  - `npm run lint --workspace @erp/web` ❌
+    - fail do `.next/types/**/*.ts` đang include các file thiếu trong workspace (pre-existing env issue), không phải do code patch.
+- Notes:
+  - Không thay đổi business logic domain CRM.
+  - Không phát sinh ADR mới.
+## Update 2026-04-12 15:50 (CRM create customer: nút Lưu/Lưu & thêm mới không chạy do auth mismatch)
+- User report:
+  - tại `/modules/crm`, popup tạo khách hàng bấm `Lưu` hoặc `Lưu & thêm mới` không thấy hoạt động.
+- Root cause:
+  - local runtime bị lệch auth mode:
+    - `erp-web` đang build/chạy với `NEXT_PUBLIC_AUTH_ENABLED=false`, `NEXT_PUBLIC_DEV_AUTH_BYPASS_ENABLED=true`,
+    - `erp-api` lại chạy `AUTH_ENABLED=true`, `DEV_AUTH_BYPASS_ENABLED=false`.
+  - web gửi request theo mode dev-bypass nhưng API bắt Bearer token strict -> thao tác create fail.
+- Đã xử lý:
+  - recreate `erp-api` theo mode tương thích với web local:
+    - `AUTH_ENABLED=false`
+    - `DEV_AUTH_BYPASS_ENABLED=true`
+  - giữ nguyên web container mode dev-bypass hiện tại.
+- Verification:
+  - `docker exec erp-api` xác nhận env auth/bypass đồng bộ ✅
+  - `docker exec erp-web` xác nhận env auth/bypass ✅
+  - `curl http://127.0.0.1:3001/api/v1/health` ✅
+  - Playwright runtime check (luồng thật CRM):
+    - click `Lưu` -> `POST /crm/customers` trả `201` ✅
+    - click `Lưu & thêm mới` -> `POST /crm/customers` trả `201`, form vẫn mở ✅
+- Notes:
+  - Không thay đổi business logic hoặc schema.
+  - Không phát sinh ADR mới.
+## Update 2026-04-12 15:22 (OCR workflow fix: dùng file đã upload + ổn định Gemini output)
+- User report:
+  - bấm `AI trích xuất từ ảnh GCN` thì bật popup chọn file mới.
+  - bấm `AI trích xuất từ link GCN` không thấy kết quả.
+- Root cause:
+  - UI OCR ảnh đang gọi input file ẩn riêng (bắt chọn lại file), không dùng `fileId` đã upload.
+  - backend OCR endpoint chưa hỗ trợ OCR từ `fileId`.
+  - Gemini response có lúc trả JSON bị cắt cụt do budget, làm parser trả `success=false`.
+  - local settings runtime đang thiếu `ai.apiKey`/`ai.apiKeyPool`, nên OCR link fail.
+- Đã xử lý:
+  - `apps/web/components/sales-operations-board.tsx`
+    - đổi nút OCR ảnh thành OCR trực tiếp từ file đã upload (`fileId`) thay vì mở picker mới.
+    - thêm `handleOcrExtractFromUploadedFile(fileId)`.
+    - thêm feedback OCR inline ngay dưới nút (success/error) để user không bị “bấm mà không thấy gì”.
+  - `apps/api/src/modules/sales/sales-file-upload.controller.ts`
+    - endpoint `/sales/checkout/files/ocr-extract` nhận thêm body `fileId` (kèm `tenantId`/`orderId` optional),
+    - resolve file đã upload và OCR trực tiếp từ server.
+  - `apps/api/src/modules/sales/sales-ocr.service.ts`
+    - tăng `maxOutputTokens` lên `2048`,
+    - thêm `thinkingConfig.thinkingBudget = 0` cho Gemini để hạn chế cắt cụt JSON output.
+  - Vận hành local:
+    - rebuild/restart `erp-api` container để nhận patch OCR mới.
+    - nạp key Gemini vào `settings.integrations.v1` trong local DB để kiểm thử end-to-end.
+- Verification:
+  - quality gate:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+  - API OCR với link GCN user cung cấp:
+    - `POST /api/v1/sales/checkout/files/ocr-extract` + `certificateLink` ✅
+    - kết quả `success=true`, `fieldCount=28` (ví dụ `ownerFullName`, `plateNumber`, `auto.soGCN`, `effectiveFrom`, `effectiveTo`).
+  - API OCR với file PDF user cung cấp:
+    - upload `/Users/mrtao/Desktop/81A43259.pdf` → nhận `fileId`,
+    - `POST /api/v1/sales/checkout/files/ocr-extract` + `fileId` ✅
+    - kết quả `success=true`, `fieldCount=28`.
+- Notes:
+  - Không đổi business logic ERP; chỉ sửa workflow OCR + UX feedback.
+  - Không phát sinh ADR mới.
+## Update 2026-04-12 15:01 (UI fix: hiển thị nhập API key ngay trong tab AI OCR)
+- User report:
+  - không thấy phần nhập API key ở tab `AI OCR` trong Cấu hình hệ thống.
+- Root cause:
+  - field nhập key/key pool chỉ đặt ở tab `AI Connector`; tab `AI OCR` chỉ có `SecretRef API key`.
+- Đã xử lý:
+  - `apps/web/components/settings-center/domain-config.tsx`
+    - thêm các field trực tiếp trong section `integration-ai-ocr`:
+      - `ai.apiKey` (secret nhập trực tiếp),
+      - `ai.apiKeyPool` (keyPool nhiều key),
+      - `ai.keyRotationMode` (chế độ xoay key).
+    - tách hằng `AI_KEY_ROTATION_MODE_OPTIONS` dùng chung cho `AI Connector` và `AI OCR`.
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run test:unit --workspace @erp/web` ✅ (`2 files`, `13 tests`)
+- Notes:
+  - Không đổi business logic ERP; chỉ cải thiện UX cấu hình để người dùng nhập key đúng chỗ.
+## Update 2026-04-12 14:50 (OCR từ certificateLink + Gemini multi-key rotation)
+- User confirmation:
+  - yêu cầu OCR từ `certificateLink` (URL) và trích xuất bằng AI tương tự `hotro_baohiem`:
+    - cho phép nhiều API key trong UI,
+    - dùng Gemini để extract,
+    - hỗ trợ xoay vòng key.
+- Đã xử lý:
+  - Backend OCR:
+    - `apps/api/src/modules/sales/sales-ocr.service.ts`
+      - thêm luồng OCR từ URL: `extractCertificateDataFromUrl(certificateLink)`.
+      - hỗ trợ provider `gemini` (mặc định) và `openai_compat` (legacy fallback).
+      - thêm vòng xoay key từ pool `integrations.ai.apiKeyPool` + fallback secret/env (`AI_GEMINI_API_KEY`, `AI_OPENAI_COMPAT_API_KEY`).
+      - hỗ trợ mode xoay key: `fallback`, `round_robin`, `manual`.
+      - mở rộng mapping JSON OCR cho cả bộ field bảo hiểm cũ và field template checkout.
+  - API OCR endpoint:
+    - `apps/api/src/modules/sales/sales-file-upload.controller.ts`
+      - endpoint `/sales/checkout/files/ocr-extract` nhận cả upload file hoặc JSON body `{ certificateLink }`.
+  - Settings policy/backend:
+    - `apps/api/src/modules/settings/settings-policy.service.ts`
+    - `apps/api/src/modules/settings/settings-policy.types.ts`
+      - chuẩn hóa/validate `ai.apiKeyPool`, `ai.keyRotationMode`, `ai.activeKeyIndex`,
+      - thêm `aiOcr.providerKind`,
+      - mở allowlist secret `AI_GEMINI_API_KEY`.
+  - Settings UI:
+    - `apps/web/components/settings-center/domain-config.tsx`
+      - thêm chọn provider OCR (`gemini`/`openai_compat`),
+      - thêm hỗ trợ nhập nhiều key (`keyPool`),
+      - thêm lựa chọn secret ref `AI_GEMINI_API_KEY`.
+  - Sales UI:
+    - `apps/web/components/sales-operations-board.tsx`
+      - thêm nút AI OCR từ link GCN (`certificateLink`) và apply dữ liệu OCR vào form.
+      - gửi toàn bộ field template không rỗng khi submit (không chỉ required fields).
+  - Docs:
+    - `docs/deployment/VM_AUTODEPLOY.md`
+    - `docs/operations/RUNBOOK.md`
+      - bổ sung ghi chú biến môi trường `AI_GEMINI_API_KEY`.
+  - Test expectation fix:
+    - `apps/web/components/settings-center/__tests__/view-model.test.ts`
+      - cập nhật expected tab theo config hiện tại.
+- Verification (System Stability Gate):
+  - infra/db:
+    - `docker ps` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - API:
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+    - `npm run test --workspace @erp/api` ✅ (`58 files`, `290 tests`)
+  - Web:
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run test:unit --workspace @erp/web` ✅ (`2 files`, `13 tests`)
+  - e2e mục tiêu:
+    - `npm run test:e2e:web -- --grep "(allows searching catalog products by name or SKU when creating sales order|shows service phone field only when \"different service phone\" is checked in Sales create order form)"` ✅ (`2 passed`)
+- Notes:
+  - Không thay đổi business logic ERP.
+  - Không có quyết định kiến trúc mới ở mức cần ADR.
+## Update 2026-04-12 14:11 (Sales create-order product/service search input)
+- User confirmation:
+  - yêu cầu ở màn tạo đơn `modules/sales`: cho phép sale nhập để tìm sản phẩm/dịch vụ (không chỉ dropdown) khi danh sách dài.
+- Đã xử lý:
+  - `apps/web/components/sales-operations-board.tsx`:
+    - thay product dropdown bằng `input + datalist` (gõ tên/SKU để tìm).
+    - thêm `getCatalogProductSearchValue(...)` để chuẩn hóa text tìm kiếm.
+    - thêm `handleProductSearchInput(...)` để:
+      - map product chính xác theo tên/SKU/id khi khớp,
+      - auto-fill đơn giá từ catalog,
+      - fallback nhập tay khi không khớp.
+    - khi sửa `productName` thủ công thì xóa `productId` để tránh trạng thái chọn sản phẩm cũ.
+  - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`:
+    - thêm test e2e `allows searching catalog products by name or SKU when creating sales order`.
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run test:e2e:web -- --grep "shows service phone field only when \"different service phone\" is checked in Sales create order form"` ✅
+  - `npm run test:e2e:web -- --grep "allows searching catalog products by name or SKU when creating sales order"` ✅
+  - `npm run test:e2e:web -- --grep "runs CRM -> Sales -> Finance core flow via Operations Boards"` ❌ (test đang dùng selector cũ `Customer name *`; không phản ánh regression từ patch này).
+- Notes:
+  - Không có thay đổi kiến trúc mới; không cần ADR.
 ## Update 2026-04-11 13:30 (fix loop lỗi `Token không hợp lệ hoặc đã hết hạn`)
 - User confirmation:
   - user báo lỗi lặp token invalid/expired khi vào app.

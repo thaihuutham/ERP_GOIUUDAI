@@ -22,6 +22,7 @@ export const SETTINGS_DOMAIN_SET = new Set<SettingsDomain>(SETTINGS_DOMAINS);
 export const SETTINGS_SECRET_ALLOWLIST = [
   'BHTOT_API_KEY',
   'AI_OPENAI_COMPAT_API_KEY',
+  'AI_GEMINI_API_KEY',
   'ZALO_OA_ACCESS_TOKEN',
   'ZALO_OA_WEBHOOK_SECRET',
   'PAYMENTS_BANK_WEBHOOK_SECRET',
@@ -665,10 +666,11 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     },
     aiOcr: {
       enabled: false,
-      provider: '',
-      apiKeyRef: 'AI_OPENAI_COMPAT_API_KEY',
+      providerKind: 'gemini',
+      provider: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKeyRef: 'AI_GEMINI_API_KEY',
       ocrEnabled: false,
-      ocrModel: ''
+      ocrModel: 'gemini-3-flash-preview'
     },
     payments: {
       enabled: true,

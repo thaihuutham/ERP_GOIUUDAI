@@ -1,6 +1,8 @@
-import { createReadStream, existsSync } from 'fs';
+import { createReadStream, existsSync, readFileSync } from 'fs';
 import { extname } from 'path';
 import {
+  Body,
+  BadRequestException,
   Controller,
   Get,
   Param,
@@ -57,8 +59,36 @@ export class SalesFileUploadController {
       }
     })
   )
-  async ocrExtract(@UploadedFile() file: Express.Multer.File) {
-    return this.ocrService.extractCertificateData(file.buffer, file.mimetype);
+  async ocrExtract(
+    @UploadedFile() file?: Express.Multer.File,
+    @Body('certificateLink') certificateLink?: string,
+    @Body('fileId') fileId?: string,
+    @Body('tenantId') tenantId?: string,
+    @Body('orderId') orderId?: string
+  ) {
+    if (file?.buffer && file.mimetype) {
+      return this.ocrService.extractCertificateData(file.buffer, file.mimetype);
+    }
+
+    const uploadedFileId = String(fileId ?? '').trim();
+    if (uploadedFileId) {
+      const resolvedTenant = String(tenantId ?? '').trim() || 'default';
+      const filePath = this.uploadService.resolveFilePath(uploadedFileId, resolvedTenant, orderId || undefined);
+      if (!existsSync(filePath)) {
+        throw new BadRequestException(`Không tìm thấy file upload: ${uploadedFileId}`);
+      }
+      const ext = extname(filePath).toLowerCase();
+      const mimeType = MIME_MAP[ext] || 'application/octet-stream';
+      const buffer = readFileSync(filePath);
+      return this.ocrService.extractCertificateData(buffer, mimeType);
+    }
+
+    const link = String(certificateLink ?? '').trim();
+    if (link) {
+      return this.ocrService.extractCertificateDataFromUrl(link);
+    }
+
+    throw new BadRequestException('Vui lòng upload file, truyền fileId hoặc certificateLink.');
   }
 
   @Get(':fileId')

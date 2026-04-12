@@ -1,4 +1,4 @@
-import { ChangeEvent, CSSProperties } from 'react';
+import { ChangeEvent, CSSProperties, useRef, useState } from 'react';
 
 type ExcelImportErrorBase = {
   rowIndex: number;
@@ -26,6 +26,8 @@ type ExcelImportBlockProps<TError extends ExcelImportErrorBase = ExcelImportErro
   loadingText?: string;
   accept?: string;
   templateButtonLabel?: string;
+  importButtonLabel?: string;
+  autoImportOnSelect?: boolean;
   maxErrorsToShow?: number;
   formatError?: (error: TError) => string;
   cardStyle?: CSSProperties;
@@ -45,17 +47,38 @@ export function ExcelImportBlock<TError extends ExcelImportErrorBase = ExcelImpo
   loadingText = 'Đang parse và import file...',
   accept = '.xlsx,.xls',
   templateButtonLabel = 'Tải file mẫu',
+  importButtonLabel = 'Import',
+  autoImportOnSelect = true,
   maxErrorsToShow = 12,
   formatError,
   cardStyle
 }: ExcelImportBlockProps<TError>) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    event.target.value = '';
     if (!file) {
       return;
     }
-    await onFileSelected(file);
+    if (autoImportOnSelect) {
+      event.target.value = '';
+      setSelectedFile(null);
+      await onFileSelected(file);
+      return;
+    }
+    setSelectedFile(file);
+  };
+
+  const handleImportSelectedFile = async () => {
+    if (!selectedFile) {
+      return;
+    }
+    await onFileSelected(selectedFile);
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -75,7 +98,25 @@ export function ExcelImportBlock<TError extends ExcelImportErrorBase = ExcelImpo
               {templateButtonLabel}
             </button>
           </div>
-          <input type="file" accept={accept} onChange={(event) => void handleFileChange(event)} disabled={isLoading} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={accept}
+            onChange={(event) => void handleFileChange(event)}
+            disabled={isLoading}
+          />
+          {!autoImportOnSelect ? (
+            <div className="action-buttons" style={{ marginTop: '0.55rem' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void handleImportSelectedFile()}
+                disabled={isLoading || !selectedFile}
+              >
+                {isLoading ? loadingText : importButtonLabel}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : deniedMessage ? (
         <p style={{ color: 'var(--muted)' }}>{deniedMessage}</p>
