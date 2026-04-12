@@ -19,7 +19,8 @@ export const ERP_MODULES = [
   'assistant',
   'audit',
   'settings',
-  'notifications'
+  'notifications',
+  'elearning'
 ] as const;
 
 export type ErpModule = (typeof ERP_MODULES)[number];

@@ -1008,7 +1008,6 @@ export function CrmVehiclesBoard() {
         <ExcelImportBlock<VehicleImportError>
           cardStyle={{ marginBottom: '1rem' }}
           title="Import xe bằng Excel (.xlsx)"
-          description="Chỉ admin được import. Hệ thống xử lý từng dòng và trả chi tiết dòng lỗi để sửa file."
           fileLabel="File import xe"
           onDownloadTemplate={handleDownloadVehicleTemplate}
           onFileSelected={handleImportVehicleFile}
@@ -1016,7 +1015,6 @@ export function CrmVehiclesBoard() {
           importButtonLabel="Import file"
           isLoading={isImportingFile}
           loadingText="Đang parse và import file xe..."
-          helperText="Cột hỗ trợ: ownerCustomerId hoặc ownerCustomerPhone, ownerFullName, ownerAddress, plateNumber, chassisNumber, engineNumber, vehicleKind, vehicleType, seatCount, loadKg, status. File lớn sẽ được tách lô tự động để tránh lỗi kích thước request."
           summary={importSummary}
           formatError={(error) => `Dòng ${error.rowIndex}${error.plateNumber ? ` (${error.plateNumber})` : ''}: ${error.message}`}
         />

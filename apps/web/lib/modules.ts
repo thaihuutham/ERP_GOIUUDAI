@@ -21,7 +21,8 @@ export const moduleCards: ModuleCard[] = [
   { key: 'assistant', title: 'Trợ lý AI', description: 'AI hỗ trợ truy vấn theo phân quyền.', minRole: 'USER' },
   { key: 'audit', title: 'Nhật ký hệ thống', description: 'Lưu vết thao tác toàn hệ thống.', minRole: 'USER' },
   { key: 'settings', title: 'Cấu hình hệ thống', description: 'Thiết lập chính sách vận hành.', minRole: 'ADMIN' },
-  { key: 'notifications', title: 'Thông báo', description: 'Thông báo nội bộ tập trung.', minRole: 'USER' }
+  { key: 'notifications', title: 'Thông báo', description: 'Thông báo nội bộ tập trung.', minRole: 'USER' },
+  { key: 'elearning', title: 'Học trực tuyến', description: 'Khóa học, bài thi, chứng nhận nội bộ.', minRole: 'USER' }
 ];
 
 export function getVisibleModuleCards(role: UserRole) {

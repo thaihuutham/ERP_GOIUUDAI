@@ -100,7 +100,10 @@ export const SIDEBAR_GROUPS: SidebarGroupConfig[] = [
     key: 'hr',
     title: 'NHÂN SỰ',
     accentToken: '--accent-hr',
-    items: [{ type: 'module', key: 'hr', moduleKey: 'hr' }],
+    items: [
+      { type: 'module', key: 'hr', moduleKey: 'hr' },
+      { type: 'module', key: 'elearning', moduleKey: 'elearning' }
+    ],
   },
   {
     key: 'finance',

@@ -38,6 +38,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
 import { IamModule } from './modules/iam/iam.module';
+import { ElearningModule } from './modules/elearning/elearning.module';
 
 @Module({
   imports: [
@@ -92,7 +93,8 @@ import { IamModule } from './modules/iam/iam.module';
     NotificationsModule,
     ConversationsModule,
     ZaloModule,
-    ConversationQualityModule
+    ConversationQualityModule,
+    ElearningModule
   ],
   providers: [
     PrismaCrudService,

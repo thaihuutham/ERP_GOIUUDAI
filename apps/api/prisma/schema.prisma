@@ -3432,3 +3432,291 @@ model ConversationViolation {
   @@index([tenant_Id])
   @@index([tenant_Id, evaluationId])
 }
+
+// ─── E-Learning Module ───────────────────────────────────────────────
+
+enum ElearningContentType {
+  VIDEO
+  DOCUMENT
+  INFOGRAPHIC
+  SLIDE
+  EXTERNAL_LINK
+  QUIZ
+}
+
+enum ElearningQuestionTag {
+  SALES
+  HR
+  FINANCE
+  SCM
+  GENERAL
+  COMPLIANCE
+  ONBOARDING
+}
+
+enum ElearningEnrollmentStatus {
+  ENROLLED
+  IN_PROGRESS
+  COMPLETED
+  DROPPED
+}
+
+model ElearningCourse {
+  id              String        @id @default(cuid())
+  tenant_Id       String
+  title           String
+  slug            String?
+  description     String?
+  coverImageUrl   String?
+  tags            String[]      @default([])
+  enrollPolicy    String        @default("INVITE")
+  status          GenericStatus @default(DRAFT)
+  publishedAt     DateTime?
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  sections     ElearningSection[]
+  lessons      ElearningLesson[]
+  enrollments  ElearningEnrollment[]
+  exams        ElearningExam[]
+  certificates ElearningCertificate[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+}
+
+model ElearningSection {
+  id        String   @id @default(cuid())
+  tenant_Id String
+  courseId   String
+  title     String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course  ElearningCourse   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons ElearningLesson[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, courseId, sortOrder])
+}
+
+model ElearningLesson {
+  id              String               @id @default(cuid())
+  tenant_Id       String
+  courseId         String
+  sectionId       String?
+  title           String
+  contentType     ElearningContentType
+  contentUrl      String?
+  contentFileId   String?
+  contentHtml     String?
+  description     String?
+  sortOrder       Int                  @default(0)
+  durationMinutes Int?
+  allowPreview    Boolean              @default(false)
+  status          GenericStatus        @default(DRAFT)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  course          ElearningCourse          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  section         ElearningSection?        @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  progress        ElearningLessonProgress[]
+  comments        ElearningComment[]
+  lessonQuestions ElearningLessonQuestion[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, courseId, sortOrder])
+  @@index([tenant_Id, sectionId])
+}
+
+model ElearningQuestion {
+  id           String                @id @default(cuid())
+  tenant_Id    String
+  questionText String
+  explanation  String?
+  tags         ElearningQuestionTag[] @default([GENERAL])
+  positionId   String?
+  departmentId String?
+  points       Int                   @default(1)
+  status       GenericStatus         @default(ACTIVE)
+  createdBy    String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  options         ElearningQuestionOption[]
+  lessonQuestions ElearningLessonQuestion[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, status])
+  @@index([tenant_Id, positionId])
+  @@index([tenant_Id, departmentId])
+}
+
+model ElearningQuestionOption {
+  id         String   @id @default(cuid())
+  tenant_Id  String
+  questionId String
+  optionText String
+  isCorrect  Boolean  @default(false)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  question ElearningQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, questionId])
+}
+
+model ElearningLessonQuestion {
+  id         String   @id @default(cuid())
+  tenant_Id  String
+  lessonId   String
+  questionId String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  lesson   ElearningLesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  question ElearningQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, lessonId, questionId])
+  @@index([tenant_Id])
+}
+
+model ElearningExam {
+  id                 String        @id @default(cuid())
+  tenant_Id          String
+  courseId            String
+  title              String
+  description        String?
+  questionCount      Int           @default(10)
+  passingScore       Float         @default(70)
+  randomizeQuestions Boolean       @default(true)
+  status             GenericStatus @default(DRAFT)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  course   ElearningCourse       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  attempts ElearningExamAttempt[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, courseId])
+}
+
+model ElearningExamAttempt {
+  id          String    @id @default(cuid())
+  tenant_Id   String
+  examId      String
+  employeeId  String
+  answersJson Json?
+  score       Float?
+  passed      Boolean   @default(false)
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  exam         ElearningExam        @relation(fields: [examId], references: [id], onDelete: Cascade)
+  certificates ElearningCertificate[]
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, examId, employeeId])
+}
+
+model ElearningEnrollment {
+  id               String                   @id @default(cuid())
+  tenant_Id        String
+  courseId          String
+  employeeId       String
+  enrollmentStatus ElearningEnrollmentStatus @default(ENROLLED)
+  progressPercent  Float                    @default(0)
+  enrolledAt       DateTime                 @default(now())
+  completedAt      DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  course   ElearningCourse          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  progress ElearningLessonProgress[]
+
+  @@unique([tenant_Id, courseId, employeeId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, courseId])
+  @@index([tenant_Id, employeeId])
+}
+
+model ElearningLessonProgress {
+  id              String    @id @default(cuid())
+  tenant_Id       String
+  enrollmentId    String
+  lessonId        String
+  completed       Boolean   @default(false)
+  completedAt     DateTime?
+  quizScore       Float?
+  quizAnswersJson Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  enrollment ElearningEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lesson     ElearningLesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([tenant_Id, enrollmentId, lessonId])
+  @@index([tenant_Id])
+  @@index([tenant_Id, enrollmentId])
+}
+
+model ElearningCertificate {
+  id              String   @id @default(cuid())
+  tenant_Id       String
+  courseId         String
+  employeeId      String
+  examAttemptId   String?
+  certificateCode String?
+  score           Float?
+  issuedAt        DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  course      ElearningCourse       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  examAttempt ElearningExamAttempt?  @relation(fields: [examAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, courseId])
+  @@index([tenant_Id, employeeId])
+}
+
+model ElearningComment {
+  id         String   @id @default(cuid())
+  tenant_Id  String
+  lessonId   String
+  employeeId String
+  parentId   String?
+  content    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  lesson ElearningLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([tenant_Id])
+  @@index([tenant_Id, lessonId, createdAt])
+}
+
+model DailyQuizSession {
+  id            String    @id @default(cuid())
+  tenant_Id     String
+  employeeId    String
+  quizDate      DateTime  @db.Date
+  questionsJson Json
+  score         Float?
+  completed     Boolean   @default(false)
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenant_Id, employeeId, quizDate])
+  @@index([tenant_Id])
+  @@index([tenant_Id, employeeId, quizDate])
+  @@index([tenant_Id, employeeId, completed])
+}
+

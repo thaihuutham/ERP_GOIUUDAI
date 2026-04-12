@@ -265,9 +265,6 @@ export function CrmCustomersImportBoard() {
           {summaryTag ? (
             <p style={{ marginTop: '0.5rem', marginBottom: 0, color: 'var(--muted)' }}>{summaryTag}</p>
           ) : null}
-          <p style={{ marginTop: '0.5rem', marginBottom: 0, color: 'var(--muted)' }}>
-            Cột hỗ trợ: code, fullName, phone, email, customerStage, source, segment, tags, ownerStaffId, consentStatus, needsSummary, totalSpent, totalOrders, lastOrderAt, lastContactAt, status, zaloNickType.
-          </p>
         </div>
 
         <div className="action-buttons">

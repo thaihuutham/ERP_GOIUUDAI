@@ -2,9 +2,53 @@
 
 ## Trạng thái tổng quan
 - Phase: Sales Workflow Optimization — Phase A+B Complete (11/13 GAPs done)
-- Last updated: 2026-04-12 16:36 +07
+- Last updated: 2026-04-12 17:08 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+## Session Update 2026-04-12 17:08 +07 (Settings VietQR: thêm VIETBANK + icon i hướng dẫn mẫu chuyển khoản)
+- User request:
+  - thiếu ngân hàng `VIETBANK` trong trường `Ngân hàng nhận thanh toán (VietQR)`.
+  - thêm hướng dẫn các placeholder thường dùng cho `Mẫu nội dung chuyển khoản` qua icon `i` mở popup.
+- Đã xử lý:
+  - `apps/web/components/settings-center/domain-config.tsx`:
+    - thêm option `VIETBANK` vào `VIETQR_BANK_OPTIONS`.
+    - cập nhật helper của field `finance-vietqr-template` để nhắc hỗ trợ `{orderNo}`, `{orderId}` và hướng dẫn qua icon `i`.
+  - `apps/web/components/settings/settings-field-renderer.tsx`:
+    - thêm icon `i` cạnh label field `Mẫu nội dung chuyển khoản` (id `finance-vietqr-template`).
+    - click icon mở `Modal` hướng dẫn:
+      - placeholder đang hỗ trợ: `{orderNo}`, `{orderId}`,
+      - mẫu gợi ý để tăng tính duy nhất nội dung chuyển khoản.
+- Verification:
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅ (sau khi build tạo lại `.next/types`)
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+- Notes:
+  - Không thay đổi business logic thanh toán, chỉ bổ sung option ngân hàng + UX hướng dẫn.
+  - Xác thực nhanh mã bank từ VietQR bank list: code đúng là `VIETBANK`.
+  - Không cần ADR mới.
+## Session Update 2026-04-12 17:00 +07 (CRM Import UI: xóa helper text dài cho gọn giao diện)
+- User request:
+  - xóa dòng mô tả cột hỗ trợ trên import khách hàng và import xe để UI gọn hơn.
+- Đã xử lý:
+  - `apps/web/components/crm-customers-import-board.tsx`:
+    - xóa đoạn text `Cột hỗ trợ: code, fullName, phone, ...` dưới input file.
+  - `apps/web/components/crm-vehicles-board.tsx`:
+    - xóa `description` và `helperText` trong `ExcelImportBlock` import xe.
+- Verification:
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/web` ⚠️ fail do lỗi TypeScript pre-existing ở `components/elearning-operations-board.tsx:758` (`Badge` không hỗ trợ prop `style`).
+  - `npm run build --workspace @erp/web` ⚠️ fail cùng lỗi pre-existing ở eLearning.
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+- Notes:
+  - Chỉ thay đổi text hiển thị import UI, không đổi business logic/import flow.
+  - Không cần ADR mới.
 ## Session Update 2026-04-12 16:36 +07 (Sales OCR: nút AI file bị disable + OCR link lỗi generic)
 - User report:
   - trong form tạo đơn bán hàng:

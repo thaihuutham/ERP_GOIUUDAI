@@ -1,10 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import type { FieldConfig, SalesTaxonomyType, CrmTagRegistryType, SalesTaxonomyPayload, CrmTagRegistryPayload, TaxonomyManagerType } from '../settings-center/domain-config';
 import { toStringArray, toManagedListItems } from '../settings-center/domain-config';
 import { TaxonomyManagerField, type SalesTaxonomyItem } from '../settings-center/taxonomy-manager-field';
 import { SettingsListManagerField, type ManagedListPickerOption } from '../settings-center/settings-list-manager-field';
 import { SettingsKeyPoolField } from '../settings-center/settings-key-pool-field';
+import { Modal } from '../ui/modal';
 
 type SettingsFieldRendererProps = {
   advancedMode?: boolean;
@@ -50,7 +52,9 @@ export function SettingsFieldRenderer({
   handleRenameCrmTagRegistry,
   handleDeleteCrmTagRegistry,
 }: SettingsFieldRendererProps) {
+  const [transferTemplateGuideOpen, setTransferTemplateGuideOpen] = useState(false);
   const visibleFields = fields.filter((field) => !field.isAdvanced || advancedMode);
+  const isTransferTemplateField = (field: FieldConfig) => field.id === 'finance-vietqr-template';
 
   return (
     <>
@@ -292,13 +296,69 @@ export function SettingsFieldRenderer({
         // Default: text input
         return (
           <div className="field" key={field.id}>
-            <label htmlFor={field.id}>{field.label}</label>
+            <label htmlFor={field.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span>{field.label}</span>
+              {isTransferTemplateField(field) ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  aria-label="Xem hướng dẫn mẫu nội dung chuyển khoản"
+                  title="Xem hướng dẫn mẫu nội dung chuyển khoản"
+                  onClick={() => setTransferTemplateGuideOpen(true)}
+                  style={{
+                    width: '1.2rem',
+                    height: '1.2rem',
+                    minHeight: '1.2rem',
+                    padding: 0,
+                    borderRadius: '999px',
+                    border: '1px solid var(--border)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    lineHeight: 1
+                  }}
+                >
+                  i
+                </button>
+              ) : null}
+            </label>
             <input id={field.id} type="text" value={String(value)} placeholder={field.placeholder} onChange={(event) => updateField(field, event.target.value)} />
             {field.helper && <small>{field.helper}</small>}
             {errors.length > 0 && <small style={{ color: '#b91c1c' }}>{errors[0]}</small>}
           </div>
         );
       })}
+
+      <Modal
+        open={transferTemplateGuideOpen}
+        onClose={() => setTransferTemplateGuideOpen(false)}
+        title="Hướng dẫn mẫu nội dung chuyển khoản"
+      >
+        <div style={{ display: 'grid', gap: '0.75rem' }}>
+          <p style={{ margin: 0 }}>
+            Để đối soát chính xác, nên dùng ít nhất một trường định danh duy nhất của đơn hàng trong nội dung chuyển khoản.
+          </p>
+          <div>
+            <strong>Các trường đang hỗ trợ:</strong>
+            <ul style={{ marginTop: '0.35rem', marginBottom: 0, paddingLeft: '1rem' }}>
+              <li><code>{'{orderNo}'}</code>: Mã đơn hiển thị cho nghiệp vụ.</li>
+              <li><code>{'{orderId}'}</code>: ID đơn hàng duy nhất toàn hệ thống.</li>
+            </ul>
+          </div>
+          <div>
+            <strong>Mẫu gợi ý:</strong>
+            <ul style={{ marginTop: '0.35rem', marginBottom: 0, paddingLeft: '1rem' }}>
+              <li><code>DH {'{orderNo}'}</code></li>
+              <li><code>DH {'{orderNo}'} {'{orderId}'}</code> (ưu tiên duy nhất cao)</li>
+            </ul>
+          </div>
+          <p style={{ margin: 0, color: 'var(--muted)' }}>
+            Lưu ý: hiện tại hệ thống chỉ thay thế 2 placeholder trên khi tạo QR VietQR.
+          </p>
+        </div>
+      </Modal>
     </>
   );
 }

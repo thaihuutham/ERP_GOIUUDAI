@@ -122,6 +122,11 @@ const DOMAIN_TAB_MAP: Record<SettingsDomain, SettingsLayoutTabHint[]> = {
   data_governance_backup: [
     { key: 'data-retention', label: 'Vòng đời dữ liệu', sectionIds: ['data-retention'] },
     { key: 'data-export-policy', label: 'Chính sách export', sectionIds: ['data-export-policy'] }
+  ],
+  elearning_policies: [
+    { key: 'elearning-daily-quiz', label: 'Trắc nghiệm hàng ngày', sectionIds: ['elearning-daily-quiz'] },
+    { key: 'elearning-certificates', label: 'Chứng nhận', sectionIds: ['elearning-certificates'] },
+    { key: 'elearning-enrollment', label: 'Ghi danh', sectionIds: ['elearning-enrollment'] }
   ]
 };
 
@@ -170,6 +175,11 @@ const SIDEBAR_GROUPS: SettingsLayoutGroup[] = [
     id: 'system-ops',
     label: 'System Operations',
     domains: ['search_performance', 'data_governance_backup'] as SettingsDomain[]
+  },
+  {
+    id: 'elearning',
+    label: 'E-Learning',
+    domains: ['elearning_policies'] as SettingsDomain[]
   }
 ];
 

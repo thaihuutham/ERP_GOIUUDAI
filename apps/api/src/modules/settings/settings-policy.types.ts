@@ -12,7 +12,8 @@ export const SETTINGS_DOMAINS = [
   'integrations',
   'notifications_templates',
   'search_performance',
-  'data_governance_backup'
+  'data_governance_backup',
+  'elearning_policies'
 ] as const;
 
 export type SettingsDomain = (typeof SETTINGS_DOMAINS)[number];
@@ -714,6 +715,23 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
     exportPolicy: {
       allowPiiExport: false,
       requireAdminApproval: true
+    }
+  },
+  elearning_policies: {
+    dailyQuiz: {
+      enabled: false,
+      questionCount: 2,
+      positionMapping: true,
+      bypassRoles: ['ADMIN']
+    },
+    certificates: {
+      autoIssue: true,
+      codePrefix: 'CERT',
+      codeSequencePadding: 5
+    },
+    enrollment: {
+      defaultPolicy: 'INVITE',
+      autoEnrollNewEmployee: false
     }
   }
 };

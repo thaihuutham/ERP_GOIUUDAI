@@ -21,7 +21,8 @@ export const DOMAIN_ORDER = [
   'integrations',
   'notifications_templates',
   'search_performance',
-  'data_governance_backup'
+  'data_governance_backup',
+  'elearning_policies'
 ] as const;
 
 export type DomainKey = (typeof DOMAIN_ORDER)[number];
@@ -55,7 +56,7 @@ export const DOMAIN_GROUPS = [
   {
     id: 'hr',
     label: 'HR',
-    domains: ['hr_policies'] as const
+    domains: ['hr_policies', 'elearning_policies'] as const
   },
   {
     id: 'integrations',
@@ -243,7 +244,8 @@ export const DOMAIN_LABEL: Record<DomainKey, string> = {
   integrations: 'Tích hợp hệ thống',
   notifications_templates: 'Thông báo & mẫu',
   search_performance: 'Tìm kiếm & hiệu năng',
-  data_governance_backup: 'Dữ liệu & backup'
+  data_governance_backup: 'Dữ liệu & backup',
+  elearning_policies: 'Học trực tuyến'
 };
 
 export const DOMAIN_OPTIONS: FieldOption[] = DOMAIN_ORDER.map((domain) => ({
@@ -264,7 +266,8 @@ export const MODULE_LABEL_MAP: Record<string, string> = {
   reports: 'Báo cáo',
   assistant: 'Trợ lý AI',
   audit: 'Nhật ký hệ thống',
-  notifications: 'Thông báo'
+  notifications: 'Thông báo',
+  elearning: 'Học trực tuyến'
 };
 
 export const MODULE_OPTIONS: FieldOption[] = ERP_MODULES
@@ -691,6 +694,7 @@ export const VIETQR_BANK_OPTIONS: FieldOption[] = [
   { value: 'NAB', label: 'Nam A Bank' },
   { value: 'SCB', label: 'SCB (Sài Gòn)' },
   { value: 'VAB', label: 'VietABank (Việt Á)' },
+  { value: 'VIETBANK', label: 'VietBank (Việt Nam Thương Tín)' },
   { value: 'ABB', label: 'ABBank (An Bình)' },
   { value: 'BAB', label: 'Bắc Á Bank' },
   { value: 'CAKE', label: 'CAKE (VPBank số)' },
@@ -1078,7 +1082,7 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'finance-vietqr-bank', path: 'paymentPolicy.vietQR.bankCode', label: 'Ngân hàng nhận thanh toán (VietQR)', type: 'select', options: VIETQR_BANK_OPTIONS, helper: 'Chọn ngân hàng mà công ty sử dụng để nhận thanh toán qua mã QR.' },
           { id: 'finance-vietqr-account', path: 'paymentPolicy.vietQR.accountNumber', label: 'Số tài khoản ngân hàng', type: 'text', helper: 'Số tài khoản ngân hàng của công ty, sẽ hiển thị trên mã QR thanh toán.', placeholder: 'Ví dụ: 0123456789' },
           { id: 'finance-vietqr-name', path: 'paymentPolicy.vietQR.accountName', label: 'Tên tài khoản ngân hàng', type: 'text', helper: 'Tên chủ tài khoản (viết in hoa, không dấu). Ví dụ: CONG TY TNHH ABC', placeholder: 'CONG TY TNHH ABC' },
-          { id: 'finance-vietqr-template', path: 'paymentPolicy.vietQR.transferContentTemplate', label: 'Mẫu nội dung chuyển khoản', type: 'text', helper: 'Nội dung tự động điền khi khách chuyển khoản. Dùng {orderNo} để chèn mã đơn.', placeholder: 'DH {orderNo}' }
+          { id: 'finance-vietqr-template', path: 'paymentPolicy.vietQR.transferContentTemplate', label: 'Mẫu nội dung chuyển khoản', type: 'text', helper: 'Nội dung tự động điền khi khách chuyển khoản. Hỗ trợ {orderNo}, {orderId}. Bấm icon i để xem hướng dẫn mẫu duy nhất.', placeholder: 'DH {orderNo}' }
         ]
       },
       {
@@ -1611,6 +1615,43 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
         fields: [
           { id: 'data-export-pii', path: 'exportPolicy.allowPiiExport', label: 'Cho phép export dữ liệu nhạy cảm (PII)', type: 'switch' },
           { id: 'data-export-approval', path: 'exportPolicy.requireAdminApproval', label: 'Bắt buộc Admin duyệt khi export', type: 'switch' }
+        ]
+      }
+    ]
+  },
+
+  elearning_policies: {
+    title: 'Cấu hình Học trực tuyến',
+    description: 'Quản lý trắc nghiệm hàng ngày, chứng nhận, và chính sách ghi danh khóa học.',
+    sections: [
+      {
+        id: 'elearning-daily-quiz',
+        title: 'Trắc nghiệm hàng ngày',
+        description: 'Bài trắc nghiệm bắt buộc khi đăng nhập lần đầu trong ngày.',
+        fields: [
+          { id: 'el-dq-enabled', path: 'dailyQuiz.enabled', label: 'Bật trắc nghiệm hàng ngày', type: 'switch' },
+          { id: 'el-dq-count', path: 'dailyQuiz.questionCount', label: 'Số câu hỏi mỗi phiên', type: 'number', min: 1, max: 10 },
+          { id: 'el-dq-position', path: 'dailyQuiz.positionMapping', label: 'Lọc câu hỏi theo vị trí công việc', type: 'switch' },
+          { id: 'el-dq-bypass', path: 'dailyQuiz.bypassRoles', label: 'Bỏ qua cho vai trò', type: 'multiSelect', options: [
+            { value: 'ADMIN', label: 'Admin' }
+          ]}
+        ]
+      },
+      {
+        id: 'elearning-certificate',
+        title: 'Chứng nhận',
+        fields: [
+          { id: 'el-cert-auto', path: 'certificate.autoIssue', label: 'Tự động cấp chứng nhận khi đạt', type: 'switch' },
+          { id: 'el-cert-threshold', path: 'certificate.passThreshold', label: 'Điểm đạt tối thiểu', type: 'number', unit: '%', min: 0, max: 100 },
+          { id: 'el-cert-expiry', path: 'certificate.validDays', label: 'Hiệu lực chứng nhận', type: 'number', unit: 'ngày', min: 0, max: 3650 }
+        ]
+      },
+      {
+        id: 'elearning-enrollment',
+        title: 'Ghi danh',
+        fields: [
+          { id: 'el-enroll-limit', path: 'enrollment.maxCoursesPerEmployee', label: 'Giới hạn khóa học/nhân viên', type: 'number', min: 0, max: 100 },
+          { id: 'el-enroll-self', path: 'enrollment.allowSelfEnroll', label: 'Cho phép nhân viên tự ghi danh', type: 'switch' }
         ]
       }
     ]

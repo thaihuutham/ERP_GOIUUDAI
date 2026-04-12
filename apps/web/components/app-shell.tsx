@@ -11,6 +11,7 @@ import {
   ChevronRight,
   FolderKanban,
   GitBranch,
+  GraduationCap,
   LayoutDashboard,
   Menu,
   Package,
@@ -40,6 +41,7 @@ import { useAccessPolicy } from './access-policy-context';
 import { GlobalSearchCommand } from './global-search-command';
 import { Breadcrumb } from './ui/breadcrumb';
 import { useUserRole } from './user-role-context';
+import { DailyQuizGate } from './daily-quiz-gate';
 
 function isActive(pathname: string, href: string) {
   if (href === '/') {
@@ -66,6 +68,7 @@ const ICON_MAP: Record<string, any> = {
   audit: History,
   settings: Settings,
   notifications: Bell,
+  elearning: GraduationCap,
 };
 
 const ACCESS_REDIRECT_NOTICE_KEY = 'erp_access_redirect_notice';
@@ -216,6 +219,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [runtimePayload, setRuntimePayload] = useState<RuntimeSettingsPayload | null>(null);
   const [accessRedirectNotice, setAccessRedirectNotice] = useState<string | null>(null);
+  const [dailyQuizCompleted, setDailyQuizCompleted] = useState(false);
 
   const currentTitle = useMemo(() => getCurrentModuleTitle(pathname), [pathname]);
   const visibleModules = useMemo(
@@ -668,6 +672,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         </form>
       </div>
+    );
+  }
+
+  if (authEnabled && !dailyQuizCompleted && userEmail) {
+    return (
+      <DailyQuizGate
+        userEmail={userEmail}
+        onComplete={() => setDailyQuizCompleted(true)}
+      />
     );
   }
 
