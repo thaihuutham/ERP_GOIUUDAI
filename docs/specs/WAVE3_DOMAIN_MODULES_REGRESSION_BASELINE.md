@@ -30,7 +30,7 @@ Applies to: UI route-level domain boards based on `ModuleWorkbench`
 - Action buttons cần có:
   - `Tạo sản phẩm`
   - `Cập nhật sản phẩm`
-  - `Lưu trữ sản phẩm`
+  - `Xóa sản phẩm`
   - `Áp chính sách giá`
 - Filter bắt buộc:
   - `status` (select)

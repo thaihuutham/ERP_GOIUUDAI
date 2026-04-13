@@ -283,7 +283,7 @@ test.describe('Wave 1 domain modules board', () => {
 
     await page.locator('tbody input[type="checkbox"]').first().check();
     await page.getByRole('button', { name: 'Bulk Actions' }).click();
-    await expect(page.getByRole('button', { name: 'Lưu trữ sản phẩm' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Xóa sản phẩm' })).toBeVisible();
   });
 
   test('assets board supports create flow and lifecycle bulk action', async ({ page }) => {

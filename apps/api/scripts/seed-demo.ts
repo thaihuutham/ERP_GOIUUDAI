@@ -145,6 +145,22 @@ async function ensureTenant() {
 async function resetTenantData(tenantId: string) {
   const where: WithTenant = { tenant_Id: tenantId };
 
+  // ── E-Learning (children → parents) ──
+  await prisma.dailyQuizSession.deleteMany({ where });
+  await prisma.elearningComment.deleteMany({ where });
+  await prisma.elearningCertificate.deleteMany({ where });
+  await prisma.elearningLessonProgress.deleteMany({ where });
+  await prisma.elearningEnrollment.deleteMany({ where });
+  await prisma.elearningExamAttempt.deleteMany({ where });
+  await prisma.elearningExam.deleteMany({ where });
+  await prisma.elearningLessonQuestion.deleteMany({ where });
+  await prisma.elearningQuestionOption.deleteMany({ where });
+  await prisma.elearningQuestion.deleteMany({ where });
+  await prisma.elearningLesson.deleteMany({ where });
+  await prisma.elearningSection.deleteMany({ where });
+  await prisma.elearningCourse.deleteMany({ where });
+  await prisma.elearningQuestionCategory.deleteMany({ where });
+
   // ── CRM Distribution (phải xóa trước Customer) ──
   await prisma.customerAssignmentLog.deleteMany({ where });
   await prisma.customerRotationBlacklist.deleteMany({ where });

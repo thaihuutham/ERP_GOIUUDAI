@@ -100,7 +100,7 @@ export const hrModule: ModuleDefinition = {
           },
           {
             key: 'archive-employee',
-            label: 'Lưu trữ nhân viên',
+            label: 'Xóa nhân viên',
             method: 'DELETE',
             endpoint: '/hr/employees/:id',
             fields: [{ name: 'id', label: 'Mã nhân viên', required: true }]
@@ -351,7 +351,7 @@ export const hrModule: ModuleDefinition = {
           },
           {
             key: 'archive-payroll-component',
-            label: 'Lưu trữ cấu phần',
+            label: 'Xóa cấu phần',
             method: 'DELETE',
             endpoint: '/hr/payroll-components/:id',
             fields: [{ name: 'id', label: 'Mã cấu phần', required: true }]
@@ -419,7 +419,7 @@ export const hrModule: ModuleDefinition = {
             endpoint: '/hr/employees/:id/leave-balance',
             fields: [
               { name: 'id', label: 'Mã nhân viên', required: true },
-              { name: 'year', label: 'Năm', type: 'number', placeholder: '2026' }
+              { name: 'year', label: 'Năm', type: 'number', integer: true, min: 1900, max: 2100, placeholder: '2026' }
             ]
           },
           {
@@ -457,8 +457,8 @@ export const hrModule: ModuleDefinition = {
             method: 'POST',
             endpoint: '/hr/payrolls/generate',
             fields: [
-              { name: 'month', label: 'Tháng', type: 'number', required: true, placeholder: '3' },
-              { name: 'year', label: 'Năm', type: 'number', required: true, placeholder: '2026' },
+              { name: 'month', label: 'Tháng', type: 'number', required: true, integer: true, min: 1, max: 12, placeholder: '3' },
+              { name: 'year', label: 'Năm', type: 'number', required: true, integer: true, min: 1900, max: 2100, placeholder: '2026' },
               { name: 'employeeId', label: 'Mã nhân viên (tùy chọn)' },
               { name: 'note', label: 'Ghi chú', type: 'textarea' }
             ]
@@ -479,7 +479,7 @@ export const hrModule: ModuleDefinition = {
           },
           {
             key: 'archive-payroll',
-            label: 'Lưu trữ bảng lương',
+            label: 'Xóa bảng lương',
             method: 'DELETE',
             endpoint: '/hr/payrolls/:id',
             fields: [{ name: 'id', label: 'Mã bảng lương', required: true }]
@@ -520,7 +520,7 @@ export const hrModule: ModuleDefinition = {
           },
           {
             key: 'archive-recruitment',
-            label: 'Lưu trữ tuyển dụng',
+            label: 'Xóa tuyển dụng',
             method: 'DELETE',
             endpoint: '/hr/recruitment/:id',
             fields: [{ name: 'id', label: 'Mã hồ sơ tuyển dụng', required: true }]
@@ -649,8 +649,8 @@ export const hrModule: ModuleDefinition = {
           'lockedAt'
         ],
         filters: [
-          { key: 'month', label: 'Tháng', type: 'number', placeholder: 'Tháng', queryParam: 'month' },
-          { key: 'year', label: 'Năm', type: 'number', placeholder: 'Năm', queryParam: 'year' },
+          { key: 'month', label: 'Tháng', type: 'number', integer: true, min: 1, max: 12, placeholder: 'Tháng', queryParam: 'month' },
+          { key: 'year', label: 'Năm', type: 'number', integer: true, min: 1900, max: 2100, placeholder: 'Năm', queryParam: 'year' },
           { key: 'employeeId', label: 'Mã nhân viên', type: 'text', placeholder: 'EMP-0001', queryParam: 'employeeId' }
         ],
         actions: [
@@ -660,8 +660,8 @@ export const hrModule: ModuleDefinition = {
             method: 'POST',
             endpoint: '/hr/personal-income-tax/records/generate',
             fields: [
-              { name: 'taxMonth', label: 'Tháng', type: 'number', required: true, defaultValue: 3 },
-              { name: 'taxYear', label: 'Năm', type: 'number', required: true, defaultValue: 2026 },
+              { name: 'taxMonth', label: 'Tháng', type: 'number', required: true, integer: true, min: 1, max: 12, defaultValue: 3 },
+              { name: 'taxYear', label: 'Năm', type: 'number', required: true, integer: true, min: 1900, max: 2100, defaultValue: 2026 },
               { name: 'employeeId', label: 'Mã nhân viên (tùy chọn)' },
               { name: 'taxRate', label: 'Thuế suất override', type: 'number', placeholder: '0.1' },
               { name: 'status', label: 'Trạng thái', type: 'select', options: STATUS_OPTIONS, defaultValue: 'DRAFT' }
@@ -692,8 +692,8 @@ export const hrModule: ModuleDefinition = {
             fields: [
               { name: 'employeeId', label: 'Mã nhân viên', required: true },
               { name: 'payrollId', label: 'Mã bảng lương (tùy chọn)' },
-              { name: 'taxMonth', label: 'Tháng', type: 'number', required: true },
-              { name: 'taxYear', label: 'Năm', type: 'number', required: true },
+              { name: 'taxMonth', label: 'Tháng', type: 'number', required: true, integer: true, min: 1, max: 12 },
+              { name: 'taxYear', label: 'Năm', type: 'number', required: true, integer: true, min: 1900, max: 2100 },
               { name: 'grossTaxable', label: 'Thu nhập chịu thuế', type: 'number' },
               { name: 'deduction', label: 'Tổng giảm trừ', type: 'number' },
               { name: 'taxableIncome', label: 'Thu nhập tính thuế', type: 'number' },
@@ -711,8 +711,8 @@ export const hrModule: ModuleDefinition = {
               { name: 'id', label: 'Mã bản ghi', required: true },
               { name: 'employeeId', label: 'Mã nhân viên' },
               { name: 'payrollId', label: 'Mã bảng lương' },
-              { name: 'taxMonth', label: 'Tháng', type: 'number' },
-              { name: 'taxYear', label: 'Năm', type: 'number' },
+              { name: 'taxMonth', label: 'Tháng', type: 'number', integer: true, min: 1, max: 12 },
+              { name: 'taxYear', label: 'Năm', type: 'number', integer: true, min: 1900, max: 2100 },
               { name: 'grossTaxable', label: 'Thu nhập chịu thuế', type: 'number' },
               { name: 'deduction', label: 'Tổng giảm trừ', type: 'number' },
               { name: 'taxableIncome', label: 'Thu nhập tính thuế', type: 'number' },

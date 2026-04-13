@@ -447,7 +447,7 @@ export class SalesService {
 
     if (blockingInvoice) {
       throw new BadRequestException(
-        `Đơn hàng đã liên kết hóa đơn ${blockingInvoice.invoiceNo ?? blockingInvoice.id} chưa đóng. Vui lòng xử lý hóa đơn trước khi lưu trữ đơn hàng.`
+        `Đơn hàng đã liên kết hóa đơn ${blockingInvoice.invoiceNo ?? blockingInvoice.id} chưa đóng. Vui lòng xử lý hóa đơn trước khi xóa đơn hàng.`
       );
     }
 

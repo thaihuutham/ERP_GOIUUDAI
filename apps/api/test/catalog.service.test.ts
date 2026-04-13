@@ -125,4 +125,78 @@ describe('CatalogService', () => {
     expect(result.pricePolicyCode).toBe('RETAIL_V2');
     expect(search.syncProductUpsert).toHaveBeenCalled();
   });
+
+  it('imports products by upserting with sku', async () => {
+    const prisma = makePrismaMock();
+    const search = {
+      shouldUseHybridSearch: vi.fn(),
+      searchProductIds: vi.fn(),
+      syncProductUpsert: vi.fn().mockResolvedValue(undefined)
+    };
+
+    prisma.client.product.findFirst
+      .mockResolvedValueOnce({
+        id: 'prod_existing',
+        sku: 'SKU-001',
+        status: GenericStatus.ACTIVE,
+        archivedAt: null
+      })
+      .mockResolvedValueOnce(null);
+
+    prisma.client.product.create.mockResolvedValue({
+      id: 'prod_new',
+      sku: 'SKU-NEW-001'
+    });
+
+    prisma.client.product.findMany.mockResolvedValue([
+      { id: 'prod_existing', sku: 'SKU-001' },
+      { id: 'prod_new', sku: 'SKU-NEW-001' }
+    ]);
+
+    const service = new CatalogService(prisma as any, search as any);
+    const result = await service.importProducts({
+      rows: [
+        {
+          sku: 'SKU-001',
+          name: 'Updated product name',
+          unitPrice: 1200000
+        },
+        {
+          sku: 'SKU-NEW-001',
+          name: 'New product',
+          productType: 'PRODUCT',
+          unitPrice: 500000
+        },
+        {
+          name: 'Missing SKU row',
+          productType: 'SERVICE',
+          unitPrice: 100000
+        }
+      ]
+    });
+
+    expect(prisma.client.product.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'prod_existing' },
+        data: expect.objectContaining({
+          name: 'Updated product name'
+        })
+      })
+    );
+    expect(prisma.client.product.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          sku: 'SKU-NEW-001',
+          name: 'New product'
+        })
+      })
+    );
+    expect(result).toMatchObject({
+      totalRows: 3,
+      importedCount: 2,
+      skippedCount: 1
+    });
+    expect(result.errors[0]?.message).toContain('Thiếu SKU');
+    expect(search.syncProductUpsert).toHaveBeenCalledTimes(2);
+  });
 });

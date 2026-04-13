@@ -79,13 +79,13 @@ describe('settings view model', () => {
       'finance-invoice'
     ]);
     expect(resolveDomainTabs('sales_crm_policies').map((item) => item.key)).toEqual([
-      'sales-orders',
-      'sales-checkout-core',
-      'sales-credit',
-      'sales-draft',
-      'sales-taxonomy',
-      'sales-tags',
-      'sales-renewal'
+      'sales-policy-order',
+      'sales-policy-checkout',
+      'sales-policy-discount-credit',
+      'sales-policy-draft',
+      'crm-settings-status',
+      'crm-settings-renewal',
+      'crm-settings-distribution'
     ]);
     expect(resolveDomainTabs('catalog_scm_policies').map((item) => item.key)).toEqual([
       'catalog-defaults',

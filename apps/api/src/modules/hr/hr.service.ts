@@ -26,6 +26,7 @@ import {
 } from '../../common/pagination/pagination-response';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkflowsService } from '../workflows/workflows.service';
 
@@ -5461,11 +5462,7 @@ export class HrService {
   private toDate(value: unknown) {
     if (value === undefined) return undefined;
     if (value === null || value === '') return undefined;
-    const date = value instanceof Date ? value : new Date(String(value));
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException(`Ngày không hợp lệ: ${String(value)}`);
-    }
-    return date;
+    return parseStrictDate(value, 'Ngày');
   }
 
   private toDecimal(value: unknown) {

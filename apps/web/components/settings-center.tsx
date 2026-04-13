@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import Link from 'next/link';
 import { SYSTEM_PROFILE } from '../lib/system-profile';
 import { GroupedSidebar } from './settings-center/grouped-sidebar';
@@ -13,6 +13,7 @@ import {
   ROLE_LABEL_MAP,
   getFieldValue as getFieldValueFn,
   formatDateTime,
+  type DomainKey,
 } from './settings-center/domain-config';
 
 import { useSettingsState } from './settings/use-settings-state';
@@ -24,12 +25,65 @@ import { OrgStructurePanel } from './settings/org-structure-panel';
 import { HrAccountsPanel } from './settings/hr-accounts-panel';
 import { AccessSecurityPanel } from './settings/access-security-panel';
 
-export function SettingsCenter() {
-  const s = useSettingsState();
+type SettingsCenterProps = {
+  presetDomain?: DomainKey;
+  initialTab?: string;
+  tabFilter?: string[];
+  hideSidebar?: boolean;
+  pageTitle?: string;
+  pageDescription?: string;
+};
+
+export function SettingsCenter({
+  presetDomain,
+  initialTab,
+  tabFilter,
+  hideSidebar = false,
+  pageTitle,
+  pageDescription
+}: SettingsCenterProps = {}) {
+  const s = useSettingsState({
+    initialDomain: presetDomain,
+    initialDomainTab: initialTab
+  });
 
   const selectedDomainState = s.center?.domainStates.find((item) => item.domain === s.selectedDomain);
   const shouldShowSettingsOpsPanel =
     s.selectedDomain === 'data_governance_backup' && s.activeTabConfig?.showSettingsOpsPanel === true;
+  const visibleDomainTabs = useMemo(() => {
+    if (!tabFilter || tabFilter.length === 0) {
+      return s.domainTabs;
+    }
+    const tabSet = new Set(tabFilter);
+    const filtered = s.domainTabs.filter((tab) => tabSet.has(tab.key));
+    return filtered.length > 0 ? filtered : s.domainTabs;
+  }, [s.domainTabs, tabFilter]);
+
+  useEffect(() => {
+    if (!presetDomain || s.selectedDomain === presetDomain) {
+      return;
+    }
+    s.setSelectedDomain(presetDomain);
+  }, [presetDomain, s.selectedDomain, s.setSelectedDomain]);
+
+  useEffect(() => {
+    if (visibleDomainTabs.length === 0) {
+      return;
+    }
+    if (visibleDomainTabs.some((tab) => tab.key === s.resolvedActiveDomainTab)) {
+      return;
+    }
+    const preferred =
+      (initialTab && visibleDomainTabs.some((tab) => tab.key === initialTab))
+        ? initialTab
+        : visibleDomainTabs[0]?.key;
+    if (preferred) {
+      s.setActiveDomainTab(preferred);
+    }
+  }, [visibleDomainTabs, s.resolvedActiveDomainTab, initialTab, s.setActiveDomainTab]);
+
+  const displayTitle = pageTitle ?? s.domaintitle;
+  const displayDescription = pageDescription ?? s.domaindescription;
 
   const renderOrgTreeNodes = (nodes: Record<string, unknown>[], depth = 0): ReactNode[] => {
     return nodes.flatMap((node) => {
@@ -82,34 +136,50 @@ export function SettingsCenter() {
         </div>
       </header>
 
-      <section className="settings-center-layout">
-        <GroupedSidebar
-          groups={s.sidebarGroups}
-          labels={DOMAIN_LABEL}
-          selectedDomain={s.selectedDomain}
-          onSelectDomain={s.setSelectedDomain}
-          domainStates={s.center?.domainStates}
-          searchValue={s.settingsSearch}
-          onSearchChange={s.setSettingsSearch}
-        />
+      <section className="settings-center-layout" style={hideSidebar ? { gridTemplateColumns: 'minmax(0, 1fr)' } : undefined}>
+        {!hideSidebar && (
+          <GroupedSidebar
+            groups={s.sidebarGroups}
+            labels={DOMAIN_LABEL}
+            selectedDomain={s.selectedDomain}
+            onSelectDomain={s.setSelectedDomain}
+            domainStates={s.center?.domainStates}
+            searchValue={s.settingsSearch}
+            onSearchChange={s.setSettingsSearch}
+          />
+        )}
 
         <main className="settings-center-main">
           {/* ── Domain header ─────────────────── */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '0.8rem' }}>
             <div>
-              <h3 style={{ margin: 0 }}>{s.domaintitle}</h3>
-              <p style={{ margin: '0.35rem 0 0 0', color: 'var(--muted)', fontSize: '0.875rem' }}>{s.domaindescription}</p>
+              <h3 style={{ margin: 0 }}>{displayTitle}</h3>
+              <p style={{ margin: '0.35rem 0 0 0', color: 'var(--muted)', fontSize: '0.875rem' }}>{displayDescription}</p>
               <p style={{ margin: '0.35rem 0 0 0', color: selectedDomainState?.ok ? '#1b8748' : '#d97706', fontSize: '0.8rem', fontWeight: 600 }}>
                 Trạng thái miền cấu hình: {selectedDomainState?.ok ? 'Ổn định' : 'Cần rà soát'}
               </p>
               <p style={{ margin: '0.2rem 0 0 0', color: 'var(--muted)', fontSize: '0.78rem' }}>
                 Runtime: {selectedDomainState?.runtimeApplied ? 'Đã áp dụng' : 'Chưa áp dụng'} · Cập nhật lúc: {formatDateTime(selectedDomainState?.runtimeLoadedAt)}
               </p>
+              {s.selectedDomain === 'sales_crm_policies' && !hideSidebar && (
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+                  <Link href="/modules/settings/sales-policies" className="btn btn-ghost">
+                    Mở trang Chính sách bán hàng
+                  </Link>
+                  <Link href="/modules/settings/crm-settings" className="btn btn-ghost">
+                    Mở trang Cài đặt CRM
+                  </Link>
+                </div>
+              )}
             </div>
             <button type="button" className="btn btn-ghost" onClick={() => void s.reloadAll(s.selectedDomain)} disabled={s.busy}>Làm mới</button>
           </div>
 
-          <DomainTabs tabs={s.domainTabs} activeTab={s.resolvedActiveDomainTab} onChange={s.setActiveDomainTab} />
+          <DomainTabs
+            tabs={visibleDomainTabs}
+            activeTab={s.resolvedActiveDomainTab}
+            onChange={s.setActiveDomainTab}
+          />
 
           {/* ── Role playbook (access_security) ── */}
           {s.selectedDomain === 'access_security' && (

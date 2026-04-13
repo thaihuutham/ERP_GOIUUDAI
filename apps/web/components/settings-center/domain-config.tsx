@@ -8,6 +8,7 @@ import type { ManagedListType } from './settings-list-manager-field';
 import { SYSTEM_PROFILE } from '../../lib/system-profile';
 import { formatRuntimeDateTime } from '../../lib/runtime-format';
 import { normalizeListPayload } from '../../lib/api-client';
+import { normalizeNumberByConstraints, parseFiniteNumber } from '../../lib/form-validation';
 
 export const DOMAIN_ORDER = [
   'org_profile',
@@ -183,6 +184,7 @@ export type FieldConfig = {
   min?: number;
   max?: number;
   step?: number;
+  integer?: boolean;
   allowEmpty?: boolean;
   options?: FieldOption[];
   isAdvanced?: boolean;
@@ -1179,6 +1181,22 @@ export const DOMAIN_CONFIG: Record<DomainKey, DomainConfig> = {
           { id: 'sales-draft-expiry-days', path: 'draftExpiryDays', label: 'Tự hủy đơn nháp sau', type: 'number', unit: 'ngày', min: 1, max: 90, helper: 'Sau bao nhiêu ngày không xử lý, đơn nháp sẽ bị hệ thống tự động hủy.' },
           { id: 'sales-draft-warning-days', path: 'draftWarningDays', label: 'Cảnh báo trước khi hủy', type: 'number', unit: 'ngày', min: 1, max: 30, helper: 'Số ngày trước khi hủy, hệ thống sẽ gửi cảnh báo cho nhân viên phụ trách.' },
           { id: 'sales-draft-debt-days', path: 'draftDebtConversionDays', label: 'Chuyển thành công nợ sau', type: 'number', unit: 'ngày', min: 0, max: 365, helper: 'Sau bao nhiêu ngày, đơn chưa thanh toán sẽ tự chuyển thành công nợ. Đặt 0 = không tự chuyển.' }
+        ]
+      },
+      {
+        id: 'sales-status-registry',
+        title: 'Quản lý trạng thái CRM',
+        description: 'Cấu hình nhãn hiển thị cho cột Trạng thái trong CRM.',
+        fields: [
+          { id: 'sales-status-label-moi', path: 'customerStatusRegistry.labels.MOI_CHUA_TU_VAN', label: 'MỚI_CHƯA_TƯ_VẤN', type: 'text', helper: 'Nhãn hiển thị cho trạng thái khách mới chưa tư vấn.' },
+          { id: 'sales-status-label-suy-nghi', path: 'customerStatusRegistry.labels.DANG_SUY_NGHI', label: 'ĐANG_SUY_NGHĨ', type: 'text', helper: 'Nhãn hiển thị cho trạng thái khách đang suy nghĩ.' },
+          { id: 'sales-status-label-chuyen-kh', path: 'customerStatusRegistry.labels.DONG_Y_CHUYEN_THANH_KH', label: 'ĐỒNG_Ý_CHUYỂN_THÀNH_KH', type: 'text', helper: 'Nhãn hiển thị cho trạng thái đồng ý chuyển thành khách hàng.' },
+          { id: 'sales-status-label-tu-choi', path: 'customerStatusRegistry.labels.KH_TU_CHOI', label: 'KH_TỪ_CHỐI', type: 'text', helper: 'Nhãn hiển thị cho trạng thái khách từ chối.' },
+          { id: 'sales-status-label-mua-ben-khac', path: 'customerStatusRegistry.labels.KH_DA_MUA_BEN_KHAC', label: 'KH_ĐÃ_MUA_BÊN_KHÁC', type: 'text', helper: 'Nhãn hiển thị cho trạng thái khách đã mua bên khác.' },
+          { id: 'sales-status-label-nguoi-nha', path: 'customerStatusRegistry.labels.NGUOI_NHA_LAM_THUE_BAO', label: 'NGƯỜI_NHÀ_LÀM_THUÊ_BAO', type: 'text', helper: 'Nhãn hiển thị cho trạng thái người nhà làm/thuê bao.' },
+          { id: 'sales-status-label-khong-nghe-1', path: 'customerStatusRegistry.labels.KHONG_NGHE_MAY_LAN_1', label: 'KHÔNG_NGHE_MÁY_LẦN_1', type: 'text', helper: 'Nhãn hiển thị cho trạng thái không nghe máy lần 1.' },
+          { id: 'sales-status-label-khong-nghe-2', path: 'customerStatusRegistry.labels.KHONG_NGHE_MAY_LAN_2', label: 'KHÔNG_NGHE_MÁY_LẦN_2', type: 'text', helper: 'Nhãn hiển thị cho trạng thái không nghe máy lần 2.' },
+          { id: 'sales-status-label-soft-skip', path: 'customerStatusRegistry.labels.SAI_SO_KHONG_TON_TAI_BO_QUA_XOA', label: 'SAI_SỐ_KHÔNG_TỒN_TẠI_BỎ_QUA_XÓA', type: 'text', helper: 'Nhãn hiển thị cho trạng thái BỎ QUA/Xóa.' }
         ]
       },
       {
@@ -2213,8 +2231,16 @@ export function setFieldValue(field: FieldConfig, data: Record<string, unknown>,
       }
       return setByPath(data, field.path, 0);
     }
-    const parsed = Number(raw);
-    return setByPath(data, field.path, Number.isFinite(parsed) ? parsed : 0);
+    const parsed = parseFiniteNumber(raw);
+    if (parsed === null) {
+      return setByPath(data, field.path, field.allowEmpty ? null : 0);
+    }
+    const normalized = normalizeNumberByConstraints(parsed, {
+      min: field.min,
+      max: field.max,
+      integer: field.integer
+    });
+    return setByPath(data, field.path, normalized);
   }
 
   if (field.type === 'userDomainMap') {
@@ -2249,8 +2275,15 @@ export function normalizeForComparison(field: FieldConfig, value: unknown) {
     if (field.allowEmpty && (value === null || value === undefined || String(value).trim() === '')) {
       return null;
     }
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
+    const parsed = parseFiniteNumber(String(value ?? ''));
+    if (parsed === null) {
+      return field.allowEmpty ? null : 0;
+    }
+    return normalizeNumberByConstraints(parsed, {
+      min: field.min,
+      max: field.max,
+      integer: field.integer
+    });
   }
 
   return String(value ?? '');

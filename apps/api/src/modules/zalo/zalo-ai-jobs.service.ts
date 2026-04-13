@@ -16,6 +16,7 @@ import {
   Prisma
 } from '@prisma/client';
 import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { readZaloAutoReplyThreadState, patchZaloAutoReplyThreadState } from './zalo-auto-reply-state.util';
 import { AiRoutingRuntime, ZaloAiRoutingService } from './zalo-ai-routing.service';
@@ -1063,11 +1064,11 @@ export class ZaloAiJobsService implements OnModuleInit, OnModuleDestroy {
     if (!value) {
       return null;
     }
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
+    try {
+      return parseStrictDate(value, 'date');
+    } catch {
       return null;
     }
-    return parsed;
   }
 
   private resolveTake(limit: number | undefined, fallback: number, max: number) {

@@ -15,6 +15,7 @@ import { AuthUser } from '../../common/auth/auth-user.type';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WorkflowsService } from '../workflows/workflows.service';
@@ -2602,11 +2603,7 @@ export class HrRegulationService {
     if (value === null || value === undefined || value === '') {
       return fallback;
     }
-    const parsed = new Date(String(value));
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException(`Ngày không hợp lệ: ${value}`);
-    }
-    return parsed;
+    return parseStrictDate(value, 'Ngày');
   }
 
   private readString(value: unknown, fallback: string | null) {

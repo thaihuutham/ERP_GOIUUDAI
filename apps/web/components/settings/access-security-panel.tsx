@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import Link from 'next/link';
 import * as DomainConfigModule from '../settings-center/domain-config';
+import { parseFiniteNumber } from '../../lib/form-validation';
 
 const {
   POSITION_STATUS_OPTIONS,
@@ -490,7 +491,19 @@ export function AccessSecurityPanel({
                     onChange={(event) =>
                       setIamTitleScopeForm((current) => ({
                         ...current,
-                        priority: Number(event.target.value || 0)
+                        priority: (() => {
+                          const parsed = parseFiniteNumber(event.target.value);
+                          if (parsed === null) {
+                            return 0;
+                          }
+                          if (parsed < 0) {
+                            return 0;
+                          }
+                          if (parsed > 10_000) {
+                            return 10_000;
+                          }
+                          return Math.trunc(parsed);
+                        })()
                       }))
                     }
                   />

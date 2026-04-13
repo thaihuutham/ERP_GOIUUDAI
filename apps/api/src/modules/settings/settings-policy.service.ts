@@ -45,6 +45,29 @@ const SETTINGS_USER_ID_PATTERN = /^[A-Za-z0-9._-]{2,80}$/;
 const SETTINGS_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SETTINGS_FINANCE_PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
+const CUSTOMER_CARE_STATUS_OPTIONS = [
+  'MOI_CHUA_TU_VAN',
+  'DANG_SUY_NGHI',
+  'DONG_Y_CHUYEN_THANH_KH',
+  'KH_TU_CHOI',
+  'KH_DA_MUA_BEN_KHAC',
+  'NGUOI_NHA_LAM_THUE_BAO',
+  'KHONG_NGHE_MAY_LAN_1',
+  'KHONG_NGHE_MAY_LAN_2',
+  'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA'
+] as const;
+type CustomerCareStatusCode = (typeof CUSTOMER_CARE_STATUS_OPTIONS)[number];
+const CUSTOMER_CARE_STATUS_LABELS_DEFAULT: Record<CustomerCareStatusCode, string> = {
+  MOI_CHUA_TU_VAN: '[Mới] Chưa tư vấn',
+  DANG_SUY_NGHI: 'Đang suy nghĩ',
+  DONG_Y_CHUYEN_THANH_KH: 'Đồng ý - Chuyển thành KH',
+  KH_TU_CHOI: 'KH Từ chối',
+  KH_DA_MUA_BEN_KHAC: 'KH đã mua bên khác',
+  NGUOI_NHA_LAM_THUE_BAO: 'Người Nhà Làm/Thuê bao',
+  KHONG_NGHE_MAY_LAN_1: 'Không nghe máy lần 1',
+  KHONG_NGHE_MAY_LAN_2: 'Không nghe máy lần 2',
+  SAI_SO_KHONG_TON_TAI_BO_QUA_XOA: 'Sai số, Không tồn tại -> BỎ QUA/Xóa'
+};
 
 type HrAppendixFieldType = (typeof HR_APPENDIX_FIELD_TYPES)[number];
 type HrAppendixFieldAggregator = (typeof HR_APPENDIX_AGGREGATORS)[number];
@@ -1406,6 +1429,8 @@ export class SettingsPolicyService {
       const paymentPolicy = this.ensureRecord(sales.paymentPolicy);
       const customerTaxonomy = this.ensureRecord(sales.customerTaxonomy);
       const tagRegistry = this.ensureRecord(sales.tagRegistry);
+      const customerStatusRegistry = this.ensureRecord(sales.customerStatusRegistry);
+      const customerStatusLabels = this.normalizeCustomerStatusLabelMap(customerStatusRegistry.labels);
       const renewalReminder = this.ensureRecord(sales.renewalReminder);
       const productLeadDays = this.ensureRecord(renewalReminder.productLeadDays);
       const normalizedOverrideRoles = this.toStringArray(paymentPolicy.overrideRoles)
@@ -1435,6 +1460,9 @@ export class SettingsPolicyService {
           customerTags: this.normalizeSalesTagRegistryValues(tagRegistry.customerTags),
           interactionTags: this.normalizeSalesTagRegistryValues(tagRegistry.interactionTags),
           interactionResultTags: this.normalizeSalesTagRegistryValues(tagRegistry.interactionResultTags)
+        },
+        customerStatusRegistry: {
+          labels: customerStatusLabels
         },
         renewalReminder: {
           globalLeadDays: this.toInt(renewalReminder.globalLeadDays, 30, 1, 365),
@@ -1791,6 +1819,15 @@ export class SettingsPolicyService {
       }
       if (interactionResultTags.length === 0) {
         warnings.push('sales_crm_policies.tagRegistry.interactionResultTags đang rỗng.');
+      }
+
+      const customerStatusRegistry = this.ensureRecord(value.customerStatusRegistry);
+      const customerStatusLabels = this.ensureRecord(customerStatusRegistry.labels);
+      for (const status of CUSTOMER_CARE_STATUS_OPTIONS) {
+        const label = this.cleanString(customerStatusLabels[status]);
+        if (!label) {
+          warnings.push(`sales_crm_policies.customerStatusRegistry.labels.${status} đang trống, hệ thống sẽ dùng nhãn mặc định.`);
+        }
       }
 
       const renewalReminder = this.ensureRecord(value.renewalReminder);
@@ -2289,6 +2326,16 @@ export class SettingsPolicyService {
           .filter(Boolean)
       )
     );
+  }
+
+  private normalizeCustomerStatusLabelMap(value: unknown) {
+    const labels = this.ensureRecord(value);
+    const result = {} as Record<CustomerCareStatusCode, string>;
+    for (const status of CUSTOMER_CARE_STATUS_OPTIONS) {
+      const fallback = CUSTOMER_CARE_STATUS_LABELS_DEFAULT[status];
+      result[status] = this.cleanString(labels[status]) || fallback;
+    }
+    return result;
   }
 
   private async assertSalesTaxonomyRemovalAllowed(

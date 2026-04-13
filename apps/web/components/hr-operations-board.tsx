@@ -170,7 +170,7 @@ export function HrOperationsBoard() {
 
   const handleArchiveEmployee = async () => {
     if (!selectedEmployee || !canDelete || isArchivingEmployee) return;
-    if (!window.confirm(`Lưu trữ nhân viên ${selectedEmployee.fullName || selectedEmployee.id}?`)) {
+    if (!window.confirm(`Xóa nhân viên ${selectedEmployee.fullName || selectedEmployee.id}?`)) {
       return;
     }
 
@@ -179,12 +179,12 @@ export function HrOperationsBoard() {
       await apiRequest(`/hr/employees/${selectedEmployee.id}`, {
         method: 'DELETE'
       });
-      setResultMessage(`Đã lưu trữ nhân viên ${selectedEmployee.fullName || selectedEmployee.id}.`);
+      setResultMessage(`Đã xóa nhân viên ${selectedEmployee.fullName || selectedEmployee.id}.`);
       setErrorMessage(null);
       setSelectedEmployee(null);
       await loadEmployees();
     } catch (e) {
-      setErrorMessage(e instanceof Error ? e.message : 'Không thể lưu trữ nhân viên');
+      setErrorMessage(e instanceof Error ? e.message : 'Không thể xóa nhân viên');
     } finally {
       setIsArchivingEmployee(false);
     }
@@ -214,7 +214,7 @@ export function HrOperationsBoard() {
           key: 'bulk-archive-employees',
           label: 'Archive',
           tone: 'danger',
-          confirmMessage: (rows) => `Lưu trữ ${rows.length} nhân viên đã chọn?`,
+          confirmMessage: (rows) => `Xóa ${rows.length} nhân viên đã chọn?`,
           execute: async (selectedRows) => {
             const ids = selectedRows.map((row) => String(row.id)).filter(Boolean);
             const result = await runBulkOperation({
@@ -230,13 +230,13 @@ export function HrOperationsBoard() {
 
             const normalized: BulkExecutionResult = {
               ...result,
-              actionLabel: 'Lưu trữ nhân viên',
+              actionLabel: 'Xóa nhân viên',
               message: formatBulkSummary(
                 {
                   ...result,
-                  actionLabel: 'Lưu trữ nhân viên'
+                  actionLabel: 'Xóa nhân viên'
                 },
-                'Lưu trữ nhân viên'
+                'Xóa nhân viên'
               )
             };
 
@@ -245,7 +245,7 @@ export function HrOperationsBoard() {
             }
             setResultMessage(normalized.message ?? null);
             if (normalized.failedCount > 0) {
-              setErrorMessage('Một số nhân viên lỗi khi lưu trữ.');
+              setErrorMessage('Một số nhân viên lỗi khi xóa.');
             } else {
               setErrorMessage(null);
             }
@@ -439,7 +439,7 @@ export function HrOperationsBoard() {
                   onClick={handleArchiveEmployee}
                   disabled={isArchivingEmployee}
                 >
-                  <Trash2 size={16} /> {isArchivingEmployee ? 'Đang lưu trữ...' : 'Lưu trữ nhân viên'}
+                  <Trash2 size={16} /> {isArchivingEmployee ? 'Đang xóa...' : 'Xóa nhân viên'}
                 </button>
               )}
             </div>

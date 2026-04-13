@@ -14,6 +14,7 @@
     "dev:api": "npm run dev:infra:up && DATABASE_URL=${DEV_HOST_DATABASE_URL:-postgresql://erp:erp@127.0.0.1:55432/erp_retail} npm run dev --workspace @erp/api",
     "predev:web": "npm run build --workspace @erp/shared",
     "dev:web": "npm run dev --workspace @erp/web",
+    "dev:rebuild:check": "scripts/dev/rebuild-local-stack.sh",
     "build": "npm run build --workspace @erp/shared && npm run build --workspace @erp/ui && npm run build --workspace @erp/api && npm run build --workspace @erp/web",
     "lint": "npm run lint --workspace @erp/shared && npm run lint --workspace @erp/ui && npm run lint --workspace @erp/api && npm run lint --workspace @erp/web",
     "quality:security": "scripts/quality/run-quality-security.sh",

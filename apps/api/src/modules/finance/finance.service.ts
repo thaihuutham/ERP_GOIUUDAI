@@ -7,6 +7,7 @@ import {
   sliceCursorItems
 } from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
 import { SearchService } from '../search/search.service';
@@ -367,10 +368,10 @@ export class FinanceService {
     });
 
     if (allocationCount > 0 || Number(invoice.paidAmount ?? 0) > 0) {
-      throw new BadRequestException('Hóa đơn đã có thanh toán/đối soát, không thể lưu trữ thủ công.');
+      throw new BadRequestException('Hóa đơn đã có thanh toán/đối soát, không thể xóa thủ công.');
     }
 
-    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? new Date(), 'lưu trữ hóa đơn');
+    await this.assertPeriodUnlockedByDate(invoice.dueAt ?? new Date(), 'xóa hóa đơn');
     await this.prisma.client.invoice.updateMany({
       where: { id: invoice.id },
       data: {
@@ -1148,11 +1149,7 @@ export class FinanceService {
   }
 
   private parseDate(raw: string, fieldName: string) {
-    const date = new Date(raw);
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException(`${fieldName} không hợp lệ.`);
-    }
-    return date;
+    return parseStrictDate(raw, fieldName);
   }
 
   private dateDiffInDays(left: Date, right: Date) {

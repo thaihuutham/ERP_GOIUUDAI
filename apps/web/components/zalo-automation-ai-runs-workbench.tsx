@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkRowId } from '../lib/bulk-actions';
 import { useAccessPolicy } from './access-policy-context';
@@ -140,6 +141,14 @@ function parseCommaSeparatedIds(raw: string) {
         .filter(Boolean)
     )
   );
+}
+
+function parsePositiveIntInput(raw: string, fallback: number) {
+  const parsed = parseFiniteNumber(raw);
+  if (parsed === null || parsed <= 0) {
+    return fallback;
+  }
+  return Math.trunc(parsed);
 }
 
 function readSummaryCounter(summaryJson: unknown, key: string) {
@@ -346,15 +355,19 @@ export function ZaloAutomationAiRunsWorkbench() {
     try {
       const channels = createJobForm.channel === 'ALL' ? [] : [createJobForm.channel];
       const accountIds = parseCommaSeparatedIds(createJobForm.accountIds);
+      const intervalMinutes = parsePositiveIntInput(createJobForm.intervalMinutes, 120);
+      const lookbackHours = parsePositiveIntInput(createJobForm.lookbackHours, 24);
+      const maxConversationsPerRun = parsePositiveIntInput(createJobForm.maxConversationsPerRun, 30);
+      const batchSize = parsePositiveIntInput(createJobForm.batchSize, 5);
 
       await apiRequest('/conversation-quality/jobs', {
         method: 'POST',
         body: {
           name: createJobForm.name,
-          intervalMinutes: Number(createJobForm.intervalMinutes || 120),
-          lookbackHours: Number(createJobForm.lookbackHours || 24),
-          maxConversationsPerRun: Number(createJobForm.maxConversationsPerRun || 30),
-          batchSize: Number(createJobForm.batchSize || 5),
+          intervalMinutes,
+          lookbackHours,
+          maxConversationsPerRun,
+          batchSize,
           aiModel: createJobForm.aiModel.trim() || undefined,
           channelFilter: channels.length > 0 ? channels : undefined,
           channelAccountIds: accountIds.length > 0 ? accountIds : undefined,

@@ -19,7 +19,6 @@ import {
   Save,
 } from 'lucide-react';
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { readStoredAuthSession } from '../lib/auth-session';
 import {
   apiRequest,
   normalizeListPayload,
@@ -27,6 +26,7 @@ import {
   normalizePagedListPayload,
   type ApiListSortMeta
 } from '../lib/api-client';
+import { isStrictIsoDate, parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useCursorTableState } from '../lib/use-cursor-table-state';
@@ -47,14 +47,11 @@ import { CrmCustomersCreatePanel } from './crm-customers/crm-customers-create-pa
 import {
   CUSTOMER_STATUS_OPTIONS,
   CUSTOMER_STATUS_LABELS,
-  CUSTOMER_STATUS_BADGE,
   CUSTOMER_ZALO_NICK_TYPE_OPTIONS,
   CUSTOMER_ZALO_NICK_TYPE_LABELS,
-  CUSTOMER_ZALO_NICK_BADGE,
   CUSTOMER_COLUMN_SETTINGS_STORAGE_KEY,
   CUSTOMER_DEFAULT_VISIBLE_COLUMN_KEYS,
   CUSTOMER_TABLE_PAGE_SIZE,
-  AUTH_ENABLED,
   CUSTOMER_FILTER_OPERATOR_LABELS,
   CONTRACT_PRODUCT_TYPE_OPTIONS,
   VEHICLE_KIND_OPTIONS,
@@ -128,6 +125,8 @@ export function CrmCustomersBoard() {
   const [stageOptions, setStageOptions] = useState<string[]>([]);
   const [sourceOptions, setSourceOptions] = useState<string[]>([]);
   const [customerTagOptions, setCustomerTagOptions] = useState<string[]>([]);
+  const [customerStatusOptions, setCustomerStatusOptions] = useState<CustomerCareStatus[]>(CUSTOMER_STATUS_OPTIONS);
+  const [customerStatusLabels, setCustomerStatusLabels] = useState<Record<CustomerCareStatus, string>>(CUSTOMER_STATUS_LABELS);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<CustomerStatusFilter>('ALL');
   const [tableSortBy, setTableSortBy] = useState('updatedAt');
@@ -176,8 +175,8 @@ export function CrmCustomersBoard() {
     tags: []
   });
   const customerFilterFieldConfigs = useMemo(
-    () => buildCustomerFilterFieldConfigs(stageOptions, sourceOptions, customerTagOptions),
-    [customerTagOptions, sourceOptions, stageOptions]
+    () => buildCustomerFilterFieldConfigs(stageOptions, sourceOptions, customerTagOptions, customerStatusOptions),
+    [customerTagOptions, customerStatusOptions, sourceOptions, stageOptions]
   );
   const [savedCustomerFilters, setSavedCustomerFilters] = useState<CustomerSavedFilter[]>([]);
   const [defaultCustomerFilterId, setDefaultCustomerFilterId] = useState<string | null>(null);
@@ -287,21 +286,21 @@ export function CrmCustomersBoard() {
 
   useEffect(() => {
     setIsDetailEditing(false);
-    setDetailForm(buildDetailForm(selectedCustomer));
+    setDetailForm(buildDetailForm(selectedCustomer, customerStatusOptions));
     setIsVehicleEditorOpen(false);
     setVehicleEditorMode('create');
     setEditingVehicleId(null);
     setVehicleForm(buildVehicleFormState(null, selectedCustomer?.fullName ?? null));
-  }, [selectedCustomer]);
+  }, [selectedCustomer, customerStatusOptions]);
 
   useEffect(() => {
     if (isDetailEditing) {
       return;
     }
     if (customerDetail?.customer) {
-      setDetailForm(buildDetailForm(customerDetail.customer));
+      setDetailForm(buildDetailForm(customerDetail.customer, customerStatusOptions));
     }
-  }, [customerDetail, isDetailEditing]);
+  }, [customerDetail, isDetailEditing, customerStatusOptions]);
 
   const loadCustomers = async () => {
     if (!canView) return;
@@ -336,12 +335,47 @@ export function CrmCustomersBoard() {
       const stages = payload.customerTaxonomy?.stages?.filter(Boolean) ?? [];
       const sources = payload.customerTaxonomy?.sources?.filter(Boolean) ?? [];
       const customerTags = payload.tagRegistry?.customerTags?.filter(Boolean) ?? [];
+      const rawStatusOptions = Array.isArray(payload.customerStatusRegistry?.options)
+        ? payload.customerStatusRegistry?.options
+        : [];
+      const statusRegistryLabels = isRecord(payload.customerStatusRegistry?.labels)
+        ? payload.customerStatusRegistry?.labels
+        : {};
+      const nextStatusOptions = Array.from(
+        new Set(
+          rawStatusOptions
+            .map((item) => String(item ?? '').trim().toUpperCase())
+            .filter((item): item is CustomerCareStatus => CUSTOMER_STATUS_OPTIONS.includes(item as CustomerCareStatus))
+        )
+      );
       const nextStages = stages;
       const nextSources = sources;
       const nextCustomerTags = customerTags;
+      const normalizedStatusOptions = nextStatusOptions.length > 0
+        ? nextStatusOptions
+        : [...CUSTOMER_STATUS_OPTIONS];
+      const nextStatusLabels = CUSTOMER_STATUS_OPTIONS.reduce((result, statusCode) => {
+        const fallbackLabel = CUSTOMER_STATUS_LABELS[statusCode];
+        const overrideLabel = String(statusRegistryLabels[statusCode] ?? '').trim();
+        result[statusCode] = overrideLabel || fallbackLabel;
+        return result;
+      }, {} as Record<CustomerCareStatus, string>);
       setStageOptions(nextStages);
       setSourceOptions(nextSources);
       setCustomerTagOptions(nextCustomerTags);
+      setCustomerStatusOptions(normalizedStatusOptions);
+      setCustomerStatusLabels(nextStatusLabels);
+      setStatus((prev) => (
+        prev === 'ALL' || normalizedStatusOptions.includes(prev)
+          ? prev
+          : 'ALL'
+      ));
+      setCustomerBulkForm((prev) => ({
+        ...prev,
+        status: prev.status && normalizedStatusOptions.includes(prev.status as CustomerCareStatus)
+          ? prev.status
+          : ''
+      }));
       setCreateForm((prev) => ({
         ...prev,
         customerStage: nextStages.includes(prev.customerStage) ? prev.customerStage : (nextStages[0] || ''),
@@ -350,6 +384,9 @@ export function CrmCustomersBoard() {
       }));
       setDetailForm((prev) => ({
         ...prev,
+        status: normalizedStatusOptions.includes(prev.status) || CUSTOMER_STATUS_OPTIONS.includes(prev.status)
+          ? prev.status
+          : (normalizedStatusOptions[0] || 'MOI_CHUA_TU_VAN'),
         tags: prev.tags.filter((tag) => nextCustomerTags.includes(tag))
       }));
     } catch (error) {
@@ -357,6 +394,8 @@ export function CrmCustomersBoard() {
       setStageOptions([]);
       setSourceOptions([]);
       setCustomerTagOptions([]);
+      setCustomerStatusOptions([...CUSTOMER_STATUS_OPTIONS]);
+      setCustomerStatusLabels(CUSTOMER_STATUS_LABELS);
     }
   };
 
@@ -764,7 +803,7 @@ export function CrmCustomersBoard() {
       selectCustomer(null);
       setCustomerDetail(null);
       setIsDetailEditing(false);
-      setDetailForm(buildDetailForm(null));
+      setDetailForm(buildDetailForm(null, customerStatusOptions));
       await loadCustomers();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi cập nhật trạng thái BỎ QUA/Xóa');
@@ -800,6 +839,15 @@ export function CrmCustomersBoard() {
     }
     setIsSavingVehicle(true);
     try {
+      const seatCountParsed = vehicleForm.seatCount.trim() ? parseFiniteNumber(vehicleForm.seatCount) : undefined;
+      if (seatCountParsed === null || (typeof seatCountParsed === 'number' && seatCountParsed < 0)) {
+        throw new Error('Số chỗ ngồi phải là số nguyên >= 0.');
+      }
+      const loadKgParsed = vehicleForm.loadKg.trim() ? parseFiniteNumber(vehicleForm.loadKg) : undefined;
+      if (loadKgParsed === null || (typeof loadKgParsed === 'number' && loadKgParsed < 0)) {
+        throw new Error('Tải trọng phải là số >= 0.');
+      }
+
       const payload = {
         ownerCustomerId: selectedCustomer.id,
         ownerFullName: vehicleForm.ownerFullName,
@@ -809,8 +857,8 @@ export function CrmCustomersBoard() {
         engineNumber: vehicleForm.engineNumber,
         vehicleKind: vehicleForm.vehicleKind,
         vehicleType: vehicleForm.vehicleType,
-        seatCount: vehicleForm.seatCount === '' ? undefined : Number(vehicleForm.seatCount),
-        loadKg: vehicleForm.loadKg === '' ? undefined : Number(vehicleForm.loadKg),
+        seatCount: typeof seatCountParsed === 'number' ? Math.trunc(seatCountParsed) : undefined,
+        loadKg: typeof loadKgParsed === 'number' ? loadKgParsed : undefined,
         status: vehicleForm.status
       };
 
@@ -845,7 +893,7 @@ export function CrmCustomersBoard() {
     if (!canArchiveSelectedCustomerVehicles) {
       return;
     }
-    if (!window.confirm(`Lưu trữ xe ${vehicle.plateNumber || vehicle.id}?`)) {
+    if (!window.confirm(`Xóa xe ${vehicle.plateNumber || vehicle.id}?`)) {
       return;
     }
 
@@ -854,7 +902,7 @@ export function CrmCustomersBoard() {
       await apiRequest(`/crm/vehicles/${vehicle.id}`, {
         method: 'DELETE'
       });
-      setResultMessage(`Đã lưu trữ xe ${vehicle.plateNumber || vehicle.id}.`);
+      setResultMessage(`Đã xóa xe ${vehicle.plateNumber || vehicle.id}.`);
       setErrorMessage(null);
       if (editingVehicleId === vehicle.id) {
         setIsVehicleEditorOpen(false);
@@ -865,7 +913,7 @@ export function CrmCustomersBoard() {
         await loadCustomerDetail(selectedCustomer.id);
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi lưu trữ xe');
+      setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi xóa xe');
     } finally {
       setArchivingVehicleId(null);
     }
@@ -955,6 +1003,17 @@ export function CrmCustomersBoard() {
     }
     return sourceOptions;
   }, [detailForm.source, sourceOptions]);
+  const detailStatusOptions = useMemo(() => {
+    const current = String(detailForm.status ?? '').trim().toUpperCase() as CustomerCareStatus;
+    if (
+      current
+      && !customerStatusOptions.includes(current)
+      && CUSTOMER_STATUS_OPTIONS.includes(current)
+    ) {
+      return [current, ...customerStatusOptions];
+    }
+    return customerStatusOptions;
+  }, [customerStatusOptions, detailForm.status]);
   const contractSummary = customerDetail?.contractSummary ?? null;
   const recentContracts = customerDetail?.recentContracts ?? [];
   const customerVehicles = customerDetail?.vehicles ?? [];
@@ -1013,11 +1072,15 @@ export function CrmCustomersBoard() {
       label: 'Trạng thái',
       group: 'Thông tin khách hàng',
       type: 'select',
-      options: CUSTOMER_STATUS_OPTIONS.map((value) => ({
-        label: CUSTOMER_STATUS_LABELS[value],
+      options: customerStatusOptions.map((value) => ({
+        label: customerStatusLabel(value, customerStatusLabels),
         value,
       })),
-      render: (c) => <Badge variant={customerStatusBadge(c.status)}>{customerStatusLabel(c.status)}</Badge>
+      render: (c) => (
+        <Badge variant={customerStatusBadge(c.status)}>
+          {customerStatusLabel(c.status, customerStatusLabels)}
+        </Badge>
+      )
     },
     {
       key: 'zaloNickType',
@@ -1252,11 +1315,10 @@ export function CrmCustomersBoard() {
             patchBody.source = source;
           }
           if (customerBulkForm.lastContactDate) {
-            const parsedDate = new Date(`${customerBulkForm.lastContactDate}T00:00:00`);
-            if (Number.isNaN(parsedDate.getTime())) {
+            if (!isStrictIsoDate(customerBulkForm.lastContactDate)) {
               throw new Error('Ngày lần liên hệ cuối không hợp lệ.');
             }
-            patchBody.lastContactAt = parsedDate.toISOString();
+            patchBody.lastContactAt = `${customerBulkForm.lastContactDate}T00:00:00.000Z`;
           }
           if (tags.length > 0) {
             if (customerBulkForm.tagMode === 'REPLACE') {
@@ -1335,9 +1397,9 @@ export function CrmCustomersBoard() {
             }
           >
             <option value="">Không cập nhật</option>
-            {CUSTOMER_STATUS_OPTIONS.map((value) => (
+            {customerStatusOptions.map((value) => (
               <option key={`bulk-status-${value}`} value={value}>
-                {CUSTOMER_STATUS_LABELS[value]}
+                {customerStatusLabel(value, customerStatusLabels)}
               </option>
             ))}
           </select>
@@ -1529,9 +1591,9 @@ export function CrmCustomersBoard() {
                 onChange={(event) => setStatus(event.target.value as CustomerStatusFilter)}
               >
                 <option value="ALL">Tất cả trạng thái CSKH</option>
-                {CUSTOMER_STATUS_OPTIONS.map((value) => (
+                {customerStatusOptions.map((value) => (
                   <option key={value} value={value}>
-                    {CUSTOMER_STATUS_LABELS[value]}
+                    {customerStatusLabel(value, customerStatusLabels)}
                   </option>
                 ))}
               </select>
@@ -1670,6 +1732,8 @@ export function CrmCustomersBoard() {
         isSoftSkippingCustomer={isSoftSkippingCustomer}
         detailStageOptions={detailStageOptions}
         detailSourceOptions={detailSourceOptions}
+        customerStatusOptions={detailStatusOptions}
+        customerStatusLabels={customerStatusLabels}
         customerTagSelectOptions={customerTagSelectOptions}
         customerVehicles={customerVehicles}
         canManageSelectedCustomerVehicles={canManageSelectedCustomerVehicles}
@@ -1693,7 +1757,7 @@ export function CrmCustomersBoard() {
         setEditingVehicleId={setEditingVehicleId}
         setVehicleEditorMode={setVehicleEditorMode as any}
         selectedCustomerPermissionSnapshot={selectedCustomerPermissionSnapshot}
-        buildDetailForm={buildDetailForm}
+        buildDetailForm={(customer) => buildDetailForm(customer, customerStatusOptions)}
         buildVehicleFormState={buildVehicleFormState}
       />
 

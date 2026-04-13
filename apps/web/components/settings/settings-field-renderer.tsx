@@ -187,7 +187,15 @@ export function SettingsFieldRenderer({
             <div className="field" key={field.id}>
               <label htmlFor={field.id}>{field.label}</label>
               <div style={{ display: 'grid', gridTemplateColumns: field.unit ? '1fr auto' : '1fr', gap: '0.4rem', alignItems: 'center' }}>
-                <input id={field.id} type="number" value={String(value)} min={field.min} max={field.max} step={field.step ?? 1} onChange={(event) => updateField(field, event.target.value)} />
+                <input
+                  id={field.id}
+                  type="number"
+                  value={String(value)}
+                  min={field.min}
+                  max={field.max}
+                  step={field.step ?? (field.integer ? 1 : 'any')}
+                  onChange={(event) => updateField(field, event.target.value)}
+                />
                 {field.unit && <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{field.unit}</span>}
               </div>
               {field.helper && <small>{field.helper}</small>}

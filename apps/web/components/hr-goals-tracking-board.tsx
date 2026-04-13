@@ -18,6 +18,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { isStrictIsoDate, parseFiniteNumber } from '../lib/form-validation';
 import { SidePanel } from './ui/side-panel';
 
 type GoalStatus = 'DRAFT' | 'PENDING' | 'ACTIVE' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
@@ -174,6 +175,15 @@ function createMetricBindingDraft(): MetricBindingDraft {
     recruiterId: '',
     departmentId: ''
   };
+}
+
+function parseOptionalNumberInput(raw: string) {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const parsed = parseFiniteNumber(normalized);
+  return parsed === null ? null : parsed;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -340,11 +350,11 @@ export function HrGoalsTrackingBoard() {
           if (binding.recruiterId.trim()) configJson.recruiterId = binding.recruiterId.trim();
           if (binding.departmentId.trim()) configJson.departmentId = binding.departmentId.trim();
 
-          const numericWeight = Number(binding.weight);
+          const numericWeight = parseFiniteNumber(binding.weight);
           return {
             sourceSystem,
             metricKey,
-            weight: Number.isFinite(numericWeight) ? numericWeight : 1,
+            weight: numericWeight !== null && numericWeight > 0 ? numericWeight : 1,
             configJson: Object.keys(configJson).length > 0 ? configJson : undefined
           };
         })
@@ -352,6 +362,23 @@ export function HrGoalsTrackingBoard() {
 
       if (createForm.trackingMode !== 'MANUAL' && metricBindings.length === 0) {
         throw new Error('Mode AUTO/HYBRID cần ít nhất 1 dòng metric binding hợp lệ.');
+      }
+      if (createForm.startDate && !isStrictIsoDate(createForm.startDate)) {
+        throw new Error('Ngày bắt đầu không hợp lệ (YYYY-MM-DD).');
+      }
+      if (createForm.endDate && !isStrictIsoDate(createForm.endDate)) {
+        throw new Error('Ngày kết thúc không hợp lệ (YYYY-MM-DD).');
+      }
+      if (createForm.startDate && createForm.endDate && createForm.endDate < createForm.startDate) {
+        throw new Error('Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.');
+      }
+      const targetValueParsed = parseOptionalNumberInput(createForm.targetValue);
+      if (targetValueParsed === null) {
+        throw new Error('Target value không hợp lệ.');
+      }
+      const currentValueParsed = parseOptionalNumberInput(createForm.currentValue);
+      if (currentValueParsed === null) {
+        throw new Error('Current value không hợp lệ.');
       }
 
       await apiRequest('/hr/goals', {
@@ -362,8 +389,8 @@ export function HrGoalsTrackingBoard() {
           title: createForm.title,
           description: createForm.description || undefined,
           period: createForm.period,
-          targetValue: createForm.targetValue ? Number(createForm.targetValue) : undefined,
-          currentValue: createForm.currentValue ? Number(createForm.currentValue) : undefined,
+          targetValue: targetValueParsed,
+          currentValue: currentValueParsed,
           trackingMode: createForm.trackingMode,
           startDate: createForm.startDate || undefined,
           endDate: createForm.endDate || undefined,
@@ -399,13 +426,20 @@ export function HrGoalsTrackingBoard() {
     setNotice(null);
 
     try {
+      const currentValueParsed = parseOptionalNumberInput(progressForm.currentValue);
+      if (currentValueParsed === null) {
+        throw new Error('Giá trị current value không hợp lệ.');
+      }
+      const manualAdjustmentParsed = parseOptionalNumberInput(progressForm.manualAdjustmentValue);
+      if (manualAdjustmentParsed === null) {
+        throw new Error('Giá trị điều chỉnh thủ công không hợp lệ.');
+      }
+
       await apiRequest(`/hr/goals/${selectedGoal.id}/progress`, {
         method: 'PATCH',
         body: {
-          currentValue: progressForm.currentValue ? Number(progressForm.currentValue) : undefined,
-          manualAdjustmentValue: progressForm.manualAdjustmentValue
-            ? Number(progressForm.manualAdjustmentValue)
-            : undefined,
+          currentValue: currentValueParsed,
+          manualAdjustmentValue: manualAdjustmentParsed,
           note: progressForm.note || undefined
         }
       });

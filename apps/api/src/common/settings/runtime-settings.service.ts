@@ -19,6 +19,29 @@ const HR_APPENDIX_AGGREGATORS = ['none', 'count', 'sum', 'avg', 'min', 'max'] as
 const HR_APPENDIX_FIELD_STATUS = ['ACTIVE', 'DRAFT', 'INACTIVE', 'ARCHIVED'] as const;
 const IAM_V2_ALL_MODULE_TOKENS = new Set(['*', 'all']);
 const CHECKOUT_OVERRIDE_ROLE_ALLOWLIST = new Set(['ADMIN']);
+const CUSTOMER_CARE_STATUS_OPTIONS = [
+  'MOI_CHUA_TU_VAN',
+  'DANG_SUY_NGHI',
+  'DONG_Y_CHUYEN_THANH_KH',
+  'KH_TU_CHOI',
+  'KH_DA_MUA_BEN_KHAC',
+  'NGUOI_NHA_LAM_THUE_BAO',
+  'KHONG_NGHE_MAY_LAN_1',
+  'KHONG_NGHE_MAY_LAN_2',
+  'SAI_SO_KHONG_TON_TAI_BO_QUA_XOA'
+] as const;
+type CustomerCareStatusCode = (typeof CUSTOMER_CARE_STATUS_OPTIONS)[number];
+const CUSTOMER_CARE_STATUS_LABELS_DEFAULT: Record<CustomerCareStatusCode, string> = {
+  MOI_CHUA_TU_VAN: '[Mới] Chưa tư vấn',
+  DANG_SUY_NGHI: 'Đang suy nghĩ',
+  DONG_Y_CHUYEN_THANH_KH: 'Đồng ý - Chuyển thành KH',
+  KH_TU_CHOI: 'KH Từ chối',
+  KH_DA_MUA_BEN_KHAC: 'KH đã mua bên khác',
+  NGUOI_NHA_LAM_THUE_BAO: 'Người Nhà Làm/Thuê bao',
+  KHONG_NGHE_MAY_LAN_1: 'Không nghe máy lần 1',
+  KHONG_NGHE_MAY_LAN_2: 'Không nghe máy lần 2',
+  SAI_SO_KHONG_TON_TAI_BO_QUA_XOA: 'Sai số, Không tồn tại -> BỎ QUA/Xóa'
+};
 
 type CacheEntry = {
   value: Record<string, unknown>;
@@ -420,6 +443,8 @@ export class RuntimeSettingsService {
     const creditPolicy = this.toRecord(domain.creditPolicy);
     const customerTaxonomy = this.toRecord(domain.customerTaxonomy);
     const tagRegistry = this.toRecord(domain.tagRegistry);
+    const customerStatusRegistry = this.toRecord(domain.customerStatusRegistry);
+    const customerStatusLabels = this.toRecord(customerStatusRegistry.labels);
     const renewalReminder = this.toRecord(domain.renewalReminder);
     const productLeadDays = this.toRecord(renewalReminder.productLeadDays);
     const checkoutTemplates = this.toRecord(domain.checkoutTemplates);
@@ -519,6 +544,15 @@ export class RuntimeSettingsService {
         customerTags: this.toStringArray(tagRegistry.customerTags).map((item) => item.toLowerCase()),
         interactionTags: this.toStringArray(tagRegistry.interactionTags).map((item) => item.toLowerCase()),
         interactionResultTags: this.toStringArray(tagRegistry.interactionResultTags).map((item) => item.toLowerCase())
+      },
+      customerStatusRegistry: {
+        options: [...CUSTOMER_CARE_STATUS_OPTIONS],
+        labels: CUSTOMER_CARE_STATUS_OPTIONS.reduce((result, status) => {
+          const fallbackLabel = CUSTOMER_CARE_STATUS_LABELS_DEFAULT[status];
+          const normalizedLabel = this.readString(customerStatusLabels[status], fallbackLabel) || fallbackLabel;
+          result[status] = normalizedLabel;
+          return result;
+        }, {} as Record<CustomerCareStatusCode, string>)
       },
       renewalReminder: {
         globalLeadDays: this.toInt(renewalReminder.globalLeadDays, 30, 1, 365),

@@ -6,6 +6,7 @@ import {
   Prisma
 } from '@prisma/client';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseOptionalStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type OpenAICompatibleUsage = {
@@ -700,14 +701,7 @@ export class ConversationQualityService implements OnModuleInit, OnModuleDestroy
   }
 
   private parseDateOptional(input: unknown) {
-    if (input === null || input === undefined || input === '') {
-      return null;
-    }
-    const parsed = new Date(String(input));
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException('Giá trị ngày giờ không hợp lệ.');
-    }
-    return parsed;
+    return parseOptionalStrictDate(input, 'Giá trị ngày giờ');
   }
 
   private requiredString(input: unknown, message: string) {

@@ -21,12 +21,8 @@ import { SidePanel } from '../ui/side-panel';
 import { Modal } from '../ui/modal';
 import { Badge, statusToBadge } from '../ui/badge';
 import {
-  CUSTOMER_STATUS_OPTIONS,
-  CUSTOMER_STATUS_LABELS,
-  CUSTOMER_STATUS_BADGE,
   CUSTOMER_ZALO_NICK_TYPE_OPTIONS,
   CUSTOMER_ZALO_NICK_TYPE_LABELS,
-  CUSTOMER_ZALO_NICK_BADGE,
   VEHICLE_KIND_OPTIONS,
   type Customer,
   type CustomerCareStatus,
@@ -71,6 +67,8 @@ export type CrmCustomersDetailPanelProps = {
   isSoftSkippingCustomer: boolean;
   detailStageOptions: string[];
   detailSourceOptions: string[];
+  customerStatusOptions: CustomerCareStatus[];
+  customerStatusLabels: Partial<Record<CustomerCareStatus, string>>;
   customerTagSelectOptions: string[];
   customerVehicles: CrmCustomerVehicle[];
   canManageSelectedCustomerVehicles: boolean;
@@ -103,7 +101,7 @@ export function CrmCustomersDetailPanel({
   customerDetail, isDetailLoading, detailForm, setDetailForm,
   isDetailEditing, setIsDetailEditing, isSavingDetail, handleSaveDetailProfile,
   handleSoftSkipCustomer, isSoftSkippingCustomer,
-  detailStageOptions, detailSourceOptions, customerTagSelectOptions,
+  detailStageOptions, detailSourceOptions, customerStatusOptions, customerStatusLabels, customerTagSelectOptions,
   customerVehicles, canManageSelectedCustomerVehicles, canArchiveSelectedCustomerVehicles,
   isVehicleEditorOpen, setIsVehicleEditorOpen, openCreateVehicleEditor, openEditVehicleEditor,
   handleArchiveVehicle, vehicleMap, vehicleForm, setVehicleForm,
@@ -208,15 +206,17 @@ export function CrmCustomersDetailPanel({
                     value={detailForm.status}
                     onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value as CustomerCareStatus }))}
                   >
-                    {CUSTOMER_STATUS_OPTIONS.map((value) => (
+                    {customerStatusOptions.map((value) => (
                       <option key={value} value={value}>
-                        {CUSTOMER_STATUS_LABELS[value]}
+                        {customerStatusLabel(value, customerStatusLabels)}
                       </option>
                     ))}
                   </select>
                 ) : (
                   <p style={{ fontSize: '0.9375rem' }}>
-                    <Badge variant={customerStatusBadge(detailCustomer?.status)}>{customerStatusLabel(detailCustomer?.status)}</Badge>
+                    <Badge variant={customerStatusBadge(detailCustomer?.status)}>
+                      {customerStatusLabel(detailCustomer?.status, customerStatusLabels)}
+                    </Badge>
                   </p>
                 )}
               </div>
@@ -381,7 +381,7 @@ export function CrmCustomersDetailPanel({
                               onClick={() => handleArchiveVehicle(vehicle as any)}
                               disabled={archivingVehicleId === vehicle.id}
                             >
-                              {archivingVehicleId === vehicle.id ? 'Đang lưu trữ...' : 'Lưu trữ'}
+                              {archivingVehicleId === vehicle.id ? 'Đang xóa...' : 'Xóa'}
                             </button>
                           )}
                         </div>
@@ -559,7 +559,7 @@ export function CrmCustomersDetailPanel({
                       onClick={handleSoftSkipCustomer}
                       disabled={isSoftSkippingCustomer}
                     >
-                      <Trash2 size={16} /> {isSoftSkippingCustomer ? 'Đang cập nhật...' : 'Lưu trữ'}
+                      <Trash2 size={16} /> {isSoftSkippingCustomer ? 'Đang cập nhật...' : 'Xóa'}
                     </button>
                   )}
                 </>

@@ -168,13 +168,13 @@ describe('SettingsPolicyService', () => {
       'org-structure'
     ]);
     expect(metadata.domainTabs.sales_crm_policies.map((tab) => tab.key)).toEqual([
-      'sales-orders',
-      'sales-checkout-core',
-      'sales-credit',
-      'sales-draft',
-      'sales-taxonomy',
-      'sales-tags',
-      'sales-renewal'
+      'sales-policy-order',
+      'sales-policy-checkout',
+      'sales-policy-discount-credit',
+      'sales-policy-draft',
+      'crm-settings-status',
+      'crm-settings-renewal',
+      'crm-settings-distribution'
     ]);
     expect(metadata.domainTabs.integrations.map((tab) => tab.key)).toEqual([
       'integration-bhtot',

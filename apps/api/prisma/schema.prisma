@@ -3461,14 +3461,19 @@ enum ElearningContentType {
   QUIZ
 }
 
-enum ElearningQuestionTag {
-  SALES
-  HR
-  FINANCE
-  SCM
-  GENERAL
-  COMPLIANCE
-  ONBOARDING
+model ElearningQuestionCategory {
+  id        String        @id @default(cuid())
+  tenant_Id String
+  code      String
+  label     String
+  color     String?
+  sortOrder Int           @default(0)
+  status    GenericStatus @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([tenant_Id, code])
+  @@index([tenant_Id, status])
 }
 
 enum ElearningEnrollmentStatus {
@@ -3486,6 +3491,7 @@ model ElearningCourse {
   description     String?
   coverImageUrl   String?
   tags            String[]      @default([])
+  category        String?
   enrollPolicy    String        @default("INVITE")
   status          GenericStatus @default(DRAFT)
   publishedAt     DateTime?
@@ -3553,7 +3559,7 @@ model ElearningQuestion {
   tenant_Id    String
   questionText String
   explanation  String?
-  tags         ElearningQuestionTag[] @default([GENERAL])
+  tags         String[]              @default(["GENERAL"])
   positionId   String?
   departmentId String?
   points       Int                   @default(1)

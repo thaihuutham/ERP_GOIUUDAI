@@ -11,6 +11,7 @@ import {
   normalizePagedListPayload,
   type ApiListSortMeta
 } from '../lib/api-client';
+import { parseFiniteNumber } from '../lib/form-validation';
 import { downloadExcelTemplate } from '../lib/excel-template';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { useCursorTableState } from '../lib/use-cursor-table-state';
@@ -534,6 +535,15 @@ export function CrmVehiclesBoard() {
 
     setIsSavingVehicle(true);
     try {
+      const seatCountParsed = vehicleForm.seatCount.trim() ? parseFiniteNumber(vehicleForm.seatCount) : undefined;
+      if (seatCountParsed === null || (typeof seatCountParsed === 'number' && seatCountParsed < 0)) {
+        throw new Error('Số chỗ ngồi phải là số nguyên >= 0.');
+      }
+      const loadKgParsed = vehicleForm.loadKg.trim() ? parseFiniteNumber(vehicleForm.loadKg) : undefined;
+      if (loadKgParsed === null || (typeof loadKgParsed === 'number' && loadKgParsed < 0)) {
+        throw new Error('Tải trọng phải là số >= 0.');
+      }
+
       const payload = {
         ownerCustomerId,
         ownerFullName: vehicleForm.ownerFullName,
@@ -543,8 +553,8 @@ export function CrmVehiclesBoard() {
         engineNumber: vehicleForm.engineNumber,
         vehicleKind: vehicleForm.vehicleKind,
         vehicleType: vehicleForm.vehicleType,
-        seatCount: vehicleForm.seatCount === '' ? undefined : Number(vehicleForm.seatCount),
-        loadKg: vehicleForm.loadKg === '' ? undefined : Number(vehicleForm.loadKg),
+        seatCount: typeof seatCountParsed === 'number' ? Math.trunc(seatCountParsed) : undefined,
+        loadKg: typeof loadKgParsed === 'number' ? loadKgParsed : undefined,
         status: vehicleForm.status
       };
 
@@ -586,7 +596,7 @@ export function CrmVehiclesBoard() {
     if (!canArchiveVehicle(vehicle)) {
       return;
     }
-    if (!window.confirm(`Lưu trữ xe ${vehicle.plateNumber || vehicle.id}?`)) {
+    if (!window.confirm(`Xóa xe ${vehicle.plateNumber || vehicle.id}?`)) {
       return;
     }
 
@@ -595,7 +605,7 @@ export function CrmVehiclesBoard() {
       await apiRequest(`/crm/vehicles/${vehicle.id}`, {
         method: 'DELETE'
       });
-      setResultMessage(`Đã lưu trữ xe ${vehicle.plateNumber || vehicle.id}.`);
+      setResultMessage(`Đã xóa xe ${vehicle.plateNumber || vehicle.id}.`);
       setErrorMessage(null);
       if (selectedVehicle?.id === vehicle.id) {
         setSelectedVehicle(null);
@@ -606,7 +616,7 @@ export function CrmVehiclesBoard() {
       }
       await loadVehicles();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi lưu trữ xe');
+      setErrorMessage(error instanceof Error ? error.message : 'Lỗi khi xóa xe');
     } finally {
       setArchivingVehicleId(null);
     }
@@ -641,7 +651,7 @@ export function CrmVehiclesBoard() {
           throw new Error(`Không tìm thấy xe ${vehicleId}.`);
         }
         if (!canArchiveVehicle(row)) {
-          throw new Error(`Bạn không có quyền lưu trữ xe ${row.plateNumber || row.id}.`);
+          throw new Error(`Bạn không có quyền xóa xe ${row.plateNumber || row.id}.`);
         }
         if (String(row.status || '').toUpperCase() === 'ARCHIVED') {
           throw new Error(`Xe ${row.plateNumber || row.id} đã ở trạng thái ARCHIVED.`);
@@ -680,11 +690,11 @@ export function CrmVehiclesBoard() {
     ? [
         {
           key: 'bulk-archive-vehicles',
-          label: 'Lưu trữ',
+          label: 'Xóa',
           tone: 'danger',
-          confirmMessage: (rows) => `Lưu trữ ${rows.length} xe đã chọn?`,
+          confirmMessage: (rows) => `Xóa ${rows.length} xe đã chọn?`,
           execute: async (selectedRows) =>
-            runVehicleBulkAction('Lưu trữ xe', selectedRows, async (vehicle) => {
+            runVehicleBulkAction('Xóa xe', selectedRows, async (vehicle) => {
               await apiRequest(`/crm/vehicles/${vehicle.id}`, {
                 method: 'DELETE'
               });
@@ -1158,7 +1168,7 @@ export function CrmVehiclesBoard() {
                   onClick={() => handleArchiveVehicle(selectedVehicle)}
                   disabled={archivingVehicleId === selectedVehicle.id}
                 >
-                  <Trash2 size={16} /> {archivingVehicleId === selectedVehicle.id ? 'Đang lưu trữ...' : 'Lưu trữ'}
+                  <Trash2 size={16} /> {archivingVehicleId === selectedVehicle.id ? 'Đang xóa...' : 'Xóa'}
                 </button>
               )}
             </div>

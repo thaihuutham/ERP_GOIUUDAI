@@ -13,13 +13,23 @@ import {
   CheckCircle2,
   PlayCircle,
   Trash2,
-  Eye
+  Upload,
+  Settings,
+  Edit3,
+  X
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { useAccessPolicy } from './access-policy-context';
 import { Badge, statusToBadge } from './ui';
 import { SidePanel } from './ui/side-panel';
+import { ExcelImportBlock, type ExcelImportSummary } from './ui/excel-import-block';
+import {
+  buildQuestionImportTemplateRows,
+  parseQuestionImportXlsx,
+  type QuestionImportSummary
+} from '../lib/elearning-question-import';
+import { downloadExcelTemplate } from '../lib/excel-template';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -55,6 +65,15 @@ type QuestionOption = {
   optionText: string;
   isCorrect: boolean;
   sortOrder: number;
+};
+
+type QuestionCategory = {
+  id: string;
+  code: string;
+  label: string;
+  color?: string | null;
+  sortOrder: number;
+  status?: string;
 };
 
 type DashboardStats = {
@@ -252,15 +271,17 @@ function CreateCoursePanel({
 function CreateQuestionPanel({
   isOpen,
   onClose,
-  onCreated
+  onCreated,
+  categories
 }: {
   isOpen: boolean;
   onClose: () => void;
   onCreated: () => void;
+  categories: QuestionCategory[];
 }) {
   const [questionText, setQuestionText] = useState('');
   const [explanation, setExplanation] = useState('');
-  const [tag, setTag] = useState('GENERAL');
+  const [selectedTags, setSelectedTags] = useState<string[]>(['GENERAL']);
   const [options, setOptions] = useState([
     { optionText: '', isCorrect: false },
     { optionText: '', isCorrect: false },
@@ -269,6 +290,12 @@ function CreateQuestionPanel({
   ]);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const toggleTag = (code: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(code) ? prev.filter((t) => t !== code) : [...prev, code]
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -294,12 +321,13 @@ function CreateQuestionPanel({
         body: {
           questionText,
           explanation: explanation || undefined,
-          tags: [tag],
+          tags: selectedTags.length > 0 ? selectedTags : ['GENERAL'],
           options: validOptions
         }
       });
       setQuestionText('');
       setExplanation('');
+      setSelectedTags(['GENERAL']);
       setOptions([
         { optionText: '', isCorrect: false },
         { optionText: '', isCorrect: false },
@@ -323,16 +351,6 @@ function CreateQuestionPanel({
       })
     );
   };
-
-  const QUESTION_TAG_OPTIONS = [
-    { value: 'GENERAL', label: 'Chung' },
-    { value: 'SALES', label: 'Kinh doanh' },
-    { value: 'HR', label: 'Nhân sự' },
-    { value: 'FINANCE', label: 'Tài chính' },
-    { value: 'SCM', label: 'Chuỗi cung ứng' },
-    { value: 'COMPLIANCE', label: 'Tuân thủ' },
-    { value: 'ONBOARDING', label: 'Onboarding' }
-  ];
 
   return (
     <SidePanel title="Thêm câu hỏi" isOpen={isOpen} onClose={onClose}>
@@ -358,14 +376,33 @@ function CreateQuestionPanel({
         </div>
 
         <div>
-          <label style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.25rem', display: 'block' }}>
-            Phân loại
+          <label style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.5rem', display: 'block' }}>
+            Phân loại (chọn nhiều)
           </label>
-          <select className="input" value={tag} onChange={(e) => setTag(e.target.value)}>
-            {QUESTION_TAG_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+            {categories.map((cat) => (
+              <button
+                key={cat.code}
+                type="button"
+                onClick={() => toggleTag(cat.code)}
+                style={{
+                  padding: '0.3rem 0.6rem',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.75rem',
+                  fontWeight: selectedTags.includes(cat.code) ? 600 : 400,
+                  border: `1.5px solid ${selectedTags.includes(cat.code) ? (cat.color ?? 'var(--primary)') : 'var(--line)'}`,
+                  background: selectedTags.includes(cat.code)
+                    ? `color-mix(in srgb, ${cat.color ?? 'var(--primary)'} 12%, var(--surface))`
+                    : 'transparent',
+                  color: selectedTags.includes(cat.code) ? (cat.color ?? 'var(--primary)') : 'var(--muted)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {selectedTags.includes(cat.code) && '✓ '}{cat.label}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
 
         <div>
@@ -422,7 +459,11 @@ function CreateQuestionPanel({
 
 // ─── Main Operations Board ─────────────────────────────────────────
 
-export function ElearningOperationsBoard() {
+export function ElearningOperationsBoard({
+  onOpenCourse
+}: {
+  onOpenCourse?: (courseId: string) => void;
+}) {
   const { canModule, canAction } = useAccessPolicy();
   const canView = canModule('elearning');
   const canCreate = canAction('elearning', 'CREATE');
@@ -430,6 +471,7 @@ export function ElearningOperationsBoard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('courses');
   const [courses, setCourses] = useState<Course[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [categories, setCategories] = useState<QuestionCategory[]>([]);
   const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -438,8 +480,17 @@ export function ElearningOperationsBoard() {
   const [isCreateCourseOpen, setIsCreateCourseOpen] = useState(false);
   const [isCreateQuestionOpen, setIsCreateQuestionOpen] = useState(false);
 
-  // Selected course detail
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  // Category management state
+  const [newCatLabel, setNewCatLabel] = useState('');
+  const [newCatCode, setNewCatCode] = useState('');
+  const [newCatColor, setNewCatColor] = useState('#6B7280');
+  const [isAddingCat, setIsAddingCat] = useState(false);
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editCatLabel, setEditCatLabel] = useState('');
+
+  // Import state
+  const [isImporting, setIsImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<QuestionImportSummary | null>(null);
 
   const loadCourses = useCallback(async () => {
     setIsLoading(true);
@@ -471,6 +522,15 @@ export function ElearningOperationsBoard() {
     }
   }, [search]);
 
+  const loadCategories = useCallback(async () => {
+    try {
+      const payload = await apiRequest<any>('/elearning/question-categories');
+      setCategories(normalizeListPayload(payload) as QuestionCategory[]);
+    } catch {
+      // non-critical
+    }
+  }, []);
+
   const loadDashboard = useCallback(async () => {
     try {
       const stats = await apiRequest<DashboardStats>('/elearning/dashboard');
@@ -482,14 +542,76 @@ export function ElearningOperationsBoard() {
 
   const loadData = useCallback(async () => {
     if (activeTab === 'courses') await loadCourses();
-    else if (activeTab === 'questions') await loadQuestions();
+    else if (activeTab === 'questions') { await loadQuestions(); await loadCategories(); }
     else if (activeTab === 'dashboard') await loadDashboard();
-  }, [activeTab, loadCourses, loadQuestions, loadDashboard]);
+  }, [activeTab, loadCourses, loadQuestions, loadCategories, loadDashboard]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadData(), 200);
     return () => clearTimeout(timer);
   }, [loadData]);
+
+  // ── Category CRUD handlers ──
+  const handleAddCategory = async () => {
+    if (!newCatCode.trim() || !newCatLabel.trim()) return;
+    try {
+      await apiRequest('/elearning/question-categories', {
+        method: 'POST',
+        body: { code: newCatCode.toUpperCase().trim(), label: newCatLabel.trim(), color: newCatColor }
+      });
+      setNewCatCode('');
+      setNewCatLabel('');
+      setNewCatColor('#6B7280');
+      setIsAddingCat(false);
+      await loadCategories();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Lỗi tạo phân loại.');
+    }
+  };
+
+  const handleUpdateCategory = async (id: string) => {
+    if (!editCatLabel.trim()) return;
+    try {
+      await apiRequest(`/elearning/question-categories/${id}`, {
+        method: 'PATCH',
+        body: { label: editCatLabel.trim() }
+      });
+      setEditingCatId(null);
+      await loadCategories();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Lỗi cập nhật phân loại.');
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    try {
+      await apiRequest(`/elearning/question-categories/${id}`, { method: 'DELETE' });
+      await loadCategories();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Lỗi xóa phân loại.');
+    }
+  };
+
+  // ── Import handler ──
+  const handleImportFile = async (file: File) => {
+    setIsImporting(true);
+    setImportSummary(null);
+    setErrorMessage(null);
+    try {
+      const rows = await parseQuestionImportXlsx(file);
+      if (rows.length === 0) throw new Error('File Excel không có dữ liệu câu hỏi hợp lệ.');
+      const result = await apiRequest<QuestionImportSummary>('/elearning/questions/import', {
+        method: 'POST',
+        body: { rows }
+      });
+      setImportSummary(result);
+      await loadQuestions();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Lỗi import câu hỏi.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const handlePublish = async (courseId: string) => {
     try {
@@ -505,7 +627,7 @@ export function ElearningOperationsBoard() {
       await apiRequest(`/elearning/courses/${courseId}/archive`, { method: 'POST' });
       await loadCourses();
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Lỗi lưu trữ.');
+      setErrorMessage(err instanceof Error ? err.message : 'Lỗi xóa.');
     }
   };
 
@@ -659,7 +781,7 @@ export function ElearningOperationsBoard() {
                     transition: 'box-shadow 0.15s ease',
                     cursor: 'pointer'
                   }}
-                  onClick={() => setSelectedCourse(course)}
+                  onClick={() => onOpenCourse?.(course.id)}
                   onMouseOver={(e) => (e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)')}
                   onMouseOut={(e) => (e.currentTarget.style.boxShadow = 'none')}
                 >
@@ -717,7 +839,7 @@ export function ElearningOperationsBoard() {
                             onClick={(e) => { e.stopPropagation(); void handleArchive(course.id); }}
                             style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', color: 'var(--danger)' }}
                           >
-                            <Trash2 size={12} /> Lưu trữ
+                            <Trash2 size={12} /> Xóa
                           </button>
                         )}
                       </div>
@@ -730,61 +852,217 @@ export function ElearningOperationsBoard() {
         )}
 
         {activeTab === 'questions' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* ── Category management bar ── */}
+            <div style={{
+              padding: '0.75rem 1rem',
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--surface)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <Settings size={14} style={{ color: 'var(--muted)' }} />
+                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Phân loại câu hỏi</span>
+                {canCreate && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setIsAddingCat(!isAddingCat)}
+                    style={{ marginLeft: 'auto', fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}
+                  >
+                    <Plus size={12} /> Thêm
+                  </button>
+                )}
+              </div>
+
+              {/* Category badges */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                {categories.map((cat) => (
+                  <div
+                    key={cat.id}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.3rem',
+                      padding: '0.25rem 0.6rem',
+                      borderRadius: '20px',
+                      fontSize: '0.72rem',
+                      fontWeight: 500,
+                      border: `1.5px solid ${cat.color ?? 'var(--line)'}`,
+                      background: `color-mix(in srgb, ${cat.color ?? 'var(--muted)'} 10%, var(--surface))`,
+                      color: cat.color ?? 'var(--foreground)'
+                    }}
+                  >
+                    {editingCatId === cat.id ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editCatLabel}
+                          onChange={(e) => setEditCatLabel(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') void handleUpdateCategory(cat.id); }}
+                          style={{ width: 80, fontSize: '0.72rem', padding: '0.1rem 0.3rem', border: '1px solid var(--line)', borderRadius: 4 }}
+                          autoFocus
+                        />
+                        <button type="button" onClick={() => void handleUpdateCategory(cat.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                          <CheckCircle2 size={12} style={{ color: 'var(--success)' }} />
+                        </button>
+                        <button type="button" onClick={() => setEditingCatId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                          <X size={12} style={{ color: 'var(--muted)' }} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: cat.color ?? 'var(--muted)', flexShrink: 0 }} />
+                        {cat.label}
+                        <span style={{ color: 'var(--muted)', fontSize: '0.65rem' }}>({cat.code})</span>
+                        {canCreate && (
+                          <>
+                            <button type="button" onClick={() => { setEditingCatId(cat.id); setEditCatLabel(cat.label); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: 0.5 }} title="Sửa">
+                              <Edit3 size={10} />
+                            </button>
+                            <button type="button" onClick={() => void handleDeleteCategory(cat.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: 0.5 }} title="Xóa">
+                              <Trash2 size={10} style={{ color: 'var(--danger)' }} />
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+                {categories.length === 0 && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>Chưa có phân loại nào.</span>
+                )}
+              </div>
+
+              {/* Add category form */}
+              {isAddingCat && (
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    className="input"
+                    value={newCatCode}
+                    onChange={(e) => setNewCatCode(e.target.value)}
+                    placeholder="Mã (VD: TECH)"
+                    style={{ width: 100, fontSize: '0.75rem' }}
+                  />
+                  <input
+                    type="text"
+                    className="input"
+                    value={newCatLabel}
+                    onChange={(e) => setNewCatLabel(e.target.value)}
+                    placeholder="Tên hiển thị"
+                    style={{ flex: 1, fontSize: '0.75rem' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void handleAddCategory(); }}
+                  />
+                  <input
+                    type="color"
+                    value={newCatColor}
+                    onChange={(e) => setNewCatColor(e.target.value)}
+                    style={{ width: 28, height: 28, padding: 0, border: '1px solid var(--line)', borderRadius: 4, cursor: 'pointer' }}
+                    title="Màu"
+                  />
+                  <button type="button" className="btn btn-primary" onClick={() => void handleAddCategory()} style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem' }}>
+                    Lưu
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => setIsAddingCat(false)} style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem' }}>
+                    Hủy
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── Import Excel section ── */}
+            <ExcelImportBlock
+              title="Import câu hỏi từ Excel"
+              description="File Excel gồm cột: Câu hỏi, Phân loại, Đáp án A/B/C/D, Đáp án đúng, Giải thích."
+              fileLabel="File câu hỏi (.xlsx)"
+              onDownloadTemplate={() => downloadExcelTemplate('elearning-questions-template.xlsx', 'Questions', buildQuestionImportTemplateRows())}
+              onFileSelected={handleImportFile}
+              canImport={canCreate}
+              deniedMessage="Chỉ admin được import câu hỏi."
+              isLoading={isImporting}
+              loadingText="Đang parse và import câu hỏi..."
+              summary={importSummary}
+              cardStyle={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}
+            />
+
+            {/* ── Question list ── */}
             {isLoading && questions.length === 0 ? (
               <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '3rem' }}>Đang tải...</div>
             ) : questions.length === 0 ? (
               <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '3rem' }}>
-                Ngân hàng câu hỏi trống. Bấm "Thêm câu hỏi" để bắt đầu.
+                Ngân hàng câu hỏi trống. Bấm "Thêm câu hỏi" hoặc import file Excel.
               </div>
             ) : (
-              questions.map((q) => (
-                <div
-                  key={q.id}
-                  style={{
-                    padding: '1rem',
-                    border: '1px solid var(--line)',
-                    borderRadius: 'var(--radius-md)',
-                    background: 'var(--surface)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.5rem'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem', flex: 1 }}>{q.questionText}</span>
-                    <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
-                      {(q.tags ?? []).map((t) => (
-                        <Badge key={t} variant="neutral">{t}</Badge>
+              questions.map((q) => {
+                const catMap = new Map(categories.map((c) => [c.code, c]));
+                return (
+                  <div
+                    key={q.id}
+                    style={{
+                      padding: '1rem',
+                      border: '1px solid var(--line)',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--surface)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.85rem', flex: 1 }}>{q.questionText}</span>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+                        {(q.tags ?? []).map((t) => {
+                          const cat = catMap.get(t);
+                          return (
+                            <span
+                              key={t}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.2rem',
+                                padding: '0.15rem 0.45rem',
+                                borderRadius: '10px',
+                                fontSize: '0.65rem',
+                                fontWeight: 500,
+                                border: `1px solid ${cat?.color ?? 'var(--line)'}`,
+                                background: `color-mix(in srgb, ${cat?.color ?? 'var(--muted)'} 10%, var(--surface))`,
+                                color: cat?.color ?? 'var(--muted)'
+                              }}
+                            >
+                              {cat?.label ?? t}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem' }}>
+                      {(q.options ?? []).map((opt) => (
+                        <div
+                          key={opt.id}
+                          style={{
+                            padding: '0.3rem 0.6rem',
+                            borderRadius: 'var(--radius-sm)',
+                            border: `1px solid ${opt.isCorrect ? 'var(--success)' : 'var(--line)'}`,
+                            background: opt.isCorrect ? 'color-mix(in srgb, var(--success) 8%, var(--surface))' : 'transparent',
+                            fontSize: '0.78rem'
+                          }}
+                        >
+                          {opt.isCorrect && <CheckCircle2 size={11} style={{ color: 'var(--success)', marginRight: 4 }} />}
+                          {opt.optionText}
+                        </div>
                       ))}
                     </div>
-                  </div>
 
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.8rem' }}>
-                    {(q.options ?? []).map((opt) => (
-                      <div
-                        key={opt.id}
-                        style={{
-                          padding: '0.3rem 0.6rem',
-                          borderRadius: 'var(--radius-sm)',
-                          border: `1px solid ${opt.isCorrect ? 'var(--success)' : 'var(--line)'}`,
-                          background: opt.isCorrect ? 'color-mix(in srgb, var(--success) 8%, var(--surface))' : 'transparent',
-                          fontSize: '0.78rem'
-                        }}
-                      >
-                        {opt.isCorrect && <CheckCircle2 size={11} style={{ color: 'var(--success)', marginRight: 4 }} />}
-                        {opt.optionText}
+                    {q.explanation && (
+                      <div style={{ fontSize: '0.72rem', color: 'var(--muted)', fontStyle: 'italic' }}>
+                        💡 {q.explanation}
                       </div>
-                    ))}
+                    )}
                   </div>
-
-                  {q.explanation && (
-                    <div style={{ fontSize: '0.72rem', color: 'var(--muted)', fontStyle: 'italic' }}>
-                      💡 {q.explanation}
-                    </div>
-                  )}
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -800,53 +1078,10 @@ export function ElearningOperationsBoard() {
         isOpen={isCreateQuestionOpen}
         onClose={() => setIsCreateQuestionOpen(false)}
         onCreated={() => void loadQuestions()}
+        categories={categories}
       />
 
-      {/* Course detail panel */}
-      <SidePanel
-        title={selectedCourse?.title ?? 'Chi tiết khóa học'}
-        isOpen={!!selectedCourse}
-        onClose={() => setSelectedCourse(null)}
-      >
-        {selectedCourse && (
-          <div style={{ padding: '1rem 0', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div>
-              <Badge variant={statusToBadge(selectedCourse.status)}>{selectedCourse.status || 'DRAFT'}</Badge>
-            </div>
 
-            {selectedCourse.description && (
-              <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: 0, lineHeight: 1.5 }}>
-                {selectedCourse.description}
-              </p>
-            )}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.8rem' }}>
-              <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--info) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedCourse._count?.sections ?? 0}</div>
-                <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>Phần</div>
-              </div>
-              <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--primary) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedCourse._count?.lessons ?? 0}</div>
-                <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>Bài học</div>
-              </div>
-              <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--success) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedCourse._count?.enrollments ?? 0}</div>
-                <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>Học viên</div>
-              </div>
-              <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{selectedCourse.enrollPolicy ?? 'INVITE'}</div>
-                <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>Chính sách</div>
-              </div>
-            </div>
-
-            {selectedCourse.createdAt && (
-              <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                Tạo: {new Date(selectedCourse.createdAt).toLocaleDateString('vi-VN')}
-              </div>
-            )}
-          </div>
-        )}
-      </SidePanel>
     </div>
   );
 }

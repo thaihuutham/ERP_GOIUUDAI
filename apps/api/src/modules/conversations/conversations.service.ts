@@ -10,6 +10,7 @@ import { ClsService } from 'nestjs-cls';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CrmContractsService } from '../crm/crm-contracts.service';
@@ -1235,11 +1236,7 @@ export class ConversationsService {
   }
 
   private parseDate(input: unknown, fieldName: string) {
-    const parsed = new Date(String(input));
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException(`${fieldName} không hợp lệ.`);
-    }
-    return parsed;
+    return parseStrictDate(input, fieldName);
   }
 
   private parseInt(input: unknown, fallback: number) {

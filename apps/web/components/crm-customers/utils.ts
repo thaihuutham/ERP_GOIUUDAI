@@ -70,9 +70,13 @@ export function formatTaxonomyLabel(value: string) {
 
 // ── Status / Badge Helpers ───────────────────────
 
-export function customerStatusLabel(value: string | null | undefined) {
+export function customerStatusLabel(
+  value: string | null | undefined,
+  labels: Partial<Record<CustomerCareStatus, string>> = CUSTOMER_STATUS_LABELS
+) {
   const normalized = String(value ?? '').trim().toUpperCase() as CustomerCareStatus;
-  return CUSTOMER_STATUS_LABELS[normalized] ?? (value || '--');
+  const normalizedLabel = String(labels[normalized] ?? '').trim();
+  return normalizedLabel || CUSTOMER_STATUS_LABELS[normalized] || (value || '--');
 }
 
 export function customerStatusBadge(value: string | null | undefined): BadgeVariant {
@@ -161,7 +165,10 @@ export function buildAuditObjectHref(entityType: string, entityId: string) {
 
 // ── Form Builders ────────────────────────────────
 
-export function buildDetailForm(customer: Customer | null): DetailCustomerFormState {
+export function buildDetailForm(
+  customer: Customer | null,
+  statusOptions: CustomerCareStatus[] = CUSTOMER_STATUS_OPTIONS
+): DetailCustomerFormState {
   const tags = Array.isArray(customer?.tags)
     ? Array.from(new Set(customer!.tags!.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean)))
     : [];
@@ -174,7 +181,7 @@ export function buildDetailForm(customer: Customer | null): DetailCustomerFormSt
     customerStage: customer?.customerStage ?? '',
     source: customer?.source ?? '',
     segment: customer?.segment ?? '',
-    status: CUSTOMER_STATUS_OPTIONS.includes(normalizedStatus)
+    status: statusOptions.includes(normalizedStatus)
       ? normalizedStatus
       : 'MOI_CHUA_TU_VAN',
     zaloNickType: CUSTOMER_ZALO_NICK_TYPE_OPTIONS.includes(normalizedZaloNickType)
@@ -263,7 +270,8 @@ export function createCustomerFilterConditionId() {
 export function buildCustomerFilterFieldConfigs(
   stageOptions: string[],
   sourceOptions: string[],
-  customerTagOptions: string[]
+  customerTagOptions: string[],
+  customerStatusOptions: CustomerCareStatus[] = CUSTOMER_STATUS_OPTIONS
 ): CustomerFilterFieldConfig[] {
   return [
     {
@@ -309,7 +317,7 @@ export function buildCustomerFilterFieldConfigs(
       group: 'Thông tin khách hàng',
       inputType: 'enum',
       operators: ['equals', 'not_equals'],
-      options: CUSTOMER_STATUS_OPTIONS,
+      options: customerStatusOptions,
     },
     {
       value: 'zaloNickType',

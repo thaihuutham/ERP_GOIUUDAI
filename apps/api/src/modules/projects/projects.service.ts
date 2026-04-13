@@ -7,6 +7,7 @@ import {
   resolveSortQuery,
   sliceCursorItems
 } from '../../common/pagination/pagination-response';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateProjectBudgetDto,
@@ -486,11 +487,7 @@ export class ProjectsService {
   }
 
   private parseDate(value: string, fieldName: string) {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException(`Invalid date for ${fieldName}`);
-    }
-    return parsed;
+    return parseStrictDate(value, fieldName);
   }
 
   private buildProjectSortOrderBy(

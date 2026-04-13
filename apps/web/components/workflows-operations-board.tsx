@@ -8,6 +8,7 @@ import {
   normalizePagedListPayload,
   type ApiListSortMeta
 } from '../lib/api-client';
+import { parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useCursorTableState } from '../lib/use-cursor-table-state';
@@ -252,15 +253,31 @@ function parseApproverRows(value: string) {
       if (row.toUpperCase().startsWith('VALUE:')) {
         const payload = row.slice('VALUE:'.length);
         const [field, minValue, approverId] = payload.split('|').map((item) => item.trim());
+        const minValueParsed = parseFiniteNumber(minValue || '0');
         return {
           type: 'VALUE_RULE',
           field: field || 'amount',
-          minValue: Number(minValue || 0),
+          minValue: minValueParsed === null ? 0 : minValueParsed,
           approverId
         };
       }
       return { type: 'USER', approverId: row };
     });
+}
+
+function toStrictInt(value: unknown, fallback: number, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = typeof value === 'number' ? value : parseFiniteNumber(String(value ?? ''));
+  if (parsed === null || !Number.isFinite(parsed)) {
+    return fallback;
+  }
+  const truncated = Math.trunc(parsed);
+  if (truncated < min) {
+    return min;
+  }
+  if (truncated > max) {
+    return max;
+  }
+  return truncated;
 }
 
 function buildDefinitionJson(draft: BuilderDraft) {
@@ -280,8 +297,8 @@ function buildDefinitionJson(draft: BuilderDraft) {
         key: step.key.trim(),
         name: step.name.trim() || step.key.trim(),
         approvalMode: step.approvalMode,
-        minApprovers: step.approvalMode === 'MIN_N' ? Number(step.minApprovers || 1) : undefined,
-        slaHours: Number(step.slaHours || 24),
+        minApprovers: step.approvalMode === 'MIN_N' ? toStrictInt(step.minApprovers, 1, 1, 100) : undefined,
+        slaHours: toStrictInt(step.slaHours, 24, 1, 24 * 30),
         approvers: parseApproverRows(step.approvers),
         transitions
       };
@@ -707,8 +724,8 @@ export function WorkflowsOperationsBoard() {
             key: rawKey,
             name: String(step.name ?? step.key ?? ''),
             approvalMode: (String(step.approvalMode ?? 'ALL').toUpperCase() as BuilderStep['approvalMode']),
-            minApprovers: Number(step.minApprovers ?? 1),
-            slaHours: Number(step.slaHours ?? 24),
+            minApprovers: toStrictInt(step.minApprovers, 1, 1, 100),
+            slaHours: toStrictInt(step.slaHours, 24, 1, 24 * 30),
             approvers: Array.isArray(step.approvers)
               ? step.approvers
                   .map((rule) => {
@@ -741,7 +758,7 @@ export function WorkflowsOperationsBoard() {
       code: String(definition.code ?? ''),
       name: definition.name,
       module: definition.module,
-      version: Number(definition.version ?? 1),
+      version: toStrictInt(definition.version, 1, 1, 9999),
       description: String(definition.description ?? ''),
       status: definition.status,
       initialStep: String(graph?.initialStep ?? mappedSteps[0]?.key ?? 'approval'),
@@ -769,7 +786,7 @@ export function WorkflowsOperationsBoard() {
         code: normalizedCode,
         name: normalizedName,
         module: normalizedModule,
-        version: Number(builderDraft.version || 1),
+        version: toStrictInt(builderDraft.version, 1, 1, 9999),
         description: builderDraft.description || undefined,
         status: builderDraft.status || 'DRAFT',
         definitionJson: buildDefinitionJson(normalizedDraft)
@@ -856,7 +873,7 @@ export function WorkflowsOperationsBoard() {
       await apiRequest(`/workflows/definitions/${builderDraft.id}/${action}`, {
         method: 'POST'
       });
-      setResultMessage(action === 'publish' ? 'Kích hoạt quy trình thành công.' : 'Lưu trữ quy trình thành công.');
+      setResultMessage(action === 'publish' ? 'Kích hoạt quy trình thành công.' : 'Xóa quy trình thành công.');
       await loadDefinitions();
       await loadMonitor();
     } catch (error) {
@@ -1296,7 +1313,9 @@ export function WorkflowsOperationsBoard() {
                               setBuilderDraft((prev) => ({
                                 ...prev,
                                 steps: prev.steps.map((item, itemIndex) => (
-                                  itemIndex === index ? { ...item, slaHours: Number(event.target.value || 24) } : item
+                                  itemIndex === index
+                                    ? { ...item, slaHours: toStrictInt(event.target.value, 24, 1, 24 * 30) }
+                                    : item
                                 ))
                               }))
                             }
@@ -1311,7 +1330,9 @@ export function WorkflowsOperationsBoard() {
                               setBuilderDraft((prev) => ({
                                 ...prev,
                                 steps: prev.steps.map((item, itemIndex) => (
-                                  itemIndex === index ? { ...item, minApprovers: Number(event.target.value || 1) } : item
+                                  itemIndex === index
+                                    ? { ...item, minApprovers: toStrictInt(event.target.value, 1, 1, 100) }
+                                    : item
                                 ))
                               }))
                             }
@@ -1552,7 +1573,7 @@ export function WorkflowsOperationsBoard() {
                   Kích hoạt
                 </button>
                 <button className="btn btn-ghost" onClick={() => void onPublishOrArchiveDefinition('archive')} disabled={isBusy}>
-                  Lưu trữ
+                  Xóa
                 </button>
               </div>
 

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest, normalizePagedListPayload } from '../lib/api-client';
+import { isStrictDateTimeLocal, isStrictIsoDate, parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
@@ -21,6 +22,8 @@ type CheckoutTemplateConfig = {
   requiredFields: string[];
   fieldConfig?: Record<string, FieldConfigItem>;
 };
+
+type ResolvedTemplateFieldType = 'text' | 'date' | 'number' | 'tel' | 'checkbox' | 'file' | 'select';
 
 type CheckoutConfigResponse = {
   checkoutTemplates?: Record<CheckoutOrderGroup, CheckoutTemplateConfig[]>;
@@ -179,8 +182,10 @@ function toDateTimeLocalInput(value?: string | null) {
 }
 
 function fromDateTimeLocalInput(value: string) {
-  if (!value.trim()) return undefined;
-  const parsed = new Date(value);
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (!isStrictDateTimeLocal(normalized)) return undefined;
+  const parsed = new Date(normalized);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return parsed.toISOString();
 }
@@ -231,13 +236,40 @@ function detectTemplateFieldInputType(key: string): 'text' | 'date' | 'number' |
   return 'text';
 }
 
-function parseTemplateFieldValue(key: string, value: string): string | number {
+function addDaysToIsoDate(dateValue: string, days: number) {
+  const [yearRaw, monthRaw, dayRaw] = dateValue.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const base = new Date(Date.UTC(year, month - 1, day));
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+function resolveTemplateFieldType(fieldKey: string, template: CheckoutTemplateConfig | null): ResolvedTemplateFieldType {
+  const configuredType = template?.fieldConfig?.[fieldKey]?.type;
+  if (configuredType) {
+    return configuredType;
+  }
+  return detectTemplateFieldInputType(fieldKey);
+}
+
+function validateTemplateFieldInput(fieldLabel: string, fieldType: ResolvedTemplateFieldType, value: string) {
+  if (fieldType === 'number') {
+    return parseFiniteNumber(value) === null ? `${fieldLabel}: giá trị số không hợp lệ.` : null;
+  }
+  if (fieldType === 'date') {
+    return isStrictIsoDate(value) ? null : `${fieldLabel}: ngày không hợp lệ (YYYY-MM-DD).`;
+  }
+  return null;
+}
+
+function parseTemplateFieldValue(fieldType: ResolvedTemplateFieldType, value: string): string | number {
   const normalized = value.trim();
-  const inputType = detectTemplateFieldInputType(key);
-  if (inputType === 'number') {
-    const asNumber = Number(normalized);
-    if (Number.isFinite(asNumber)) {
-      return asNumber;
+  if (fieldType === 'number') {
+    const parsed = parseFiniteNumber(normalized);
+    if (parsed !== null) {
+      return parsed;
     }
   }
   return normalized;
@@ -433,8 +465,8 @@ export function SalesCheckoutBoard() {
     const normalizedItems = createForm.items
       .map((item) => ({
         productName: item.productName.trim(),
-        quantity: Number(item.quantity),
-        unitPrice: Number(item.unitPrice)
+        quantity: parseFiniteNumber(String(item.quantity)) ?? 0,
+        unitPrice: parseFiniteNumber(String(item.unitPrice)) ?? 0
       }))
       .filter((item) => item.productName && item.quantity > 0 && item.unitPrice > 0);
 
@@ -459,7 +491,14 @@ export function SalesCheckoutBoard() {
         setErrorMessage(`Tạo checkout thất bại: thiếu field bắt buộc ${fieldKey}.`);
         return;
       }
-      templatePayload[fieldKey] = parseTemplateFieldValue(fieldKey, rawValue);
+      const fieldLabel = selectedTemplate.fieldConfig?.[fieldKey]?.label || formatTemplateFieldLabel(fieldKey);
+      const fieldType = resolveTemplateFieldType(fieldKey, selectedTemplate);
+      const validationError = validateTemplateFieldInput(fieldLabel, fieldType, rawValue);
+      if (validationError) {
+        setErrorMessage(`Tạo checkout thất bại: ${validationError}`);
+        return;
+      }
+      templatePayload[fieldKey] = parseTemplateFieldValue(fieldType, rawValue);
     }
 
     setIsSubmittingCreate(true);
@@ -497,10 +536,18 @@ export function SalesCheckoutBoard() {
       ...prev,
       items: prev.items.map((item, itemIndex) => {
         if (itemIndex !== index) return item;
-        if (key === 'quantity' || key === 'unitPrice') {
+        if (key === 'quantity') {
+          const parsed = parseFiniteNumber(value);
           return {
             ...item,
-            [key]: Number(value)
+            quantity: parsed === null ? 0 : Math.max(0, Math.trunc(parsed))
+          };
+        }
+        if (key === 'unitPrice') {
+          const parsed = parseFiniteNumber(value);
+          return {
+            ...item,
+            unitPrice: parsed === null ? 0 : Math.max(0, parsed)
           };
         }
         return {
@@ -550,14 +597,16 @@ export function SalesCheckoutBoard() {
           ? value
           : (nextFields.effectiveFrom ?? nextFields.startDate ?? nextFields.requestedEffectiveDate ?? '');
 
-        if (durationValue && startDateValue) {
-          const days = Number(durationValue);
-          const start = new Date(startDateValue);
-          if (Number.isFinite(days) && days > 0 && !Number.isNaN(start.getTime())) {
-            const end = new Date(start);
-            end.setDate(end.getDate() + days);
-            nextFields.effectiveTo = end.toISOString().slice(0, 10);
-          }
+        const parsedDays = parseFiniteNumber(durationValue);
+        if (
+          parsedDays !== null
+          && Number.isInteger(parsedDays)
+          && parsedDays > 0
+          && isStrictIsoDate(startDateValue)
+        ) {
+          nextFields.effectiveTo = addDaysToIsoDate(startDateValue, parsedDays);
+        } else if (isDurationUpdate || isStartUpdate) {
+          delete nextFields.effectiveTo;
         }
       }
 
@@ -596,7 +645,7 @@ export function SalesCheckoutBoard() {
     const reason = overrideForm.reason.trim();
     const reference = overrideForm.reference.trim();
     const amountRaw = overrideForm.amount.trim();
-    const amount = amountRaw ? Number(amountRaw) : undefined;
+    const amount = amountRaw ? parseFiniteNumber(amountRaw) : null;
 
     if (!reason) {
       setErrorMessage('Override thanh toán thất bại: thiếu reason.');
@@ -606,7 +655,7 @@ export function SalesCheckoutBoard() {
       setErrorMessage('Override thanh toán thất bại: thiếu reference.');
       return;
     }
-    if (amountRaw && (!Number.isFinite(amount) || Number(amount) <= 0)) {
+    if (amountRaw && (amount === null || amount <= 0)) {
       setErrorMessage('Override thanh toán thất bại: số tiền không hợp lệ.');
       return;
     }
@@ -620,7 +669,7 @@ export function SalesCheckoutBoard() {
         body: {
           reason,
           reference,
-          amount
+          amount: amount ?? undefined
         }
       });
       setResultMessage('Đã áp dụng payment override.');

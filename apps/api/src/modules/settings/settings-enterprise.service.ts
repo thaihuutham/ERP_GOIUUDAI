@@ -3,6 +3,7 @@ import { GenericStatus, IamScopeMode, PermissionAction, PermissionEffect, Prisma
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { generateTemporaryPassword, hashPassword } from '../../common/auth/password.util';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveModuleKeyFromPath } from '../../common/auth/permission.util';
 import { IamCeilingService } from '../iam/iam-ceiling.service';
@@ -780,8 +781,12 @@ export class SettingsEnterpriseService {
     if (rootOrgUnitId) {
       await this.ensureOrgUnitExists(rootOrgUnitId);
     }
-    const effectiveFrom = this.toDate(body.effectiveFrom);
-    const effectiveTo = this.toDate(body.effectiveTo);
+    const effectiveFrom = body.effectiveFrom === undefined || body.effectiveFrom === null || body.effectiveFrom === ''
+      ? null
+      : parseStrictDate(body.effectiveFrom, 'effectiveFrom');
+    const effectiveTo = body.effectiveTo === undefined || body.effectiveTo === null || body.effectiveTo === ''
+      ? null
+      : parseStrictDate(body.effectiveTo, 'effectiveTo');
     if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
       throw new BadRequestException('effectiveTo phải lớn hơn hoặc bằng effectiveFrom.');
     }

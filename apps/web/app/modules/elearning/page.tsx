@@ -6,10 +6,12 @@ import { ElearningOperationsBoard } from '../../../components/elearning-operatio
 import { ElearningMyCourses } from '../../../components/elearning-my-courses';
 import { ElearningLessonViewer } from '../../../components/elearning-lesson-viewer';
 import { ElearningHrDashboard } from '../../../components/elearning-hr-dashboard';
+import { ElearningCourseDetail } from '../../../components/elearning-course-detail';
 
 type SubView =
   | { kind: 'main' }
   | { kind: 'course'; courseId: string }
+  | { kind: 'course-detail'; courseId: string }
   | { kind: 'hr-dashboard' };
 
 export default function ElearningPage() {
@@ -17,7 +19,17 @@ export default function ElearningPage() {
   const isAdmin = role === 'ADMIN';
   const [subView, setSubView] = useState<SubView>({ kind: 'main' });
 
-  // Sub-view: lesson viewer
+  // Sub-view: Admin course detail editor
+  if (subView.kind === 'course-detail') {
+    return (
+      <ElearningCourseDetail
+        courseId={subView.courseId}
+        onBack={() => setSubView({ kind: 'main' })}
+      />
+    );
+  }
+
+  // Sub-view: lesson viewer (employee)
   if (subView.kind === 'course') {
     return (
       <ElearningLessonViewer
@@ -32,9 +44,13 @@ export default function ElearningPage() {
     return <ElearningHrDashboard />;
   }
 
-  // Main view: Admin → ops board, Employee → my courses
+  // Main view: Admin → ops board (with onOpenCourse), Employee → my courses
   if (isAdmin) {
-    return <ElearningOperationsBoard />;
+    return (
+      <ElearningOperationsBoard
+        onOpenCourse={(courseId) => setSubView({ kind: 'course-detail', courseId })}
+      />
+    );
   }
 
   return (

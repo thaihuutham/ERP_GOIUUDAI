@@ -1,6 +1,9 @@
 import { Transform } from 'class-transformer';
 import { GenericStatus } from '@prisma/client';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsNumber,
@@ -142,4 +145,17 @@ export class SetPricePolicyDto {
   @IsNumber()
   @Min(0)
   unitPrice?: number;
+}
+
+export class ImportProductsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  fileName?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(2000)
+  @IsObject({ each: true })
+  rows!: Record<string, unknown>[];
 }

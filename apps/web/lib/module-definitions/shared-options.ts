@@ -10,7 +10,7 @@ export const STATUS_OPTIONS = [
   { label: 'Chờ xử lý', value: 'PENDING' },
   { label: 'Đã duyệt', value: 'APPROVED' },
   { label: 'Từ chối', value: 'REJECTED' },
-  { label: 'Lưu trữ', value: 'ARCHIVED' }
+  { label: 'Xóa', value: 'ARCHIVED' }
 ];
 
 export const ATTENDANCE_METHOD_OPTIONS = [

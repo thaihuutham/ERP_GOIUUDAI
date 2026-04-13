@@ -1,3 +1,5 @@
+import { parseStrictDate } from '../../common/validation/date.validation';
+
 export const REPORT_DATE_RANGES = ['YESTERDAY', 'THIS_WEEK', 'LAST_WEEK', 'LAST_MONTH'] as const;
 
 export type ReportDateRangeKey = (typeof REPORT_DATE_RANGES)[number];
@@ -139,11 +141,11 @@ export function endOfDayExclusive(date: Date) {
 
 export function normalizeDate(input: string | undefined | null) {
   if (!input) return null;
-  const parsed = new Date(input);
-  if (!Number.isFinite(parsed.getTime())) {
+  try {
+    return parseStrictDate(input, 'date');
+  } catch {
     return null;
   }
-  return parsed;
 }
 
 export function clampDateRange(startInput?: string | null, endInput?: string | null) {

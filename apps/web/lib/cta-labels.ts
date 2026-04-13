@@ -119,5 +119,5 @@ export const ACTION_LABELS = {
   approve: 'Duyệt',
   reject: 'Từ chối',
   duplicate: 'Nhân bản',
-  archive: 'Lưu trữ',
+  archive: 'Xóa',
 } as const;

@@ -1031,7 +1031,7 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
     page.once('dialog', (dialog) => dialog.accept());
     await checkAllVisibleRows();
     if (await runGenericBulkAction('Archive')) {
-      await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ đơn hàng: thành công 2/2.');
+      await expect(page.locator('.finance-alert-success')).toContainText('Xóa đơn hàng: thành công 2/2.');
       expect(state.orders.every((item) => item.status === 'ARCHIVED')).toBe(true);
     } else {
       expect(state.orders.every((item) => item.status === 'APPROVED')).toBe(true);
@@ -1056,7 +1056,7 @@ test('supports bulk actions on CRM/Sales/Finance main tables (select-all loaded)
     page.once('dialog', (dialog) => dialog.accept());
     await checkAllVisibleRows();
     if (await runGenericBulkAction('Archive')) {
-      await expect(page.locator('.finance-alert-success')).toContainText('Lưu trữ hóa đơn: thành công 2/2.');
+      await expect(page.locator('.finance-alert-success')).toContainText('Xóa hóa đơn: thành công 2/2.');
       expect(state.invoices.every((item) => item.status === 'ARCHIVED')).toBe(true);
     } else {
       expect(state.invoices.every((item) => item.status === 'APPROVED')).toBe(true);

@@ -24,6 +24,7 @@ import {
 } from '../lib/api-client';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
+import { isStrictIsoDate, parseFiniteNumber } from '../lib/form-validation';
 import { useCursorTableState } from '../lib/use-cursor-table-state';
 import { useAccessPolicy } from './access-policy-context';
 import { StandardDataTable, ColumnDefinition, type StandardTableBulkAction } from './ui/standard-data-table';
@@ -84,6 +85,8 @@ type CheckoutTemplateConfig = {
   requiredFields: string[];
   fieldConfig?: Record<string, FieldConfigItem>;
 };
+
+type ResolvedTemplateFieldType = 'text' | 'date' | 'number' | 'tel' | 'checkbox' | 'file' | 'select';
 
 type CheckoutConfigResponse = {
   checkoutTemplates?: Record<CheckoutOrderGroup, CheckoutTemplateConfig[]>;
@@ -217,13 +220,41 @@ function detectTemplateFieldInputType(key: string): 'text' | 'date' | 'number' |
   return 'text';
 }
 
-function parseTemplateFieldValue(key: string, value: string): string | number {
+function addDaysToIsoDate(dateValue: string, days: number) {
+  const [yearRaw, monthRaw, dayRaw] = dateValue.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const base = new Date(Date.UTC(year, month - 1, day));
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+function resolveTemplateFieldType(fieldKey: string, template: CheckoutTemplateConfig | null): ResolvedTemplateFieldType {
+  const configuredType = template?.fieldConfig?.[fieldKey]?.type;
+  if (configuredType) {
+    return configuredType;
+  }
+  return detectTemplateFieldInputType(fieldKey);
+}
+
+function validateTemplateFieldInput(fieldLabel: string, fieldType: ResolvedTemplateFieldType, value: string) {
+  if (fieldType === 'number') {
+    return parseFiniteNumber(value) === null ? `${fieldLabel}: giá trị số không hợp lệ.` : null;
+  }
+  if (fieldType === 'date') {
+    return isStrictIsoDate(value) ? null : `${fieldLabel}: ngày không hợp lệ (YYYY-MM-DD).`;
+  }
+  return null;
+}
+
+function parseTemplateFieldValue(fieldType: ResolvedTemplateFieldType, value: string): string | number {
   const normalized = value.trim();
-  if (detectTemplateFieldInputType(key) !== 'number') {
+  if (fieldType !== 'number') {
     return normalized;
   }
-  const asNumber = Number(normalized);
-  return Number.isFinite(asNumber) ? asNumber : normalized;
+  const parsed = parseFiniteNumber(normalized);
+  return parsed === null ? normalized : parsed;
 }
 
 function isDifferentServicePhoneEnabled(templateFields: Record<string, string>) {
@@ -340,7 +371,7 @@ function SalesErrorDashboard({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
             <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--danger) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--danger)' }}>{dashboard.summary.cancelledOrders}</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Đơn hủy / Lưu trữ</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Đơn hủy / Xóa</div>
             </div>
             <div style={{ padding: '0.75rem', background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--warning)' }}>{dashboard.summary.totalDiscountApprovals}</div>
@@ -881,9 +912,9 @@ export function SalesOperationsBoard() {
         key: 'bulk-archive-orders',
         label: 'Archive',
         tone: 'danger',
-        confirmMessage: (rows) => `Lưu trữ ${rows.length} đơn hàng đã chọn?`,
+        confirmMessage: (rows) => `Xóa ${rows.length} đơn hàng đã chọn?`,
         execute: async (selectedRows) =>
-          runSalesBulkAction('Lưu trữ đơn hàng', selectedRows, async (order) => {
+          runSalesBulkAction('Xóa đơn hàng', selectedRows, async (order) => {
             await apiRequest(`/sales/orders/${order.id}`, {
               method: 'DELETE'
             });
@@ -913,10 +944,12 @@ export function SalesOperationsBoard() {
       .map((item) => ({
         productId: item.productId || undefined,
         productName: item.productName.trim(),
-        quantity: Number(item.quantity),
-        unitPrice: Number(item.unitPrice),
+        quantity: parseFiniteNumber(String(item.quantity)) ?? 0,
+        unitPrice: parseFiniteNumber(String(item.unitPrice)) ?? 0,
         discountType: item.discountType || undefined,
-        discountValue: item.discountValue ? Number(item.discountValue) : undefined
+        discountValue: item.discountValue > 0
+          ? (parseFiniteNumber(String(item.discountValue)) ?? undefined)
+          : undefined
       }))
       .filter((item) => item.productName && item.quantity > 0 && item.unitPrice > 0);
 
@@ -944,7 +977,14 @@ export function SalesOperationsBoard() {
         setErrorMessage(`Tạo checkout thất bại: thiếu field bắt buộc ${fieldKey}.`);
         return;
       }
-      templatePayload[fieldKey] = parseTemplateFieldValue(fieldKey, rawValue);
+      const fieldLabel = selectedTemplate.fieldConfig?.[fieldKey]?.label || formatTemplateFieldLabel(fieldKey);
+      const fieldType = resolveTemplateFieldType(fieldKey, selectedTemplate);
+      const validationError = validateTemplateFieldInput(fieldLabel, fieldType, rawValue);
+      if (validationError) {
+        setErrorMessage(`Tạo checkout thất bại: ${validationError}`);
+        return;
+      }
+      templatePayload[fieldKey] = parseTemplateFieldValue(fieldType, rawValue);
     }
     for (const [fieldKey, rawInput] of Object.entries(createOrderForm.templateFields)) {
       if (fieldKey === 'servicePhone' && !differentServicePhoneEnabled) {
@@ -954,7 +994,14 @@ export function SalesOperationsBoard() {
       if (!rawValue) {
         continue;
       }
-      templatePayload[fieldKey] = parseTemplateFieldValue(fieldKey, rawValue);
+      const fieldLabel = selectedTemplate.fieldConfig?.[fieldKey]?.label || formatTemplateFieldLabel(fieldKey);
+      const fieldType = resolveTemplateFieldType(fieldKey, selectedTemplate);
+      const validationError = validateTemplateFieldInput(fieldLabel, fieldType, rawValue);
+      if (validationError) {
+        setErrorMessage(`Tạo checkout thất bại: ${validationError}`);
+        return;
+      }
+      templatePayload[fieldKey] = parseTemplateFieldValue(fieldType, rawValue);
     }
 
     setErrorMessage(null);
@@ -1033,14 +1080,16 @@ export function SalesOperationsBoard() {
           ? value
           : (nextFields.startDate ?? nextFields.requestedEffectiveDate ?? '');
 
-        if (termDaysValue && startDateValue) {
-          const days = Number(termDaysValue);
-          const start = new Date(startDateValue);
-          if (Number.isFinite(days) && days > 0 && !Number.isNaN(start.getTime())) {
-            const end = new Date(start);
-            end.setDate(end.getDate() + days);
-            nextFields.effectiveTo = end.toISOString().slice(0, 10);
-          }
+        const parsedDays = parseFiniteNumber(termDaysValue);
+        if (
+          parsedDays !== null
+          && Number.isInteger(parsedDays)
+          && parsedDays > 0
+          && isStrictIsoDate(startDateValue)
+        ) {
+          nextFields.effectiveTo = addDaysToIsoDate(startDateValue, parsedDays);
+        } else if (isTermUpdate || isStartUpdate) {
+          delete nextFields.effectiveTo;
         }
       }
 
@@ -1198,10 +1247,33 @@ export function SalesOperationsBoard() {
       ...prev,
       items: prev.items.map((item, itemIndex) => {
         if (itemIndex !== index) return item;
-        if (key === 'quantity' || key === 'unitPrice') {
+        if (key === 'quantity') {
+          const parsed = parseFiniteNumber(value);
           return {
             ...item,
-            [key]: Number(value)
+            quantity: parsed === null ? 0 : Math.max(0, Math.trunc(parsed))
+          };
+        }
+        if (key === 'unitPrice') {
+          const parsed = parseFiniteNumber(value);
+          return {
+            ...item,
+            unitPrice: parsed === null ? 0 : Math.max(0, parsed)
+          };
+        }
+        if (key === 'discountValue') {
+          const parsed = parseFiniteNumber(value);
+          const normalized = parsed === null ? 0 : Math.max(0, parsed);
+          return {
+            ...item,
+            discountValue: item.discountType === 'PERCENT' ? Math.min(normalized, 100) : normalized
+          };
+        }
+        if (key === 'discountType') {
+          return {
+            ...item,
+            discountType: value as CreateCheckoutItemForm['discountType'],
+            discountValue: value ? item.discountValue : 0
           };
         }
         if (key === 'productName') {
@@ -1285,7 +1357,7 @@ export function SalesOperationsBoard() {
 
   const handleArchiveOrder = async () => {
     if (!selectedOrder || !canDelete || isArchivingOrder) return;
-    if (!window.confirm(`Lưu trữ đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}?`)) {
+    if (!window.confirm(`Xóa đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}?`)) {
       return;
     }
 
@@ -1294,13 +1366,13 @@ export function SalesOperationsBoard() {
       await apiRequest(`/sales/orders/${selectedOrder.id}`, {
         method: 'DELETE'
       });
-      setResultMessage(`Đã lưu trữ đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}.`);
+      setResultMessage(`Đã xóa đơn hàng ${selectedOrder.orderNo || selectedOrder.id.slice(-8)}.`);
       setErrorMessage(null);
       setSelectedOrder(null);
       setDecisionNote('');
       await loadData();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể lưu trữ đơn hàng');
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể xóa đơn hàng');
     } finally {
       setIsArchivingOrder(false);
     }
@@ -1639,7 +1711,7 @@ export function SalesOperationsBoard() {
                   disabled={isArchivingOrder}
                   onClick={handleArchiveOrder}
                 >
-                  <Trash2 size={16} /> {isArchivingOrder ? 'Đang lưu trữ...' : 'Lưu trữ đơn hàng'}
+                  <Trash2 size={16} /> {isArchivingOrder ? 'Đang xóa...' : 'Xóa đơn hàng'}
                 </button>
               )}
             </div>

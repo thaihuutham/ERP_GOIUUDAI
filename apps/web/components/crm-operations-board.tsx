@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { isStrictDateTimeLocal, parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
@@ -449,6 +450,15 @@ function normalizeTagArray(values: Array<string | null | undefined>) {
 
 function readSelectedOptions(event: ChangeEvent<HTMLSelectElement>) {
   return normalizeTagArray(Array.from(event.target.selectedOptions).map((option) => option.value));
+}
+
+function parseOptionalNumberInput(raw: string) {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const parsed = parseFiniteNumber(normalized);
+  return parsed === null ? null : parsed;
 }
 
 
@@ -1024,6 +1034,15 @@ export function CrmOperationsBoard() {
     setErrorMessage(null);
     setResultMessage(null);
     try {
+      const totalOrdersParsed = parseOptionalNumberInput(updateCustomerForm.totalOrders);
+      if (totalOrdersParsed === null || (typeof totalOrdersParsed === 'number' && totalOrdersParsed < 0)) {
+        throw new Error('Tổng đơn phải là số >= 0.');
+      }
+      const totalSpentParsed = parseOptionalNumberInput(updateCustomerForm.totalSpent);
+      if (totalSpentParsed === null || (typeof totalSpentParsed === 'number' && totalSpentParsed < 0)) {
+        throw new Error('Tổng chi tiêu phải là số >= 0.');
+      }
+
       await apiRequest(`/crm/customers/${selectedCustomer.id}`, {
         method: 'PATCH',
         body: {
@@ -1037,8 +1056,8 @@ export function CrmOperationsBoard() {
           source: updateCustomerForm.source || undefined,
           status: updateCustomerForm.status || undefined,
           tags: updateCustomerForm.tags,
-          totalOrders: updateCustomerForm.totalOrders !== '' ? Number(updateCustomerForm.totalOrders) : undefined,
-          totalSpent: updateCustomerForm.totalSpent !== '' ? Number(updateCustomerForm.totalSpent) : undefined
+          totalOrders: typeof totalOrdersParsed === 'number' ? Math.trunc(totalOrdersParsed) : undefined,
+          totalSpent: typeof totalSpentParsed === 'number' ? totalSpentParsed : undefined
         }
       });
 
@@ -1062,6 +1081,12 @@ export function CrmOperationsBoard() {
       }
       if (!resolvedCustomerId && !createInteractionForm.customerPhone.trim() && !createInteractionForm.customerEmail.trim()) {
         throw new Error('Cần cung cấp customerId hoặc số điện thoại/email khách hàng để định danh tương tác.');
+      }
+      if (createInteractionForm.interactionAt && !isStrictDateTimeLocal(createInteractionForm.interactionAt)) {
+        throw new Error('Thời gian tương tác không hợp lệ (YYYY-MM-DDTHH:mm).');
+      }
+      if (createInteractionForm.nextActionAt && !isStrictDateTimeLocal(createInteractionForm.nextActionAt)) {
+        throw new Error('Thời gian hẹn chăm sóc tiếp theo không hợp lệ (YYYY-MM-DDTHH:mm).');
       }
 
       await apiRequest('/crm/interactions', {
@@ -1115,8 +1140,12 @@ export function CrmOperationsBoard() {
       ) {
         throw new Error('Cần tối thiểu một định danh: customerId, phone, email, invoiceNo hoặc orderNo.');
       }
-      if (createPaymentRequestForm.amount !== '' && toNumber(createPaymentRequestForm.amount) <= 0) {
-        throw new Error('Amount phải lớn hơn 0.');
+      const amountParsed = parseOptionalNumberInput(createPaymentRequestForm.amount);
+      if (amountParsed === null || (typeof amountParsed === 'number' && amountParsed <= 0)) {
+        throw new Error('Amount phải là số lớn hơn 0.');
+      }
+      if (createPaymentRequestForm.sentAt && !isStrictDateTimeLocal(createPaymentRequestForm.sentAt)) {
+        throw new Error('Thời điểm gửi yêu cầu thanh toán không hợp lệ (YYYY-MM-DDTHH:mm).');
       }
 
       await apiRequest('/crm/payment-requests', {
@@ -1130,7 +1159,7 @@ export function CrmOperationsBoard() {
           channel: createPaymentRequestForm.channel || undefined,
           recipient: createPaymentRequestForm.recipient || undefined,
           qrCodeUrl: createPaymentRequestForm.qrCodeUrl || undefined,
-          amount: createPaymentRequestForm.amount !== '' ? Number(createPaymentRequestForm.amount) : undefined,
+          amount: typeof amountParsed === 'number' ? amountParsed : undefined,
           status: createPaymentRequestForm.status || undefined,
           sentAt: createPaymentRequestForm.sentAt || undefined,
           note: createPaymentRequestForm.note || undefined

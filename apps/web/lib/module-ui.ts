@@ -30,6 +30,10 @@ export type FormField = {
   label: string;
   type?: FieldType;
   required?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  integer?: boolean;
   placeholder?: string;
   description?: string;
   defaultValue?: FieldValue;
@@ -64,6 +68,10 @@ export type FeatureFilter = {
   key: string;
   label: string;
   type?: FilterType;
+  min?: number;
+  max?: number;
+  step?: number;
+  integer?: boolean;
   placeholder?: string;
   description?: string;
   options?: SelectOption[];

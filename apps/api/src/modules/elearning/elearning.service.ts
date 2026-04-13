@@ -2,7 +2,6 @@ import { Inject, Injectable, BadRequestException, NotFoundException } from '@nes
 import {
   ElearningContentType,
   ElearningEnrollmentStatus,
-  ElearningQuestionTag,
   GenericStatus,
   Prisma
 } from '@prisma/client';
@@ -64,8 +63,21 @@ export class ElearningService {
             }
           }
         },
+        // Include loose lessons (not assigned to any section)
+        lessons: {
+          where: { sectionId: null },
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            title: true,
+            contentType: true,
+            sortOrder: true,
+            durationMinutes: true,
+            status: true
+          }
+        },
         exams: { orderBy: { createdAt: 'desc' } },
-        _count: { select: { enrollments: true, certificates: true } }
+        _count: { select: { enrollments: true, certificates: true, lessons: true } }
       }
     });
     if (!course) throw new NotFoundException('Khóa học không tồn tại.');
@@ -77,6 +89,8 @@ export class ElearningService {
     const title = this.toString(payload.title);
     if (!title) throw new BadRequestException('Thiếu tên khóa học.');
 
+    const category = this.normalizeCategory(payload.category);
+
     return this.prisma.client.elearningCourse.create({
       data: {
         tenant_Id: tenantId,
@@ -85,6 +99,7 @@ export class ElearningService {
         description: this.toNullable(payload.description),
         coverImageUrl: this.toNullable(payload.coverImageUrl),
         tags: Array.isArray(payload.tags) ? payload.tags.map(String) : [],
+        category,
         enrollPolicy: this.toNullable(payload.enrollPolicy) ?? 'INVITE',
         status: GenericStatus.DRAFT,
         createdBy: this.toNullable(payload.createdBy)
@@ -101,6 +116,7 @@ export class ElearningService {
         ...(payload.description !== undefined ? { description: this.toNullable(payload.description) } : {}),
         ...(payload.coverImageUrl !== undefined ? { coverImageUrl: this.toNullable(payload.coverImageUrl) } : {}),
         ...(Array.isArray(payload.tags) ? { tags: payload.tags.map(String) } : {}),
+        ...(payload.category !== undefined ? { category: this.normalizeCategory(payload.category) } : {}),
         ...(payload.enrollPolicy ? { enrollPolicy: String(payload.enrollPolicy) } : {}),
         ...(payload.status ? { status: payload.status as GenericStatus } : {})
       }
@@ -113,6 +129,16 @@ export class ElearningService {
     await this.prisma.client.elearningCourse.updateMany({
       where: { id },
       data: { status: GenericStatus.ACTIVE, publishedAt: new Date() }
+    });
+    // Cascade: publish all DRAFT lessons in this course
+    await this.prisma.client.elearningLesson.updateMany({
+      where: { courseId: id, status: GenericStatus.DRAFT },
+      data: { status: GenericStatus.ACTIVE }
+    });
+    // Cascade: publish all DRAFT exams in this course
+    await this.prisma.client.elearningExam.updateMany({
+      where: { courseId: id, status: GenericStatus.DRAFT },
+      data: { status: GenericStatus.ACTIVE }
     });
     return this.prisma.client.elearningCourse.findFirst({ where: { id } });
   }
@@ -161,6 +187,11 @@ export class ElearningService {
   }
 
   async deleteSection(id: string) {
+    // Detach all lessons first — they become loose lessons (sectionId = null)
+    await this.prisma.client.elearningLesson.updateMany({
+      where: { sectionId: id },
+      data: { sectionId: null }
+    });
     return this.prisma.client.elearningSection.deleteMany({ where: { id } });
   }
 
@@ -244,7 +275,7 @@ export class ElearningService {
     const keyword = query.q?.trim();
     const where: Prisma.ElearningQuestionWhereInput = {
       status: GenericStatus.ACTIVE,
-      ...(query.tag ? { tags: { has: query.tag as ElearningQuestionTag } } : {}),
+      ...(query.tag ? { tags: { has: query.tag } } : {}),
       ...(query.positionId ? { positionId: query.positionId } : {}),
       ...(query.departmentId ? { departmentId: query.departmentId } : {}),
       ...(keyword
@@ -512,26 +543,60 @@ export class ElearningService {
   async startExam(examId: string, employeeId: string) {
     const exam = await this.prisma.client.elearningExam.findFirst({
       where: { id: examId },
-      include: { course: { select: { id: true } } }
+      include: { course: { select: { id: true, tags: true, category: true } } }
     });
     if (!exam) throw new NotFoundException('Bài thi không tồn tại.');
 
-    // Get random questions from course's question pool
+    // Strategy 1: Get questions linked to course's QUIZ lessons
     const lessonQuestionIds = await this.prisma.client.elearningLessonQuestion.findMany({
       where: {
         lesson: { courseId: exam.courseId }
       },
       select: { questionId: true }
     });
-    const questionIds = [...new Set(lessonQuestionIds.map((lq) => lq.questionId))];
+    let questionIds = [...new Set(lessonQuestionIds.map((lq) => lq.questionId))];
 
-    const allQuestions = await this.prisma.client.elearningQuestion.findMany({
-      where: {
-        id: { in: questionIds },
-        status: GenericStatus.ACTIVE
-      },
-      include: { options: { orderBy: { sortOrder: 'asc' } } }
-    });
+    let allQuestions = questionIds.length > 0
+      ? await this.prisma.client.elearningQuestion.findMany({
+          where: { id: { in: questionIds }, status: GenericStatus.ACTIVE },
+          include: { options: { orderBy: { sortOrder: 'asc' } } }
+        })
+      : [];
+
+    // Strategy 2: Fallback — pull from question bank by course category or tags
+    if (allQuestions.length === 0) {
+      const course = exam.course as any;
+      const categoryTag = course?.category;
+      const courseTags = course?.tags as string[] | undefined;
+
+      // Build tag filter from category and/or course tags
+      const tagFilter: string[] = [];
+      if (categoryTag && typeof categoryTag === 'string') {
+        tagFilter.push(categoryTag.toUpperCase());
+      }
+      if (courseTags?.length) {
+        for (const t of courseTags) {
+          const upper = String(t).toUpperCase();
+          if (upper && !tagFilter.includes(upper)) {
+            tagFilter.push(upper);
+          }
+        }
+      }
+
+      const tagWhere = tagFilter.length > 0
+        ? { tags: { hasSome: tagFilter } }
+        : {}; // If no tags, pull from entire bank
+
+      allQuestions = await this.prisma.client.elearningQuestion.findMany({
+        where: { status: GenericStatus.ACTIVE, ...tagWhere },
+        include: { options: { orderBy: { sortOrder: 'asc' } } },
+        take: 200
+      });
+    }
+
+    if (allQuestions.length === 0) {
+      throw new BadRequestException('Không có câu hỏi nào trong phạm vi bài thi. Vui lòng thêm câu hỏi vào ngân hàng hoặc gắn vào bài học.');
+    }
 
     // Random select
     const shuffled = allQuestions.sort(() => Math.random() - 0.5);
@@ -771,12 +836,17 @@ export class ElearningService {
       : ElearningContentType.DOCUMENT;
   }
 
-  private normalizeQuestionTags(tags: unknown): ElearningQuestionTag[] {
-    if (!Array.isArray(tags)) return [ElearningQuestionTag.GENERAL];
-    const valid = Object.values(ElearningQuestionTag);
+  private normalizeQuestionTags(tags: unknown): string[] {
+    if (!Array.isArray(tags)) return ['GENERAL'];
     return tags
-      .map((t) => String(t).toUpperCase())
-      .filter((t) => valid.includes(t as ElearningQuestionTag)) as ElearningQuestionTag[];
+      .map((t) => String(t).toUpperCase().trim())
+      .filter((t) => t.length > 0);
+  }
+
+  private normalizeCategory(value: unknown): string | null {
+    if (!value) return null;
+    const str = String(value).toUpperCase().trim();
+    return str || null;
   }
 
   private toString(value: unknown): string | undefined {
@@ -801,5 +871,151 @@ export class ElearningService {
       .replace(/đ/g, 'd')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
+  }
+
+  // ─── Question Categories ──────────────────────────────────────
+
+  async listQuestionCategories() {
+    return this.prisma.client.elearningQuestionCategory.findMany({
+      where: { status: { not: GenericStatus.INACTIVE } },
+      orderBy: { sortOrder: 'asc' }
+    });
+  }
+
+  async createQuestionCategory(payload: ElearningPayload) {
+    const tenantId = this.prisma.getTenantId();
+    const code = String(payload.code ?? '').toUpperCase().trim();
+    const label = String(payload.label ?? '').trim();
+    if (!code) throw new BadRequestException('Thiếu mã phân loại (code).');
+    if (!label) throw new BadRequestException('Thiếu tên phân loại (label).');
+
+    const exists = await this.prisma.client.elearningQuestionCategory.findUnique({
+      where: { tenant_Id_code: { tenant_Id: tenantId, code } }
+    });
+    if (exists) throw new BadRequestException(`Mã phân loại "${code}" đã tồn tại.`);
+
+    return this.prisma.client.elearningQuestionCategory.create({
+      data: {
+        tenant_Id: tenantId,
+        code,
+        label,
+        color: this.toNullable(payload.color),
+        sortOrder: typeof payload.sortOrder === 'number' ? payload.sortOrder : 0
+      }
+    });
+  }
+
+  async updateQuestionCategory(id: string, payload: ElearningPayload) {
+    const existing = await this.prisma.client.elearningQuestionCategory.findFirst({ where: { id } });
+    if (!existing) throw new NotFoundException('Phân loại không tồn tại.');
+
+    return this.prisma.client.elearningQuestionCategory.update({
+      where: { id },
+      data: {
+        ...(payload.label ? { label: String(payload.label).trim() } : {}),
+        ...(payload.color !== undefined ? { color: this.toNullable(payload.color) } : {}),
+        ...(typeof payload.sortOrder === 'number' ? { sortOrder: payload.sortOrder } : {}),
+        ...(payload.status ? { status: payload.status as GenericStatus } : {})
+      }
+    });
+  }
+
+  async deleteQuestionCategory(id: string) {
+    const existing = await this.prisma.client.elearningQuestionCategory.findFirst({ where: { id } });
+    if (!existing) throw new NotFoundException('Phân loại không tồn tại.');
+
+    // Soft-delete by setting INACTIVE
+    return this.prisma.client.elearningQuestionCategory.update({
+      where: { id },
+      data: { status: GenericStatus.INACTIVE }
+    });
+  }
+
+  // ─── Question Import ──────────────────────────────────────────
+
+  async importQuestions(rows: unknown[]) {
+    const tenantId = this.prisma.getTenantId();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new BadRequestException('Không có dữ liệu để import.');
+    }
+
+    const errors: { rowIndex: number; message: string }[] = [];
+    let importedCount = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] as Record<string, unknown>;
+      const rowIndex = i + 2; // 1-indexed + header row
+
+      try {
+        const questionText = String(row.questionText ?? '').trim();
+        if (!questionText) {
+          errors.push({ rowIndex, message: 'Thiếu nội dung câu hỏi.' });
+          continue;
+        }
+
+        // Parse options
+        const options: { optionText: string; isCorrect: boolean }[] = [];
+        const correctRaw = String(row.correctAnswers ?? '').toUpperCase().trim();
+        const correctSet = new Set(correctRaw.split(/[,;\s]+/).map((c) => c.trim()).filter(Boolean));
+
+        const optionKeys = ['optionA', 'optionB', 'optionC', 'optionD'];
+        const optionLabels = ['A', 'B', 'C', 'D'];
+        for (let j = 0; j < optionKeys.length; j++) {
+          const text = String(row[optionKeys[j]] ?? '').trim();
+          if (text) {
+            options.push({
+              optionText: text,
+              isCorrect: correctSet.has(optionLabels[j])
+            });
+          }
+        }
+
+        if (options.length < 2) {
+          errors.push({ rowIndex, message: 'Cần ít nhất 2 đáp án.' });
+          continue;
+        }
+        if (!options.some((o) => o.isCorrect)) {
+          errors.push({ rowIndex, message: 'Cần ít nhất 1 đáp án đúng.' });
+          continue;
+        }
+
+        // Parse tags
+        const tagsRaw = String(row.tags ?? 'GENERAL').trim();
+        const tags = tagsRaw
+          .split(/[,;]+/)
+          .map((t) => t.trim().toUpperCase())
+          .filter(Boolean);
+
+        const points = typeof row.points === 'number' ? row.points : 1;
+
+        await this.prisma.client.elearningQuestion.create({
+          data: {
+            tenant_Id: tenantId,
+            questionText,
+            explanation: row.explanation ? String(row.explanation).trim() : null,
+            tags: tags.length > 0 ? tags : ['GENERAL'],
+            points,
+            options: {
+              create: options.map((opt, idx) => ({
+                tenant_Id: tenantId,
+                optionText: opt.optionText,
+                isCorrect: opt.isCorrect,
+                sortOrder: idx
+              }))
+            }
+          }
+        });
+        importedCount++;
+      } catch (err) {
+        errors.push({ rowIndex, message: err instanceof Error ? err.message : 'Lỗi không xác định.' });
+      }
+    }
+
+    return {
+      totalRows: rows.length,
+      importedCount,
+      skippedCount: rows.length - importedCount,
+      errors
+    };
   }
 }

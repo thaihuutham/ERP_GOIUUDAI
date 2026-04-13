@@ -49,25 +49,62 @@ const DOMAIN_TAB_MAP: Record<string, DomainTabConfig[]> = {
     { key: 'finance-invoice', label: 'Hóa đơn tự động', sectionIds: ['finance-invoice-automation'] }
   ],
   sales_crm_policies: [
-    { key: 'sales-orders', label: 'Quy tắc đơn hàng', sectionIds: ['sales-order-policy'] },
     {
-      key: 'sales-checkout-core',
-      label: 'Sale Checkout Core',
+      key: 'sales-policy-order',
+      label: 'Quy tắc đơn hàng',
+      sectionIds: [
+        'sales-order-policy'
+      ]
+    },
+    {
+      key: 'sales-policy-checkout',
+      label: 'Checkout & kích hoạt',
       sectionIds: [
         'sales-checkout-templates',
         'sales-checkout-activation',
         'sales-checkout-effective'
       ]
     },
-    { key: 'sales-credit', label: 'Chiết khấu & tín dụng', sectionIds: ['sales-discount-credit'] },
-    { key: 'sales-draft', label: 'Đơn nháp', sectionIds: ['sales-draft-expiry'] },
-    { key: 'sales-taxonomy', label: 'Phân loại khách hàng', sectionIds: ['sales-taxonomy'] },
-    { key: 'sales-tags', label: 'Tag Registry', sectionIds: ['sales-tag-registry'] },
-    { key: 'sales-renewal', label: 'Nhắc gia hạn CRM', sectionIds: ['sales-renewal-reminder'] },
-    { key: 'customer-distribution', label: '🔄 Chia khách tự động', sectionIds: ['customer-distribution'] },
-    { key: 'customer-duplicate-check', label: '🔍 Trùng khách', sectionIds: ['customer-duplicate-check'] },
-    { key: 'customer-reclaim-idle', label: '⏰ Thu hồi idle', sectionIds: ['customer-reclaim-idle'] },
-    { key: 'customer-reclaim-rotation', label: '🔄 Quay vòng thất bại', sectionIds: ['customer-reclaim-rotation'] }
+    {
+      key: 'sales-policy-discount-credit',
+      label: 'Chiết khấu & tín dụng',
+      sectionIds: [
+        'sales-discount-credit'
+      ]
+    },
+    {
+      key: 'sales-policy-draft',
+      label: 'Đơn nháp',
+      sectionIds: [
+        'sales-draft-expiry'
+      ]
+    },
+    {
+      key: 'crm-settings-status',
+      label: 'Trạng thái & phân loại',
+      sectionIds: [
+        'sales-status-registry',
+        'sales-taxonomy',
+        'sales-tag-registry'
+      ]
+    },
+    {
+      key: 'crm-settings-renewal',
+      label: 'Nhắc gia hạn',
+      sectionIds: [
+        'sales-renewal-reminder'
+      ]
+    },
+    {
+      key: 'crm-settings-distribution',
+      label: 'Chia khách tự động',
+      sectionIds: [
+        'customer-distribution',
+        'customer-duplicate-check',
+        'customer-reclaim-idle',
+        'customer-reclaim-rotation'
+      ]
+    }
   ],
   catalog_scm_policies: [
     { key: 'catalog-defaults', label: 'Mặc định hệ thống', sectionIds: ['catalog-defaults'] },

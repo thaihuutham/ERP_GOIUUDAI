@@ -15,6 +15,7 @@ import {
   ArrowRightCircle
 } from 'lucide-react';
 import { apiRequest } from '../lib/api-client';
+import { isStrictDateTimeLocal, isStrictIsoDate, parseFiniteNumber } from '../lib/form-validation';
 import { SidePanel } from './ui/side-panel';
 
 type RecruitmentStage = 'APPLIED' | 'SCREENING' | 'INTERVIEW' | 'ASSESSMENT' | 'OFFER' | 'HIRED';
@@ -168,6 +169,15 @@ function formatMoney(value: number | string | null | undefined, currency: string
     currency: currency || 'VND',
     maximumFractionDigits: 0
   }).format(numeric);
+}
+
+function parseOptionalNumberInput(raw: string) {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const parsed = parseFiniteNumber(normalized);
+  return parsed === null ? null : parsed;
 }
 
 function statusPillClass(status: string) {
@@ -345,6 +355,10 @@ export function HrRecruitmentPipelineBoard() {
     if (!selectedApplicationId) {
       return;
     }
+    if (!isStrictDateTimeLocal(interviewForm.scheduledAt)) {
+      setError('Thời gian phỏng vấn không hợp lệ (YYYY-MM-DDTHH:mm).');
+      return;
+    }
 
     await mutateAndReload(
       () =>
@@ -368,6 +382,15 @@ export function HrRecruitmentPipelineBoard() {
     if (!selectedApplicationId) {
       return;
     }
+    const offeredSalary = parseOptionalNumberInput(offerForm.offeredSalary);
+    if (offeredSalary === null || offeredSalary === undefined || offeredSalary <= 0) {
+      setError('Mức lương đề xuất phải là số lớn hơn 0.');
+      return;
+    }
+    if (offerForm.proposedStartDate && !isStrictIsoDate(offerForm.proposedStartDate)) {
+      setError('Ngày bắt đầu dự kiến không hợp lệ (YYYY-MM-DD).');
+      return;
+    }
 
     await mutateAndReload(
       () =>
@@ -376,7 +399,7 @@ export function HrRecruitmentPipelineBoard() {
           body: {
             applicationId: selectedApplicationId,
             offeredPosition: offerForm.offeredPosition,
-            offeredSalary: Number(offerForm.offeredSalary || 0),
+            offeredSalary,
             currency: offerForm.currency,
             proposedStartDate: offerForm.proposedStartDate || null
           }

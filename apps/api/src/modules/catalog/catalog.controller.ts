@@ -7,6 +7,7 @@ import {
   ArchiveProductDto,
   CatalogListQueryDto,
   CreateProductDto,
+  ImportProductsDto,
   SetPricePolicyDto,
   UpdateProductDto
 } from './dto/catalog.dto';
@@ -75,5 +76,12 @@ export class CatalogController {
   async setPricePolicy(@Param('id') id: string, @Body() body: SetPricePolicyDto) {
     const product = await this.catalogService.setPricePolicy(id, body);
     return this.customFields.wrapEntity(CustomFieldEntityType.PRODUCT, product);
+  }
+
+  @Post('import')
+  @Roles(UserRole.ADMIN)
+  @AuditAction({ action: 'IMPORT_PRODUCTS', entityType: 'Product' })
+  importProducts(@Body() body: ImportProductsDto) {
+    return this.catalogService.importProducts(body as unknown as Record<string, unknown>);
   }
 }

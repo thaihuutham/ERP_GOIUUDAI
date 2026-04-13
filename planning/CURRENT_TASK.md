@@ -2,9 +2,389 @@
 
 ## Trạng thái tổng quan
 - Phase: Sales Workflow Optimization — Phase A+B Complete (11/13 GAPs done)
-- Last updated: 2026-04-12 19:14 +07
+- Last updated: 2026-04-13 10:55 +07
 - Owner: Codex session
 - Operational gate (persistent): trước khi kết thúc task phải chạy System Stability Gate (docker/db/migrate + lint/build/test + e2e theo phạm vi thay đổi).
+## Session Update 2026-04-13 10:55 +07 (Settings CRM/Bán hàng tách route riêng)
+- User request:
+  - bỏ mô hình 2 lớp tab trong cùng trang.
+  - tách riêng thành 2 URL:
+    - `/modules/settings/sales-policies`
+    - `/modules/settings/crm-settings`
+- Đã xử lý:
+  - tạo 2 route page riêng:
+    - `apps/web/app/modules/settings/sales-policies/page.tsx`
+    - `apps/web/app/modules/settings/crm-settings/page.tsx`
+  - refactor `SettingsCenter` để hỗ trợ route-based view:
+    - thêm props `presetDomain`, `initialTab`, `tabFilter`, `hideSidebar`, `pageTitle`, `pageDescription`,
+    - lọc tab theo route, ép domain/tab hợp lệ, và ẩn sidebar cho trang chuyên biệt.
+  - mở rộng `useSettingsState` để nhận default domain/tab từ route (`initialDomain`, `initialDomainTab`).
+  - cập nhật app-shell title cho 2 URL mới:
+    - `apps/web/components/app-shell.tsx`.
+  - cập nhật e2e:
+    - bỏ assertion tab 2 lớp cũ,
+    - thêm kiểm tra trực tiếp cho 2 URL mới và đảm bảo mỗi URL chỉ hiển thị nhóm tab phù hợp:
+      - `apps/web/e2e/tests/settings-center-reports.spec.ts`.
+- Verification:
+  - Infra/DB gate:
+    - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - Targeted tests:
+    - `npm run test:unit --workspace @erp/web -- components/settings-center/__tests__/view-model.test.ts` ✅
+    - `npm run test --workspace @erp/api -- settings-policy.service.test.ts` ✅
+    - `npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/settings-center-reports.spec.ts -g "renders phase-2 domain tabs for remaining settings domains"` ✅
+  - Full lint/build gate:
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/api` ✅
+    - `npm run build --workspace @erp/api` ✅
+- Notes:
+  - Không thay đổi business logic ERP; chỉ thay đổi điều hướng/trình bày Settings UI.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 10:12 +07 (Fix lỗi runtime thiếu cột eLearning sau rebuild-local-stack)
+- User request:
+  - fix luôn lỗi khi chạy `bash scripts/dev/rebuild-local-stack.sh` mà UI báo `ElearningCourse.category does not exist`.
+- Root cause:
+  - migration tạo bảng eLearning ban đầu chưa có cột `category` cho `ElearningCourse`, trong khi Prisma schema + service đã dùng field này.
+  - script rebuild dùng `prisma migrate deploy`, nên DB runtime sau rebuild không tự có cột nếu migration thiếu.
+- Đã xử lý:
+  - thêm migration bù drift:
+    - `apps/api/prisma/migrations/20260413101000_add_elearning_course_category_column/migration.sql`
+    - nội dung: `ALTER TABLE "ElearningCourse" ADD COLUMN IF NOT EXISTS "category" "ElearningQuestionTag";`
+- Verification:
+  - chạy lại đúng lệnh user:
+    - `bash scripts/dev/rebuild-local-stack.sh` ✅
+    - script apply migration mới thành công và kết thúc `Done. Stack rebuilt, DB migrated, smoke checks passed.`
+  - kiểm tra DB trực tiếp:
+    - `docker exec erp-postgres psql -U erp -d erp_retail -c "\\d \"ElearningCourse\""` ✅ có cột `category`.
+- Notes:
+  - không đổi business logic ERP/eLearning.
+  - fix ở tầng migration để tránh lỗi tái diễn mỗi lần rebuild/reset DB.
+  - không cần ADR mới.
+## Session Update 2026-04-13 09:59 +07 (Dọn lỗi compile pre-existing eLearning để mở lại gate lint/build)
+- User request:
+  - xử lý cụm lỗi compile pre-existing ở eLearning để gate lint/build xanh lại toàn repo.
+- Root cause:
+  - API: Prisma Client type stale so với schema eLearning hiện tại.
+  - Web: `ExamsTab` call thiếu prop bắt buộc `course`.
+- Đã xử lý:
+  - regenerate Prisma client:
+    - `npm run prisma:generate --workspace @erp/api`
+  - fix frontend prop mismatch:
+    - file `apps/web/components/elearning-course-detail.tsx`
+    - đổi call:
+      - từ: `<ExamsTab courseId={courseId} onRefresh={() => void loadCourse()} />`
+      - thành: `<ExamsTab courseId={courseId} course={course} onRefresh={() => void loadCourse()} />`
+- Verification:
+  - `docker ps --format 'table {{.Names}}\t{{.Status}}'` ✅ (`erp-postgres` up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web` ✅
+- Notes:
+  - không đổi business logic eLearning; chỉ sửa type/compile blockers pre-existing.
+  - mở lại gate lint/build toàn repo theo đúng yêu cầu phiên này.
+  - đã bật lại `erp-postgres` trong session trước khi chạy full stability gate.
+  - không cần ADR mới.
+## Session Update 2026-04-13 09:52 +07 (Thêm import Excel cho Danh mục sản phẩm, upsert theo SKU)
+- User request:
+  - thêm tính năng import Excel cho phần danh mục sản phẩm.
+  - chốt chiến lược import: upsert theo SKU (SKU trùng thì cập nhật).
+- Đã xử lý:
+  - Backend:
+    - thêm endpoint `POST /api/v1/catalog/products/import` (admin-only) trong:
+      - `apps/api/src/modules/catalog/catalog.controller.ts`
+    - thêm DTO payload import:
+      - `apps/api/src/modules/catalog/dto/catalog.dto.ts`
+    - thêm logic import/upsert theo SKU trong:
+      - `apps/api/src/modules/catalog/catalog.service.ts`
+    - hành vi import:
+      - tối đa 2000 dòng/lần,
+      - SKU bắt buộc,
+      - SKU tồn tại -> cập nhật,
+      - SKU mới -> tạo sản phẩm mới,
+      - trả summary: `totalRows/importedCount/skippedCount/errors[]` theo dòng.
+  - Frontend:
+    - thêm parser + template Excel sản phẩm:
+      - `apps/web/lib/catalog-product-import.ts`
+    - thêm màn hình import sản phẩm:
+      - `apps/web/components/catalog-products-import-board.tsx`
+      - `apps/web/app/modules/catalog/products/import/page.tsx`
+    - cập nhật quick action từ module Catalog:
+      - `apps/web/components/catalog-operations-board.tsx`
+    - cập nhật tiêu đề breadcrumb/app shell cho route import:
+      - `apps/web/components/app-shell.tsx`
+  - Test:
+    - bổ sung test service import:
+      - `apps/api/test/catalog.service.test.ts` (case upsert theo SKU + lỗi thiếu SKU).
+- Verification:
+  - Infra/DB gate:
+    - `docker ps` ✅ (`erp-postgres` up)
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`)
+  - Targeted tests:
+    - `npm run test --workspace @erp/api -- test/catalog.service.test.ts` ✅ (4 passed)
+  - Full lint/build:
+    - `npm run lint --workspace @erp/api` ❌ lỗi pre-existing ngoài scope ở `apps/api/src/modules/elearning/elearning.service.ts` (`category/course typing`)
+    - `npm run build --workspace @erp/api` ❌ cùng lỗi pre-existing như trên
+    - `npm run lint --workspace @erp/web` ❌ lỗi pre-existing ở `apps/web/components/elearning-course-detail.tsx:1434`
+    - `npm run build --workspace @erp/web` ❌ cùng lỗi pre-existing như trên
+- Notes:
+  - tính năng import catalog đã implement xong theo đúng convention `ExcelImportBlock`.
+  - chưa thể xác nhận full build toàn repo do blocker pre-existing ở eLearning module.
+  - không cần ADR mới cho thay đổi này.
+## Session Update 2026-04-13 09:41 +07 (Tách CRM/Bán hàng thành 2 trang + tab con)
+- User request:
+  - tách phần `Chính sách CRM/Bán hàng` thành 2 trang riêng:
+    - `Chính sách bán hàng`
+    - `Cài đặt CRM`
+  - mỗi trang có các tab nhỏ để dễ thao tác và gọn trang.
+- Đã xử lý:
+  - cập nhật tab map domain `sales_crm_policies` ở cả Web + API layout metadata.
+  - thêm lớp điều hướng 2 tầng trong Settings Center:
+    - tầng 1: chọn trang (Bán hàng/CRM),
+    - tầng 2: tab chi tiết theo trang.
+  - cập nhật unit test + api test + e2e test tương ứng.
+- Verification:
+  - `docker ps` ✅ (`erp-postgres` up)
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅
+  - `npm run test:unit --workspace @erp/web -- components/settings-center/__tests__/view-model.test.ts` ✅
+  - `npm run test --workspace @erp/api -- settings-policy.service.test.ts` ✅
+  - `npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/settings-center-reports.spec.ts -g "renders phase-2 domain tabs for remaining settings domains"` ✅
+  - full lint/build vẫn fail do lỗi pre-existing ngoài scope:
+    - web: `apps/web/components/elearning-course-detail.tsx(1434,36)`
+    - api: `apps/api/src/modules/elearning/elearning.service.ts` (category/course typing)
+- Notes:
+  - Không đổi business logic ERP, chỉ refactor điều hướng UI Settings.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 08:54 +07 (Script one-click rebuild + migrate + smoke local)
+- User request:
+  - tạo script chạy 1 lần để xóa image cũ, build mới, gán lại DB và check lại project sau khi sửa code.
+- Đã xử lý:
+  - thêm `scripts/dev/rebuild-local-stack.sh`:
+    - stop stack,
+    - remove app images cũ (`erp-retail-api`, `erp-retail-web`),
+    - build lại image,
+    - up infra,
+    - wait Postgres ready,
+    - chạy `prisma migrate deploy` + `prisma migrate status`,
+    - up API/Web,
+    - smoke checks API/Web/catalog endpoint.
+    - hỗ trợ option:
+      - `--reset-db`, `--no-cache`, `--with-lint`.
+  - cập nhật `package.json`:
+    - thêm shortcut `npm run dev:rebuild:check`.
+- Verification:
+  - chạy thực tế `scripts/dev/rebuild-local-stack.sh` ✅
+  - output kết thúc: `Done. Stack rebuilt, DB migrated, smoke checks passed.`
+  - các step chính đều pass:
+    - `docker compose build` ✅
+    - `prisma migrate deploy` ✅
+    - `prisma migrate status` ✅
+    - API health ✅
+    - Web health ✅
+    - catalog products smoke ✅
+- Notes:
+  - Mặc định script giữ nguyên dữ liệu DB; chỉ reset khi truyền `--reset-db`.
+  - Không đổi business logic ERP.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 08:44 +07 (Runtime DB missing tables after build/up)
+- User report:
+  - runtime báo lỗi Prisma: `The table public.Product does not exist in the current database` dù đã `docker compose build` + `up -d`.
+- Root cause:
+  - DB runtime trong container chưa apply migrations (schema `public` trống, 0 bảng).
+  - Build/up không tự đảm bảo migration được apply khi DB volume đang rỗng/đổi trạng thái.
+- Đã xử lý:
+  - chạy:
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:deploy --workspace @erp/api`
+- Verification:
+  - `npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`)
+  - `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'` -> `133` ✅
+  - `SELECT COUNT(*) ... table_name='Product'` -> `1` ✅
+  - `GET /api/v1/catalog/products?includeArchived=false&limit=5` trả payload hợp lệ ✅
+- Notes:
+  - Không đổi business logic ERP, chỉ khôi phục schema bằng migration chuẩn.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 08:39 +07 (Fix triệt để lỗi Docker build API DTO)
+- User request:
+  - sửa hoàn chỉnh lỗi build Docker tại bước `npm run build --workspace @erp/api` (ban đầu fail `finance.dto.ts` line 184/210).
+- Đã xử lý:
+  - sửa cú pháp decorator `@Type(...)` trong `apps/api/src/modules/finance/dto/finance.dto.ts`:
+    - `@Type(({ strict: true, strictSeparator: true }) => JournalEntryLineDto)`
+    - -> `@Type(() => JournalEntryLineDto)`.
+  - dọn toàn bộ pattern decorator không tương thích kiểu hiện tại:
+    - `({ strict: true, strictSeparator: true })` -> `()`
+    - áp dụng cho các file `*.dto.ts` bị ảnh hưởng trong `apps/api/src/modules/`.
+- Verification:
+  - `npm run lint --workspace @erp/api` ✅
+  - `npm run build --workspace @erp/api` ✅
+  - `docker compose build` ✅
+    - `erp-retail-api  Built`
+    - `erp-retail-web  Built`
+- Notes:
+  - Root cause là lỗi tham số decorator `class-validator`/`class-transformer`, không phải lỗi Docker engine.
+  - Không thay đổi business logic ERP; chỉ sửa compile/type-check DTO.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 08:23 +07 (Fix menu dọc Settings Center bị nhảy khi hover cuối trang)
+- User request:
+  - khi hover vào thanh ngang bên dưới cấu hình hệ thống hoặc vùng giữa các trường lúc đã cuộn cuối trang, menu dọc bị nhảy lên/xuống liên tục.
+- Đã xử lý:
+  - cập nhật `apps/web/app/styles/modules/workbench.css`:
+    - thêm `overflow-anchor: none` cho `.settings-center-main`.
+    - thêm cơ chế ổn định sidebar settings:
+      - `position: sticky`, `top`, `max-height`, `overflow-y`, `overscroll-behavior`, `scrollbar-gutter`.
+    - thêm override cho tab ngang settings:
+      - `.settings-domain-tabs .tabs-bar` dùng `overflow-y: hidden`, `scrollbar-gutter: stable both-edges`, `overscroll-behavior-x: contain`.
+    - reset sticky về `position: static` ở breakpoint `max-width: 1160px` để giữ UX responsive.
+- Verification:
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`)
+  - `npm run lint --workspace @erp/api` ❌ pre-existing DTO syntax errors:
+    - `apps/api/src/modules/finance/dto/finance.dto.ts:184,210`
+  - `npm run build --workspace @erp/api` ❌ cùng lỗi pre-existing.
+  - e2e settings target:
+    - `npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/settings-center-reports.spec.ts -g "renders phase-2 domain tabs for remaining settings domains"` ❌
+    - fail do assertion tab cũ `Quy tắc đơn hàng` không còn tồn tại (đã đổi cấu trúc tab trước đó), không phải lỗi compile/runtime từ patch CSS.
+- Notes:
+  - Chỉ thay đổi CSS layout/scroll stabilization cho Settings Center.
+  - Không đổi business logic ERP.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 07:23 +07 (Thiết lập file cài đặt riêng cho AI agents)
+- User request:
+  - gom các đặc điểm cài đặt riêng (vd: dùng `Xóa` thay `Lưu trữ`, chuẩn nhập ngày tháng riêng) vào 1 file riêng.
+  - yêu cầu AI agent phải đọc file này trước khi thực hiện nhiệm vụ.
+- Đã xử lý:
+  - tạo file mới:
+    - `docs/specs/PERSONAL_PREFERENCES.md`
+    - nội dung gồm:
+      - quy tắc ưu tiên/override,
+      - quy ước thuật ngữ thao tác xóa (`Xóa`),
+      - chuẩn nhập `date` (`YYYY-MM-DD`) và `datetime-local` (`YYYY-MM-DDTHH:mm`),
+      - guideline mở rộng file cài đặt.
+  - cập nhật `AGENTS.md`:
+    - thêm mục bắt buộc tuân thủ cài đặt riêng.
+    - thêm `docs/specs/PERSONAL_PREFERENCES.md` vào vị trí đầu tiên trong trình tự đọc trước khi sửa code.
+- Verification:
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`)
+  - `npm run lint --workspace @erp/api` ❌ pre-existing lỗi DTO:
+    - `apps/api/src/modules/finance/dto/finance.dto.ts:184,210`
+  - `npm run build --workspace @erp/api` ❌ cùng lỗi pre-existing như trên
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/web`:
+    - lần 1 ❌ do thiếu `.next/types` (môi trường),
+    - sau khi build lại -> ✅
+- Notes:
+  - Không thay đổi business logic ERP.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 07:18 +07 (Chuẩn hóa từ ngữ thao tác xóa)
+- User request:
+  - thay toàn bộ cách gọi hành động `Lưu Trữ/Lưu trữ` thành `Xóa` trong toàn bộ dự án.
+- Scope thực hiện:
+  - cập nhật chuỗi hiển thị/alert/confirm/action label liên quan thao tác delete/archive trong API/Web/E2E và docs regression.
+  - đồng bộ thêm các ghi chú lịch sử trong `.agent/` + `planning/` ở các chỗ còn `Lưu trữ` dạng title-case.
+- Đã xử lý:
+  - API messages:
+    - `apps/api/src/modules/crm/crm-contracts.service.ts`
+    - `apps/api/src/modules/finance/finance.service.ts`
+    - `apps/api/src/modules/reports/reports.service.ts`
+    - `apps/api/src/modules/sales/sales.service.ts`
+  - Web UI labels/messages/actions + module definitions + CTA:
+    - `apps/web/components/**`
+    - `apps/web/lib/cta-labels.ts`
+    - `apps/web/lib/module-definitions/**`
+  - E2E assertions:
+    - `apps/web/e2e/tests/access-policy-hardening.spec.ts`
+    - `apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts`
+    - `apps/web/e2e/tests/domain-modules-wave1.spec.ts`
+  - Regression doc:
+    - `docs/specs/WAVE3_DOMAIN_MODULES_REGRESSION_BASELINE.md`
+- Verification:
+  - text scan:
+    - `git grep -n -I -e 'Lưu Trữ' -e 'Lưu trữ' -e 'LƯU TRỮ'` -> không còn kết quả ✅
+  - system stability gate:
+    - `docker ps` ✅
+    - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+    - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`)
+    - `npm run lint --workspace @erp/web` ✅
+    - `npm run build --workspace @erp/web` ✅
+    - `npm run lint --workspace @erp/api` ❌ lỗi pre-existing ở `apps/api/src/modules/finance/dto/finance.dto.ts:184,210`
+    - `npm run build --workspace @erp/api` ❌ cùng lỗi pre-existing như trên
+    - `npx playwright test --config=apps/web/e2e/playwright.config.ts apps/web/e2e/tests/access-policy-hardening.spec.ts apps/web/e2e/tests/crm-sales-finance-core-flow.spec.ts apps/web/e2e/tests/domain-modules-wave1.spec.ts`:
+      - 12 passed, 1 failed (timeout pre-existing ở flow CRM->Sales->Finance tại bước nhập `Customer name *`, line 707) ⚠️
+- Notes:
+  - Giữ nguyên các chỗ `lưu trữ` mang nghĩa storage kỹ thuật trong ADR/spec (không phải thao tác xóa) để tránh sai ngữ nghĩa.
+  - Không đổi business logic ERP, chỉ chuẩn hóa wording hiển thị.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 07:10 +07 (Fix Assistant disabled by access_security policy)
+- User report:
+  - AI assistant báo lỗi: `AI assistant đang bị tắt theo access_security.assistantAccessPolicy.enabled.`
+- Root cause:
+  - cấu hình runtime của tenant `GOIUUDAI` tại domain `access_security` đang có:
+    - `assistantAccessPolicy.enabled=false`.
+  - backend guard `AssistantAuthzService` chặn truy cập đúng theo cấu hình này.
+- Đã xử lý:
+  - cập nhật domain settings qua API:
+    - `PUT /api/v1/settings/domains/access_security`
+    - payload: `{ "assistantAccessPolicy": { "enabled": true } }`
+  - update thành công với `changedPaths=["assistantAccessPolicy.enabled"]`.
+- Verification:
+  - `GET /api/v1/settings/domains/access_security` -> `assistantAccessPolicy.enabled=true` ✅
+  - `GET /api/v1/assistant/access/me` từ `403` -> `200` ✅
+- Notes:
+  - Không thay đổi business logic/code nghiệp vụ; fix bằng cấu hình runtime.
+  - Không cần ADR mới.
+## Session Update 2026-04-13 07:03 +07 (Mở rộng strict validation sang form UI custom)
+- User request:
+  - "mở rộng thêm sang toàn bộ form UI".
+- Scope thực hiện:
+  - mở rộng validation số/ngày cho các form custom (không đi qua `ModuleWorkbench`) để đồng bộ chuẩn `parseFiniteNumber` + strict date/datetime.
+- Đã xử lý:
+  - `apps/web/components/crm-operations-board.tsx`
+    - validate + parse an toàn cho `totalOrders`, `totalSpent`, `amount`.
+    - validate `interactionAt`, `nextActionAt`, `sentAt` theo `YYYY-MM-DDTHH:mm`.
+  - `apps/web/components/finance-operations-board.tsx`
+    - parse strict `totalAmount`, `allocatedAmount`.
+    - validate `dueAt` theo `YYYY-MM-DD`.
+  - `apps/web/components/hr-goals-tracking-board.tsx`
+    - parse strict `targetValue/currentValue/manualAdjustmentValue/weight`.
+    - validate `startDate/endDate` và chặn `endDate < startDate`.
+  - `apps/web/components/hr-recruitment-pipeline-board.tsx`
+    - validate `scheduledAt` (datetime-local), `proposedStartDate` (date).
+    - parse strict `offeredSalary`.
+  - `apps/web/components/crm-customers-board.tsx`
+    - parse strict `seatCount/loadKg` khi lưu xe.
+    - validate `lastContactDate` bulk patch bằng ISO date strict.
+  - `apps/web/components/crm-vehicles-board.tsx`
+    - parse strict `seatCount/loadKg` khi tạo/cập nhật xe.
+  - `apps/web/components/crm-conversations-workbench.tsx`
+  - `apps/web/components/zalo-automation-ai-runs-workbench.tsx`
+    - chuẩn hóa các trường scheduler (`intervalMinutes/lookbackHours/maxConversationsPerRun/batchSize`) bằng parse integer an toàn.
+  - `apps/web/components/zalo-automation-campaigns-workbench.tsx`
+    - parse strict `maxRecipients`; chuẩn hóa `toPositiveInt` dùng `parseFiniteNumber`.
+  - `apps/web/components/settings-custom-fields-page.tsx`
+    - parse an toàn `option.order`.
+  - `apps/web/components/settings/access-security-panel.tsx`
+    - parse + clamp `priority` về [0..10000].
+- Verification:
+  - `docker ps` ✅
+  - `lsof -nP -iTCP:55432 -sTCP:LISTEN` ✅
+  - `DATABASE_URL=postgresql://erp:erp@127.0.0.1:55432/erp_retail npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date`)
+  - `npm run lint --workspace @erp/web` ✅
+  - `npm run build --workspace @erp/web` ✅
+  - `npm run lint --workspace @erp/api` ❌ fail pre-existing DTO corruption:
+    - `apps/api/src/modules/finance/dto/finance.dto.ts:184,210` (`{ strict: true, strictSeparator: true }` bị chèn sai ngữ cảnh).
+- Notes:
+  - Không thay đổi business logic ERP; chỉ tăng validation tại UI submit layer.
+  - Chưa tạo ADR mới (không có quyết định kiến trúc mới).
 ## Session Update 2026-04-12 19:14 +07 (Fix Prisma table missing: Setting/Position/User/...)
 - User report:
   - nhiều endpoint báo lỗi Prisma kiểu:
@@ -225,7 +605,7 @@
   - cập nhật `apps/web/components/crm-vehicles-board.tsx`:
     - thêm state `selectedVehicleIds`,
     - bật row selection cho bảng xe,
-    - thêm bulk action `Lưu trữ` dùng `runBulkOperation`,
+    - thêm bulk action `Xóa` dùng `runBulkOperation`,
     - giữ nguyên rule phân quyền hiện tại (admin toàn quyền; non-admin chỉ xe thuộc khách hàng mình phụ trách),
     - chặn thao tác với xe đã `ARCHIVED`.
   - rebuild/restart runtime local:
@@ -2768,7 +3148,7 @@
   - `apps/web/components/crm-customers-board.tsx`
     - thêm nút `Quản lý xe` ở CRM toolbar;
     - trong panel customer detail:
-      - thêm `Thêm xe`, `Sửa`, `Lưu trữ` theo ownership;
+      - thêm `Thêm xe`, `Sửa`, `Xóa` theo ownership;
       - thêm form create/edit xe inline, gọi API `/crm/vehicles`.
   - thêm trang quản lý xe tập trung:
     - `apps/web/components/crm-vehicles-board.tsx`;
@@ -6431,3 +6811,29 @@
   - `npm run prisma:migrate:status --workspace @erp/api` ✅ (`Database schema is up to date!`)
 - [!] Ghi chú test nền:
   - `test/crm.api-flow.test.ts` trong AppModule bootstrap có unhandled nền từ scheduler/pool Zalo mock (`config/prisma undefined`) giống issue test integration đã biết; không phát sinh từ patch CRM contracts.
+
+## Update 2026-04-13 08:20 - CRM status management in Settings + split Sales/CRM tabs
+- [x] Tách tab domain `sales_crm_policies` thành đúng 2 tab:
+  - `sales-policy` (Chính sách bán hàng)
+  - `crm-settings` (Cài đặt CRM)
+- [x] Gom các section CRM vào tab `crm-settings`:
+  - `sales-status-registry`, `sales-taxonomy`, `sales-tag-registry`, `sales-renewal-reminder`
+  - `customer-distribution`, `customer-duplicate-check`, `customer-reclaim-idle`, `customer-reclaim-rotation`
+- [x] Bổ sung Settings section quản lý nhãn trạng thái CRM:
+  - section mới `sales-status-registry` tại `domain-config.tsx`
+  - bind vào `sales_crm_policies.customerStatusRegistry.labels.*`
+- [x] Mở rộng runtime/backend:
+  - `DEFAULT_SETTINGS_DOMAINS.sales_crm_policies.customerStatusRegistry.labels`
+  - normalize + validate tại `SettingsPolicyService`
+  - runtime expose `customerStatusRegistry { options, labels }` tại `RuntimeSettingsService`
+  - `GET /crm/taxonomy` trả thêm `customerStatusRegistry`
+- [x] Frontend CRM board đọc trạng thái từ settings runtime (không hardcode labels trong UI):
+  - toolbar filter / bulk update / bảng / detail panel dùng `customerStatusRegistry`
+  - fallback về constants nếu taxonomy chưa có payload mới
+- [x] Test/verify:
+  - `pnpm -C apps/api exec npx vitest run test/settings-policy.service.test.ts` ✅
+  - `pnpm -C apps/api exec npx vitest run test/settings-taxonomy.service.test.ts` ✅
+  - `pnpm -C apps/api exec npx vitest run test/crm.service.test.ts` ✅
+  - `pnpm -C apps/web test:unit components/settings-center/__tests__/view-model.test.ts` ✅
+  - `pnpm -C apps/web exec npx tsc --noEmit --incremental false` ✅
+- [!] `apps/api` full typecheck đang fail bởi lỗi pre-existing ngoài scope tại `src/modules/finance/dto/finance.dto.ts`.

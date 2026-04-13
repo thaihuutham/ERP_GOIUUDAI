@@ -10,6 +10,11 @@ import {
   type ApiListPageInfo,
   type ApiListSortMeta
 } from '../lib/api-client';
+import {
+  isStrictDateTimeLocal,
+  isStrictIsoDate,
+  parseFiniteNumber
+} from '../lib/form-validation';
 import { inferPermissionActionFromRequest } from '../lib/access-policy';
 import { formatRuntimeDateTime, formatRuntimeNumber } from '../lib/runtime-format';
 import {
@@ -324,13 +329,77 @@ function parseFormPayload(action: FeatureAction, formValues: FormValues) {
     const stringValue = String(raw ?? '').trim();
     if (!stringValue) continue;
     if (field.type === 'number') {
-      const num = Number(stringValue);
-      if (!Number.isNaN(num)) body[field.name] = num;
+      const parsed = parseFiniteNumber(stringValue);
+      if (parsed === null) {
+        throw new Error(`${field.label}: giá trị số không hợp lệ.`);
+      }
+      if (field.integer && !Number.isInteger(parsed)) {
+        throw new Error(`${field.label}: phải là số nguyên.`);
+      }
+      if (typeof field.min === 'number' && parsed < field.min) {
+        throw new Error(`${field.label}: không được nhỏ hơn ${field.min}.`);
+      }
+      if (typeof field.max === 'number' && parsed > field.max) {
+        throw new Error(`${field.label}: không được lớn hơn ${field.max}.`);
+      }
+      body[field.name] = parsed;
+      continue;
+    }
+    if (field.type === 'date') {
+      if (!isStrictIsoDate(stringValue)) {
+        throw new Error(`${field.label}: ngày không hợp lệ (đúng định dạng YYYY-MM-DD).`);
+      }
+      body[field.name] = stringValue;
+      continue;
+    }
+    if (field.type === 'datetime-local') {
+      if (!isStrictDateTimeLocal(stringValue)) {
+        throw new Error(`${field.label}: ngày giờ không hợp lệ.`);
+      }
+      body[field.name] = stringValue;
       continue;
     }
     body[field.name] = stringValue;
   }
   return body;
+}
+
+function validateFieldValue(field: FormField, rawValue: FormValue | undefined) {
+  if (field.type === 'checkbox') {
+    return null;
+  }
+
+  const normalized = String(rawValue ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (field.type === 'number') {
+    const parsed = parseFiniteNumber(normalized);
+    if (parsed === null) {
+      return 'Giá trị số không hợp lệ.';
+    }
+    if (field.integer && !Number.isInteger(parsed)) {
+      return 'Vui lòng nhập số nguyên.';
+    }
+    if (typeof field.min === 'number' && parsed < field.min) {
+      return `Giá trị phải >= ${field.min}.`;
+    }
+    if (typeof field.max === 'number' && parsed > field.max) {
+      return `Giá trị phải <= ${field.max}.`;
+    }
+    return null;
+  }
+
+  if (field.type === 'date') {
+    return isStrictIsoDate(normalized) ? null : 'Ngày không hợp lệ (YYYY-MM-DD).';
+  }
+
+  if (field.type === 'datetime-local') {
+    return isStrictDateTimeLocal(normalized) ? null : 'Ngày giờ không hợp lệ.';
+  }
+
+  return null;
 }
 
 function extractPathParamKeys(endpoint: string) {
@@ -449,10 +518,19 @@ function ActionForm({
     const nextErrors: Record<string, string> = {};
     for (const field of visibleFields) {
       if (!field.required) {
+        const typeError = validateFieldValue(field, currentValues[field.name]);
+        if (typeError) {
+          nextErrors[field.name] = typeError;
+        }
         continue;
       }
       if (isMissingRequiredValue(currentValues[field.name], field.type)) {
         nextErrors[field.name] = 'Trường này là bắt buộc.';
+        continue;
+      }
+      const typeError = validateFieldValue(field, currentValues[field.name]);
+      if (typeError) {
+        nextErrors[field.name] = typeError;
       }
     }
     return nextErrors;
@@ -598,6 +676,9 @@ function ActionForm({
                 type={field.type ?? 'text'}
                 value={String(values[field.name] ?? '')}
                 required={field.required}
+                min={field.type === 'number' ? field.min : undefined}
+                max={field.type === 'number' ? field.max : undefined}
+                step={field.type === 'number' ? (field.step ?? (field.integer ? 1 : 'any')) : undefined}
                 onChange={(event) => {
                   updateValue(field.name, event.target.value);
                   if (fieldError) {
@@ -1262,12 +1343,40 @@ function FeaturePanel({ feature, moduleKey }: { feature: ModuleFeature; moduleKe
                       value={String(value ?? '')}
                       placeholder={filter.placeholder ?? filter.label}
                       style={{ width: 'auto', minWidth: '126px' }}
+                      min={filter.type === 'number' ? filter.min : undefined}
+                      max={filter.type === 'number' ? filter.max : undefined}
+                      step={filter.type === 'number' ? (filter.step ?? (filter.integer ? 1 : 'any')) : undefined}
                       onChange={(event) =>
                         setFilterValues((prev) => ({
                           ...prev,
                           [filter.key]: event.target.value
                         }))
                       }
+                      onBlur={(event) => {
+                        if (filter.type !== 'number') {
+                          return;
+                        }
+                        const parsed = parseFiniteNumber(event.target.value);
+                        if (parsed === null) {
+                          return;
+                        }
+                        let nextValue = parsed;
+                        if (typeof filter.min === 'number' && nextValue < filter.min) {
+                          nextValue = filter.min;
+                        }
+                        if (typeof filter.max === 'number' && nextValue > filter.max) {
+                          nextValue = filter.max;
+                        }
+                        if (filter.integer) {
+                          nextValue = Math.trunc(nextValue);
+                        }
+                        if (nextValue !== parsed) {
+                          setFilterValues((prev) => ({
+                            ...prev,
+                            [filter.key]: String(nextValue)
+                          }));
+                        }
+                      }}
                     />
                   );
                 })}

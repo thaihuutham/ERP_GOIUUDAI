@@ -11,6 +11,7 @@ import {
   sliceCursorItems
 } from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { assertValidVietnamPhone, normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IamScopeFilterService } from '../iam/iam-scope-filter.service';
@@ -696,6 +697,10 @@ export class CrmService {
         customerTags: salesPolicy.tagRegistry.customerTags,
         interactionTags: salesPolicy.tagRegistry.interactionTags,
         interactionResultTags: salesPolicy.tagRegistry.interactionResultTags
+      },
+      customerStatusRegistry: {
+        options: salesPolicy.customerStatusRegistry?.options ?? [],
+        labels: salesPolicy.customerStatusRegistry?.labels ?? {}
       }
     };
   }
@@ -2408,19 +2413,16 @@ export class CrmService {
     if (!candidate) {
       return fallback;
     }
-    const parsed = new Date(candidate);
-    if (Number.isNaN(parsed.getTime())) {
+    try {
+      const parsed = parseStrictDate(candidate, 'datetime');
+      return parsed.toISOString();
+    } catch {
       return fallback;
     }
-    return parsed.toISOString();
   }
 
   private normalizeDateInput(input: string, fieldName: string) {
-    const parsed = new Date(String(input));
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException(`${fieldName} không phải ngày hợp lệ.`);
-    }
-    return parsed.toISOString().slice(0, 10);
+    return parseStrictDate(input, fieldName).toISOString().slice(0, 10);
   }
 
   private parseTags(input: unknown, allowedValues: string[] = [], fieldName = 'tags'): string[] {
@@ -2713,11 +2715,7 @@ export class CrmService {
   }
 
   private parseDate(input: unknown, fieldName: string) {
-    const value = new Date(String(input));
-    if (Number.isNaN(value.getTime())) {
-      throw new BadRequestException(`${fieldName} không hợp lệ.`);
-    }
-    return value;
+    return parseStrictDate(input, fieldName);
   }
 
   private parseOptionalDecimal(input: unknown, fieldName: string) {

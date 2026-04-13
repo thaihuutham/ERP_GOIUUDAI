@@ -243,7 +243,7 @@ test.describe('access policy hardening', () => {
     await page.getByRole('cell', { name: 'Khách test quyền' }).click();
     await expect(page.getByRole('heading', { name: 'Chi tiết khách hàng' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Chỉnh sửa hồ sơ' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Lưu trữ$/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Xóa$/ })).toHaveCount(0);
 
     await roleSelect.selectOption('ADMIN');
     await page.goto('/modules/crm');
@@ -251,7 +251,7 @@ test.describe('access policy hardening', () => {
     await page.getByRole('cell', { name: 'Khách test quyền' }).click();
     await expect(page.getByRole('heading', { name: 'Chi tiết khách hàng' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Chỉnh sửa hồ sơ' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Lưu trữ$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Xóa$/ })).toBeVisible();
   });
 
   test('keeps settings area accessible for ADMIN only and suppresses raw 403 copy', async ({ page }) => {

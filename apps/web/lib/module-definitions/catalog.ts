@@ -18,7 +18,7 @@ import {
 export const catalogModule: ModuleDefinition = {
     key: 'catalog',
     title: 'Danh mục',
-    summary: 'Board danh mục chuyên sâu: chuẩn hóa sản phẩm, chính sách giá và vòng đời lưu trữ.',
+    summary: 'Board danh mục chuyên sâu: chuẩn hóa sản phẩm, chính sách giá và vòng đời xóa.',
     highlights: ['Danh mục sản phẩm chuẩn', 'Policy giá tập trung', 'Bulk archive theo lô'],
     features: [
       {
@@ -41,7 +41,7 @@ export const catalogModule: ModuleDefinition = {
           },
           {
             key: 'includeArchived',
-            label: 'Gồm bản ghi đã lưu trữ',
+            label: 'Gồm bản ghi đã xóa',
             type: 'checkbox',
             includeInQuery: true
           }
@@ -111,14 +111,14 @@ export const catalogModule: ModuleDefinition = {
           },
           {
             key: 'archive-product',
-            label: 'Lưu trữ sản phẩm',
+            label: 'Xóa sản phẩm',
             method: 'POST',
             endpoint: '/catalog/products/:id/archive',
             fields: [
               { name: 'id', label: 'Mã sản phẩm', required: true },
               {
                 name: 'reason',
-                label: 'Lý do lưu trữ',
+                label: 'Lý do xóa',
                 type: 'select',
                 required: true,
                 options: [

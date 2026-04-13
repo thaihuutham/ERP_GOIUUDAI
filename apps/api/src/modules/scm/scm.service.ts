@@ -7,6 +7,7 @@ import {
   sliceCursorItems
 } from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateDemandForecastDto,
@@ -877,11 +878,7 @@ export class ScmService {
   }
 
   private parseDate(value: string, fieldName: string) {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException(`${fieldName} không hợp lệ.`);
-    }
-    return parsed;
+    return parseStrictDate(value, fieldName);
   }
 
   private normalizeWarehouseCode(value: unknown) {

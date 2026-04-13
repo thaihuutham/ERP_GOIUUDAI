@@ -282,6 +282,19 @@ export const DEFAULT_SETTINGS_DOMAINS: Record<SettingsDomain, Record<string, unk
       interactionTags: ['quan_tam', 'can_cham_soc', 'da_dat_lich'],
       interactionResultTags: ['quan_tam', 'da_mua', 'khong_phan_hoi']
     },
+    customerStatusRegistry: {
+      labels: {
+        MOI_CHUA_TU_VAN: '[Mới] Chưa tư vấn',
+        DANG_SUY_NGHI: 'Đang suy nghĩ',
+        DONG_Y_CHUYEN_THANH_KH: 'Đồng ý - Chuyển thành KH',
+        KH_TU_CHOI: 'KH Từ chối',
+        KH_DA_MUA_BEN_KHAC: 'KH đã mua bên khác',
+        NGUOI_NHA_LAM_THUE_BAO: 'Người Nhà Làm/Thuê bao',
+        KHONG_NGHE_MAY_LAN_1: 'Không nghe máy lần 1',
+        KHONG_NGHE_MAY_LAN_2: 'Không nghe máy lần 2',
+        SAI_SO_KHONG_TON_TAI_BO_QUA_XOA: 'Sai số, Không tồn tại -> BỎ QUA/Xóa'
+      }
+    },
     renewalReminder: {
       globalLeadDays: 30,
       productLeadDays: {

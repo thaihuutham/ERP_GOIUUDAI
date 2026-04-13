@@ -112,7 +112,7 @@ export const crmModule: ModuleDefinition = {
           },
           {
             key: 'archive-customer-360',
-            label: 'Lưu trữ khách hàng',
+            label: 'Xóa khách hàng',
             method: 'DELETE',
             endpoint: '/crm/customers/:id',
             fields: [{ name: 'id', label: 'Mã khách hàng', required: true }]

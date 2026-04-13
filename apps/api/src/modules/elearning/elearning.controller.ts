@@ -146,6 +146,33 @@ export class ElearningController {
     return this.elearningService.archiveQuestion(id);
   }
 
+  @Post('questions/import')
+  importQuestions(@Body() body: { rows: unknown[] }) {
+    return this.elearningService.importQuestions(body.rows ?? []);
+  }
+
+  // ─── Question Categories ────────────────────────────────────────
+
+  @Get('question-categories')
+  listQuestionCategories() {
+    return this.elearningService.listQuestionCategories();
+  }
+
+  @Post('question-categories')
+  createQuestionCategory(@Body() body: Record<string, unknown>) {
+    return this.elearningService.createQuestionCategory(body);
+  }
+
+  @Patch('question-categories/:id')
+  updateQuestionCategory(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    return this.elearningService.updateQuestionCategory(id, body);
+  }
+
+  @Delete('question-categories/:id')
+  deleteQuestionCategory(@Param('id') id: string) {
+    return this.elearningService.deleteQuestionCategory(id);
+  }
+
   // ─── Enrollment ────────────────────────────────────────────────
 
   @Post('courses/:id/enroll')

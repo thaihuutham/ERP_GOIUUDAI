@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import { readStoredAuthSession } from '../lib/auth-session';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
 import { downloadExcelTemplate } from '../lib/excel-template';
+import { isValidCalendarDate } from '../lib/form-validation';
 import { useAccessPolicy } from './access-policy-context';
 import { ExcelImportBlock } from './ui/excel-import-block';
 import { useUserRole } from './user-role-context';
@@ -132,7 +133,7 @@ function normalizeExcelDate(value: unknown): string | null {
 
   if (typeof value === 'number') {
     const parsed = XLSX.SSF.parse_date_code(value);
-    if (parsed) {
+    if (parsed && isValidCalendarDate(parsed.y, parsed.m, parsed.d)) {
       return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
     }
   }
@@ -147,14 +148,29 @@ function normalizeExcelDate(value: unknown): string | null {
     const day = Number(ddmmyyyy[1]);
     const month = Number(ddmmyyyy[2]);
     const year = Number(ddmmyyyy[3]);
-    if (year >= 2000 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    if (isValidCalendarDate(year, month, day)) {
       return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
   }
 
-  const parsedDate = new Date(raw);
-  if (!Number.isNaN(parsedDate.getTime())) {
-    return formatDateOnly(parsedDate);
+  const yyyymmdd = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (yyyymmdd) {
+    const year = Number(yyyymmdd[1]);
+    const month = Number(yyyymmdd[2]);
+    const day = Number(yyyymmdd[3]);
+    if (isValidCalendarDate(year, month, day)) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  const isoDatePrefix = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[Tt\s])/);
+  if (isoDatePrefix) {
+    const year = Number(isoDatePrefix[1]);
+    const month = Number(isoDatePrefix[2]);
+    const day = Number(isoDatePrefix[3]);
+    if (isValidCalendarDate(year, month, day)) {
+      return `${year}-${isoDatePrefix[2]}-${isoDatePrefix[3]}`;
+    }
   }
 
   return null;

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiRequest, normalizeListPayload, normalizeObjectPayload } from '../lib/api-client';
+import { parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { useAccessPolicy } from './access-policy-context';
 import { useUserRole } from './user-role-context';
@@ -383,8 +384,8 @@ function parseDelimitedValues(raw: string) {
 }
 
 function toPositiveInt(raw: string, fallback: number) {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
+  const parsed = parseFiniteNumber(raw);
+  if (parsed === null) {
     return fallback;
   }
   return Math.max(1, Math.trunc(parsed));
@@ -747,8 +748,9 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
       recipientFilterJson.defaultPromoCode = createForm.defaultPromoCode.trim();
     }
 
-    const maxRecipientsRaw = Number(createForm.maxRecipients);
-    const hasMaxRecipients = Number.isFinite(maxRecipientsRaw) && maxRecipientsRaw > 0;
+    const maxRecipientsRaw = parseFiniteNumber(createForm.maxRecipients);
+    const hasMaxRecipients = maxRecipientsRaw !== null && maxRecipientsRaw > 0;
+    const maxRecipients = hasMaxRecipients && maxRecipientsRaw !== null ? Math.trunc(maxRecipientsRaw) : undefined;
 
     try {
       await apiRequest('/zalo/campaigns', {
@@ -760,7 +762,7 @@ export function ZaloAutomationCampaignsWorkbench(props: ZaloAutomationCampaignsW
           delayMinSeconds: toPositiveInt(createForm.delayMinSeconds, 180),
           delayMaxSeconds: toPositiveInt(createForm.delayMaxSeconds, 300),
           maxConsecutiveErrors: toPositiveInt(createForm.maxConsecutiveErrors, 3),
-          maxRecipients: hasMaxRecipients ? Math.trunc(maxRecipientsRaw) : undefined,
+          maxRecipients,
           allowedVariableKeys,
           recipientFilterJson: Object.keys(recipientFilterJson).length > 0 ? recipientFilterJson : undefined,
           accounts: selectedAccounts,

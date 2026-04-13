@@ -10,6 +10,7 @@ import {
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { AuthUser } from '../../common/auth/auth-user.type';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type MutationPayload = {
@@ -1684,10 +1685,6 @@ export class CustomFieldsService {
   }
 
   private parseDate(value: unknown, fieldName: string) {
-    const date = new Date(String(value ?? ''));
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException(`Invalid date for ${fieldName}`);
-    }
-    return date;
+    return parseStrictDate(value, fieldName);
   }
 }

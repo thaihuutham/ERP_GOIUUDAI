@@ -738,8 +738,11 @@ test.describe('Settings Center reports alignment', () => {
     await waitForSettingsReloadReady(page);
     await clickRoleControl(page, 'button', 'Chính sách CRM/Bán hàng');
     await expect(page.getByRole('tab', { name: 'Quy tắc đơn hàng' })).toBeVisible();
-    await clickRoleControl(page, 'tab', 'Phân loại khách hàng');
-    await expect(page.getByRole('heading', { name: 'Phân loại khách hàng' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Nhắc gia hạn' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Chia khách tự động' })).toBeVisible();
+    await clickRoleControl(page, 'tab', 'Nhắc gia hạn');
+    await expect(page.getByRole('tab', { name: 'Trạng thái & phân loại' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nhắc gia hạn CRM' })).toBeVisible();
 
     await waitForSettingsReloadReady(page);
     await clickRoleControl(page, 'button', 'Chính sách Danh mục/SCM');
@@ -771,6 +774,25 @@ test.describe('Settings Center reports alignment', () => {
     await expect(page.getByRole('heading', { name: 'Chính sách export' })).toBeVisible();
     await clickRoleControl(page, 'tab', 'Checklist & audit');
     await expect(page.getByRole('heading', { name: 'Checklist khởi tạo' })).toBeVisible();
+
+    await page.goto('/modules/settings/sales-policies');
+    await waitForSettingsReloadReady(page);
+    await expect(page).toHaveURL(/\/modules\/settings\/sales-policies$/);
+    await expect(page.getByRole('heading', { level: 3, name: 'Chính sách bán hàng' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Quy tắc đơn hàng' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Nhắc gia hạn' })).toHaveCount(0);
+    await clickRoleControl(page, 'tab', 'Đơn nháp');
+    await expect(page.getByRole('heading', { name: 'Đơn nháp tự động hủy' })).toBeVisible();
+
+    await page.goto('/modules/settings/crm-settings');
+    await waitForSettingsReloadReady(page);
+    await expect(page).toHaveURL(/\/modules\/settings\/crm-settings$/);
+    await expect(page.getByRole('heading', { level: 3, name: 'Cài đặt CRM' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Trạng thái & phân loại' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Chia khách tự động' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Quy tắc đơn hàng' })).toHaveCount(0);
+    await clickRoleControl(page, 'tab', 'Chia khách tự động');
+    await expect(page.getByLabel('Bật chia khách tự động')).toBeVisible();
   });
 
   test('uses layout metadata endpoint when available and keeps fallback-safe behavior', async ({ page }) => {

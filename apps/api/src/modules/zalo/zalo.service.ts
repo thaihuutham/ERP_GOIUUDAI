@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
 import { AUTH_USER_CONTEXT_KEY } from '../../common/request/request.constants';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -1053,11 +1054,7 @@ export class ZaloService {
   }
 
   private parseDate(input: unknown, fieldName: string) {
-    const parsed = new Date(String(input));
-    if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException(`${fieldName} không hợp lệ.`);
-    }
-    return parsed;
+    return parseStrictDate(input, fieldName);
   }
 
   private async resolveCurrentSenderDisplayName() {

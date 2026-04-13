@@ -34,18 +34,26 @@ import {
 
 export type SettingsState = ReturnType<typeof useSettingsState>;
 
-export function useSettingsState() {
+type UseSettingsStateOptions = {
+  initialDomain?: DomainKey;
+  initialDomainTab?: string;
+};
+
+export function useSettingsState(options: UseSettingsStateOptions = {}) {
+  const initialDomain = options.initialDomain ?? 'org_profile';
+  const initialDomainTab = options.initialDomainTab ?? '';
+
   const { role } = useUserRole();
   const { canAction } = useAccessPolicy();
 
   // ── Core state ────────────────────────────────
   const [center, setCenter] = useState<CenterPayload | null>(null);
-  const [selectedDomain, setSelectedDomain] = useState<DomainKey>('org_profile');
+  const [selectedDomain, setSelectedDomain] = useState<DomainKey>(initialDomain);
   const [settingsSearch, setSettingsSearch] = useState('');
   const [advancedMode, setAdvancedMode] = useState<boolean>(resolveDefaultAdvancedMode(role));
   const [advancedTouchedByUser, setAdvancedTouchedByUser] = useState(false);
   const [settingsLayout, setSettingsLayout] = useState<SettingsLayoutPayload | null>(null);
-  const [activeDomainTab, setActiveDomainTab] = useState('');
+  const [activeDomainTab, setActiveDomainTab] = useState(initialDomainTab);
   const [domainResponse, setDomainResponse] = useState<DomainPayload | null>(null);
   const [draftData, setDraftData] = useState<Record<string, unknown>>({});
   const [reasonTemplate, setReasonTemplate] = useState<string>(REASON_TEMPLATES[0]);

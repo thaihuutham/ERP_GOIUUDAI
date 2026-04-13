@@ -1,5 +1,5 @@
 import { Inject, Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { GenericStatus, Prisma, ElearningQuestionTag } from '@prisma/client';
+import { GenericStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
 
@@ -330,7 +330,7 @@ export class DailyQuizService {
       OR: [
         ...(positionId ? [{ positionId }] : []),
         ...(departmentId ? [{ departmentId }] : []),
-        { tags: { has: ElearningQuestionTag.GENERAL } },
+        { tags: { has: 'GENERAL' } },
         { positionId: null, departmentId: null }
       ]
     };

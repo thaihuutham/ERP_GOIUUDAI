@@ -19,6 +19,7 @@ import {
   normalizePagedListPayload,
   type ApiListSortMeta
 } from '../lib/api-client';
+import { isStrictIsoDate, parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeCurrency, formatRuntimeDateTime } from '../lib/runtime-format';
 import { formatBulkSummary, runBulkOperation, type BulkExecutionResult, type BulkRowId } from '../lib/bulk-actions';
 import { useCursorTableState } from '../lib/use-cursor-table-state';
@@ -129,6 +130,15 @@ function buildInitialPaymentForm(): PaymentFormState {
     paymentRef: '',
     note: ''
   };
+}
+
+function parseOptionalNumberInput(raw: string) {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const parsed = parseFiniteNumber(normalized);
+  return parsed === null ? null : parsed;
 }
 
 export function FinanceOperationsBoard() {
@@ -404,9 +414,9 @@ export function FinanceOperationsBoard() {
         key: 'bulk-archive-invoices',
         label: 'Archive',
         tone: 'danger',
-        confirmMessage: (rows) => `Lưu trữ ${rows.length} hóa đơn đã chọn?`,
+        confirmMessage: (rows) => `Xóa ${rows.length} hóa đơn đã chọn?`,
         execute: async (selectedRows) =>
-          runFinanceBulkAction('Lưu trữ hóa đơn', selectedRows, async (invoice) => {
+          runFinanceBulkAction('Xóa hóa đơn', selectedRows, async (invoice) => {
             await apiRequest(`/finance/invoices/${invoice.id}`, {
               method: 'DELETE'
             });
@@ -434,9 +444,13 @@ export function FinanceOperationsBoard() {
     event.preventDefault();
     if (!canCreate) return;
 
-    const totalAmount = Number(createInvoiceForm.totalAmount);
-    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
-      setErrorMessage('Tổng tiền hóa đơn phải lớn hơn 0.');
+    const totalAmount = parseOptionalNumberInput(createInvoiceForm.totalAmount);
+    if (totalAmount === null || totalAmount === undefined || totalAmount <= 0) {
+      setErrorMessage('Tổng tiền hóa đơn phải là số lớn hơn 0.');
+      return;
+    }
+    if (createInvoiceForm.dueAt && !isStrictIsoDate(createInvoiceForm.dueAt)) {
+      setErrorMessage('Ngày đến hạn không hợp lệ (YYYY-MM-DD).');
       return;
     }
 
@@ -495,9 +509,9 @@ export function FinanceOperationsBoard() {
     event.preventDefault();
     if (!selectedInvoice || !canAllocatePayment) return;
 
-    const amount = Number(paymentForm.allocatedAmount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setErrorMessage('Số tiền thanh toán phải lớn hơn 0.');
+    const amount = parseOptionalNumberInput(paymentForm.allocatedAmount);
+    if (amount === null || amount === undefined || amount <= 0) {
+      setErrorMessage('Số tiền thanh toán phải là số lớn hơn 0.');
       return;
     }
 
@@ -526,7 +540,7 @@ export function FinanceOperationsBoard() {
 
   const handleArchiveInvoice = async () => {
     if (!selectedInvoice || !canDelete || isArchivingInvoice) return;
-    if (!window.confirm(`Lưu trữ hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}?`)) {
+    if (!window.confirm(`Xóa hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}?`)) {
       return;
     }
 
@@ -535,14 +549,14 @@ export function FinanceOperationsBoard() {
       await apiRequest(`/finance/invoices/${selectedInvoice.id}`, {
         method: 'DELETE'
       });
-      setResultMessage(`Đã lưu trữ hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}.`);
+      setResultMessage(`Đã xóa hóa đơn ${selectedInvoice.invoiceNo || selectedInvoice.id.slice(-8)}.`);
       setErrorMessage(null);
       setSelectedInvoice(null);
       setPaymentForm(buildInitialPaymentForm());
       await loadInvoices();
       await loadAging();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Không thể lưu trữ hóa đơn');
+      setErrorMessage(error instanceof Error ? error.message : 'Không thể xóa hóa đơn');
     } finally {
       setIsArchivingInvoice(false);
     }
@@ -759,7 +773,7 @@ export function FinanceOperationsBoard() {
                   disabled={isArchivingInvoice}
                   onClick={handleArchiveInvoice}
                 >
-                  <Trash2 size={16} /> {isArchivingInvoice ? 'Đang lưu trữ...' : 'Lưu trữ hóa đơn'}
+                  <Trash2 size={16} /> {isArchivingInvoice ? 'Đang xóa...' : 'Xóa hóa đơn'}
                 </button>
               )}
 

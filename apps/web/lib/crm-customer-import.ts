@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { hasValidCalendarDatePrefix, isStrictDateTimeLocal, isStrictIsoDate, isValidCalendarDate } from './form-validation';
 
 export type CustomerCareStatus =
   | 'MOI_CHUA_TU_VAN'
@@ -246,13 +247,48 @@ function parseOptionalIsoDate(value: unknown) {
   if (value === null || value === undefined || value === '') {
     return undefined;
   }
+
+  if (typeof value === 'number') {
+    const parsedExcelDate = XLSX.SSF.parse_date_code(value);
+    if (
+      parsedExcelDate
+      && isValidCalendarDate(parsedExcelDate.y, parsedExcelDate.m, parsedExcelDate.d)
+    ) {
+      return new Date(Date.UTC(parsedExcelDate.y, parsedExcelDate.m - 1, parsedExcelDate.d)).toISOString();
+    }
+    return undefined;
+  }
+
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
   }
-  const parsed = new Date(String(value));
-  if (Number.isNaN(parsed.getTime())) {
+  const raw = String(value).trim();
+  if (!raw) {
     return undefined;
   }
+
+  if (isStrictIsoDate(raw)) {
+    return new Date(`${raw}T00:00:00.000Z`).toISOString();
+  }
+
+  if (isStrictDateTimeLocal(raw)) {
+    const parsedLocal = new Date(raw);
+    return Number.isNaN(parsedLocal.getTime()) ? undefined : parsedLocal.toISOString();
+  }
+
+  if (!hasValidCalendarDatePrefix(raw)) {
+    return undefined;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    const datePrefix = raw.slice(0, 10);
+    if (!isStrictIsoDate(datePrefix)) {
+      return undefined;
+    }
+    return new Date(`${datePrefix}T00:00:00.000Z`).toISOString();
+  }
+
   return parsed.toISOString();
 }
 

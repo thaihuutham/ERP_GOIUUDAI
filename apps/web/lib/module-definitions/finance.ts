@@ -57,7 +57,7 @@ export const financeModule: ModuleDefinition = {
           },
           {
             key: 'archive-invoice',
-            label: 'Lưu trữ hóa đơn',
+            label: 'Xóa hóa đơn',
             method: 'DELETE',
             endpoint: '/finance/invoices/:id',
             fields: [{ name: 'id', label: 'Mã hóa đơn', required: true }]

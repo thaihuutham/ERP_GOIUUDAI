@@ -94,6 +94,14 @@ function getCurrentModuleTitle(pathname: string) {
     return 'Cài đặt • Trường tùy chỉnh';
   }
 
+  if (pathname.startsWith('/modules/settings/sales-policies')) {
+    return 'Cài đặt • Chính sách bán hàng';
+  }
+
+  if (pathname.startsWith('/modules/settings/crm-settings')) {
+    return 'Cài đặt • Cài đặt CRM';
+  }
+
   if (pathname.startsWith('/modules/zalo-automation/messages')) {
     return 'Zalo Automation • Tin nhắn';
   }
@@ -120,6 +128,10 @@ function getCurrentModuleTitle(pathname: string) {
 
   if (pathname.startsWith('/modules/crm/customers/import')) {
     return 'CRM • Import khách hàng';
+  }
+
+  if (pathname.startsWith('/modules/catalog/products/import')) {
+    return 'Danh mục • Import sản phẩm';
   }
 
   if (pathname.startsWith('/modules/crm/zalo-accounts')) {

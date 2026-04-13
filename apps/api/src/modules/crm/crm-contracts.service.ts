@@ -27,6 +27,7 @@ import {
   sliceCursorItems
 } from '../../common/pagination/pagination-response';
 import { RuntimeSettingsService } from '../../common/settings/runtime-settings.service';
+import { parseStrictDate } from '../../common/validation/date.validation';
 import { normalizeVietnamPhone } from '../../common/validation/phone.validation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -858,7 +859,7 @@ export class CrmContractsService {
     });
 
     if (!archived) {
-      throw new NotFoundException('Không tìm thấy xe sau khi lưu trữ.');
+      throw new NotFoundException('Không tìm thấy xe sau khi xóa.');
     }
 
     return archived;
@@ -1817,11 +1818,7 @@ export class CrmContractsService {
   }
 
   private parseDate(input: unknown, fieldName: string) {
-    const date = input instanceof Date ? input : new Date(String(input));
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException(`${fieldName} không hợp lệ.`);
-    }
-    return date;
+    return parseStrictDate(input, fieldName);
   }
 
   private toOptionalDate(input: unknown, fieldName: string) {

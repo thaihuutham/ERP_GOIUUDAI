@@ -8,7 +8,12 @@ File này là entrypoint bắt buộc cho mọi AI agent (Codex, Claude Code, Ch
 - Không đổi hành vi chức năng ERP khi đang làm việc tái cấu trúc.
 - Mọi quyết định kiến trúc mới phải ghi vào `docs/decisions/`.
 
-### 1.1 Bắt buộc dùng skill brainstorming khi yêu cầu chưa rõ
+### 1.1 Bắt buộc tuân thủ cài đặt riêng
+- Agent phải đọc `docs/specs/PERSONAL_PREFERENCES.md` trước khi bắt đầu mọi nhiệm vụ.
+- Các quy ước wording/format nhập liệu trong file cài đặt riêng phải được áp dụng nhất quán ở code, test, docs liên quan.
+- Nếu phát hiện xung đột giữa cài đặt riêng và yêu cầu mới của user, ưu tiên yêu cầu mới nhất của user và cập nhật lại file cài đặt riêng sau khi chốt.
+
+### 1.2 Bắt buộc dùng skill brainstorming khi yêu cầu chưa rõ
 - Với mọi nội dung có **nhiều phương án thực hiện** hoặc **còn mơ hồ/thiếu ràng buộc**, agent **bắt buộc** dùng skill [$brainstorming](/Users/mrtao/.codex/skills/skills/brainstorming/SKILL.md) trước khi sửa code.
 - Không được implement ngay khi chưa chốt rõ:
   - mục tiêu,
@@ -18,12 +23,13 @@ File này là entrypoint bắt buộc cho mọi AI agent (Codex, Claude Code, Ch
 - Chỉ được chuyển sang code khi user đã xác nhận hướng tiếp cận.
 
 ## 2. Trình tự đọc trước khi sửa code
-1. `planning/CURRENT_TASK.md`
-2. `.agent/memory/CONTEXT_SNAPSHOT.md`
-3. `docs/specs/PROJECT_OVERVIEW.md`
-4. `docs/specs/CONVENTIONS.md`
-5. `docs/architecture/SCALING_DESIGN.md`
-6. `docs/deployment/VM_AUTODEPLOY.md`
+1. `docs/specs/PERSONAL_PREFERENCES.md`
+2. `planning/CURRENT_TASK.md`
+3. `.agent/memory/CONTEXT_SNAPSHOT.md`
+4. `docs/specs/PROJECT_OVERVIEW.md`
+5. `docs/specs/CONVENTIONS.md`
+6. `docs/architecture/SCALING_DESIGN.md`
+7. `docs/deployment/VM_AUTODEPLOY.md`
 
 ## 3. Phạm vi ưu tiên hiện tại
 - Ổn định cấu trúc dự án theo template.

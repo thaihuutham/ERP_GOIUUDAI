@@ -135,6 +135,10 @@ export type CustomerTaxonomyPayload = {
     interactionTags?: string[];
     interactionResultTags?: string[];
   };
+  customerStatusRegistry?: {
+    options?: string[];
+    labels?: Partial<Record<CustomerCareStatus, string>>;
+  };
 };
 
 // ── Form State Types ─────────────────────────────

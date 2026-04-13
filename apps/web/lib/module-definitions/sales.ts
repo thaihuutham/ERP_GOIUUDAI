@@ -58,7 +58,7 @@ export const salesModule: ModuleDefinition = {
           },
           {
             key: 'archive-order',
-            label: 'Lưu trữ đơn hàng',
+            label: 'Xóa đơn hàng',
             method: 'DELETE',
             endpoint: '/sales/orders/:id',
             fields: [{ name: 'id', label: 'Mã đơn hàng', required: true }]

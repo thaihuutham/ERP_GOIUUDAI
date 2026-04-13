@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest, normalizeListPayload } from '../lib/api-client';
+import { parseFiniteNumber } from '../lib/form-validation';
 import { formatRuntimeDateTime } from '../lib/runtime-format';
 import { useAccessPolicy } from './access-policy-context';
 
@@ -709,7 +710,10 @@ export function SettingsCustomFieldsPage() {
                                         onChange={(event) =>
                                           updateOptionRow(row.id, option.id, (current) => ({
                                             ...current,
-                                            order: Number(event.target.value) > 0 ? Math.trunc(Number(event.target.value)) : current.order
+                                            order: (() => {
+                                              const parsed = parseFiniteNumber(event.target.value);
+                                              return parsed !== null && parsed > 0 ? Math.trunc(parsed) : current.order;
+                                            })()
                                           }))
                                         }
                                         disabled={!canEdit}
