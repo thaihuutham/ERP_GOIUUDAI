@@ -220,6 +220,15 @@ async function resetTenantData(tenantId: string) {
 }
 
 async function seed() {
+  const defaultQuestionCategories = [
+    { code: 'GENERAL', label: 'Chung', color: '#6B7280', sortOrder: 0 },
+    { code: 'SALES', label: 'Kinh doanh', color: '#3B82F6', sortOrder: 1 },
+    { code: 'HR', label: 'Nhân sự', color: '#8B5CF6', sortOrder: 2 },
+    { code: 'FINANCE', label: 'Tài chính', color: '#10B981', sortOrder: 3 },
+    { code: 'SCM', label: 'Chuỗi cung ứng', color: '#F59E0B', sortOrder: 4 },
+    { code: 'COMPLIANCE', label: 'Tuân thủ', color: '#EF4444', sortOrder: 5 },
+    { code: 'ONBOARDING', label: 'Onboarding', color: '#EC4899', sortOrder: 6 }
+  ];
   const departments = ['Kinh doanh', 'Marketing', 'Kho vận', 'Kế toán', 'Nhân sự', 'Vận hành'];
   const positions = ['Nhân viên', 'Trưởng nhóm', 'Chuyên viên', 'Giám sát'];
   const customerStages = ['MOI', 'DA_TU_VAN', 'QUAN_TAM', 'DA_MUA', 'KHONG_TIEP_TUC'];
@@ -277,6 +286,16 @@ async function seed() {
 
   await ensureTenant();
   await resetTenantData(TENANT_ID);
+  await prisma.elearningQuestionCategory.createMany({
+    data: defaultQuestionCategories.map((category) => ({
+      tenant_Id: TENANT_ID,
+      code: category.code,
+      label: category.label,
+      color: category.color,
+      sortOrder: category.sortOrder
+    })),
+    skipDuplicates: true
+  });
 
   const departmentRows = Array.from({ length: COUNTS.departments }, (_, idx) => {
     const i = idx + 1;

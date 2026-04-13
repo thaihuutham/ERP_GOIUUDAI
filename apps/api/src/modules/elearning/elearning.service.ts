@@ -10,6 +10,21 @@ import { RuntimeSettingsService } from '../../common/settings/runtime-settings.s
 
 type ElearningPayload = Record<string, unknown>;
 
+const DEFAULT_QUESTION_CATEGORIES: Array<{
+  code: string;
+  label: string;
+  color: string;
+  sortOrder: number;
+}> = [
+  { code: 'GENERAL', label: 'Chung', color: '#6B7280', sortOrder: 0 },
+  { code: 'SALES', label: 'Kinh doanh', color: '#3B82F6', sortOrder: 1 },
+  { code: 'HR', label: 'Nhân sự', color: '#8B5CF6', sortOrder: 2 },
+  { code: 'FINANCE', label: 'Tài chính', color: '#10B981', sortOrder: 3 },
+  { code: 'SCM', label: 'Chuỗi cung ứng', color: '#F59E0B', sortOrder: 4 },
+  { code: 'COMPLIANCE', label: 'Tuân thủ', color: '#EF4444', sortOrder: 5 },
+  { code: 'ONBOARDING', label: 'Onboarding', color: '#EC4899', sortOrder: 6 }
+];
+
 @Injectable()
 export class ElearningService {
   constructor(
@@ -876,6 +891,8 @@ export class ElearningService {
   // ─── Question Categories ──────────────────────────────────────
 
   async listQuestionCategories() {
+    const tenantId = this.prisma.getTenantId();
+    await this.ensureDefaultQuestionCategories(tenantId);
     return this.prisma.client.elearningQuestionCategory.findMany({
       where: { status: { not: GenericStatus.INACTIVE } },
       orderBy: { sortOrder: 'asc' }
@@ -1017,5 +1034,25 @@ export class ElearningService {
       skippedCount: rows.length - importedCount,
       errors
     };
+  }
+
+  private async ensureDefaultQuestionCategories(tenantId: string) {
+    const existingCount = await this.prisma.client.elearningQuestionCategory.count({
+      where: { tenant_Id: tenantId }
+    });
+    if (existingCount > 0) {
+      return;
+    }
+
+    await this.prisma.client.elearningQuestionCategory.createMany({
+      data: DEFAULT_QUESTION_CATEGORIES.map((category) => ({
+        tenant_Id: tenantId,
+        code: category.code,
+        label: category.label,
+        color: category.color,
+        sortOrder: category.sortOrder
+      })),
+      skipDuplicates: true
+    });
   }
 }

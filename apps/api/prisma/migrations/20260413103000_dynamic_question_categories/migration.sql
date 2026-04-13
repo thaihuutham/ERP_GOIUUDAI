@@ -1,8 +1,9 @@
 -- Migration: Replace ElearningQuestionTag enum with dynamic ElearningQuestionCategory table
 -- and convert tags/category columns from enum to plain text.
 
--- 1. Create ElearningQuestionCategory table
-CREATE TABLE "ElearningQuestionCategory" (
+-- 1. Create ElearningQuestionCategory table (idempotent for environments
+-- where this table already exists from a previous migration).
+CREATE TABLE IF NOT EXISTS "ElearningQuestionCategory" (
     "id" TEXT NOT NULL,
     "tenant_Id" TEXT NOT NULL,
     "code" TEXT NOT NULL,
@@ -16,10 +17,10 @@ CREATE TABLE "ElearningQuestionCategory" (
     CONSTRAINT "ElearningQuestionCategory_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "ElearningQuestionCategory_tenant_Id_code_key"
+CREATE UNIQUE INDEX IF NOT EXISTS "ElearningQuestionCategory_tenant_Id_code_key"
     ON "ElearningQuestionCategory"("tenant_Id", "code");
 
-CREATE INDEX "ElearningQuestionCategory_tenant_Id_status_idx"
+CREATE INDEX IF NOT EXISTS "ElearningQuestionCategory_tenant_Id_status_idx"
     ON "ElearningQuestionCategory"("tenant_Id", "status");
 
 -- 2. Seed 7 default categories for every existing tenant
